@@ -78,3 +78,39 @@ See [STATUS.md](../../STATUS.md#empty-function-caller-domain-transport).
 `Check` closure on `main` pushes and by manual dispatch. It checks fixed-input hashes and transitive axioms. Only the
 Lean toolchain and library build artifacts are cached; example proofs are
 checked again on every run. Diagnostic logs are retained as workflow artifacts.
+
+## Generated body verification condition
+
+From the repository root, generate the exact safety VC from the Rust source.
+
+```bash
+tools/body-vc safety examples/empty_function/empty_function.rs \
+  --output scratch/empty-function-vc/Generated.lean
+```
+
+For a concrete call under the source runner's initialized world,
+[runtime.rs](runtime.rs) calls the same Rust function. Admit every typed core
+choice in that fixed world and time its checked replay separately.
+
+```bash
+mkdir -p scratch/empty-runtime
+LEAN_MIRI_PREPARED_ALLOC_ID_WORLD=1 bash tools/export-mir.sh \
+  --output scratch/empty-runtime/input.json --root miri_start --root fixture::empty_function -- \
+  examples/empty_function/runtime.rs --crate-type=bin --crate-name small_root \
+  -C debug-assertions=no -C overflow-checks=no -C panic=abort -Zmir-opt-level=0
+tools/body-vc safety scratch/empty-runtime/input.json --root fixture::empty_function \
+  --output scratch/empty-runtime/Generated.lean
+.lake/build/bin/native_runner scratch/empty-runtime/Generated.mir.json \
+  --ui-source examples/empty_function/runtime.rs --ui-flags '["-Zmiri-tree-borrows"]' \
+  --profile --check-body-vc-root 1
+```
+
+To check the standalone VC from the bare Rust file at the same prepared
+entry, pass its emitted MIR to the runner. The standalone export has its
+own root index, zero.
+
+```bash
+.lake/build/bin/native_runner scratch/empty-runtime/input.json \
+  --ui-source examples/empty_function/runtime.rs --ui-flags '["-Zmiri-tree-borrows"]' \
+  --profile --check-body-vc-input scratch/empty-function-vc/Generated.mir.json 0
+```

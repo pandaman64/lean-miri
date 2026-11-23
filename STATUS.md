@@ -1173,9 +1173,13 @@ vector-clock backend.
   and preserves both successors and typed failures. The canonical assignment
   rules expose rvalue, place, operand and memory effects. The Tree Borrows
   rules expose ranged access, child insertion, exposure, release, deallocation
-  and collection continuations. Production callbacks and policies still need
-  their own client facts. Whole-body proofs still require loop invariants and
-  contracts for callees reached by the client.
+  and collection continuations. [Whole-body VC generation](Miri/Verification/BodyVCGen.lean)
+  constructs a weakest liberal precondition for a supplied MIR body using
+  shared control-flow equations. Generation takes the interpreter configuration,
+  choice policy, and continuations. It follows nested calls and loops without
+  a client-supplied block proof. Clients still need to prove the generated
+  obligation for their machine, choice policy, and postconditions. Termination
+  requires a separate argument.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

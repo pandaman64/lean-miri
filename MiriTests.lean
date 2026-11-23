@@ -47,3 +47,5 @@ import MiriTests.Verification.MemoryWP
 import MiriTests.Verification.RvalueWP
 import MiriTests.Verification.TreeBorrowsWP
 import MiriTests.Verification.TreeEffectsWP
+import MiriTests.Verification.WholeBodyReplay
+import MiriTests.Verification.WholeBodyWP
