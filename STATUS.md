@@ -1154,9 +1154,28 @@ execution model.
 
 These gaps remain in the backlog, without implying that the whole feature is
 unimplemented. Check existing support against pinned upstream before extending
-it; preserve implementations and fail-closed Unsupported outcomes. WP remains
-deferred with its implementation removed. GenMC is removed; available race
-tracking modes are disabled tracking and the Miri vector-clock backend.
+it; preserve implementations and fail-closed Unsupported outcomes. GenMC is
+removed; available race tracking modes are disabled tracking and the Miri
+vector-clock backend.
+
+* **WP and VC generation** — [StepWP](Miri/Verification/StepWP.lean) lowers
+  one-block MIR bodies ending in `Return` to checked instruction sequences.
+  [BodyVCGen](examples/empty_function/BodyVCGen.lean) uses the imported
+  `empty_function` body for the whole-local immediate caller case and
+  composes its proof with actual frame preparation after callee resolution.
+  [Effect specs](Miri/Verification/EffectSpecs.lean) expose canonical MIR
+  operations. `body_of_blocks` composes block VCs across branches and loops
+  given an entry invariant and a scope-exit postcondition.
+  `callPre_of_contract` composes frame preparation with a callee contract.
+  [ExactWP](Miri/Verification/ExactWP.lean) gives `vcgen` an exact
+  one-step continuation for every permitted choice. It covers the driver's
+  MIR dispatch, statement advancement, switch, return and unwind control,
+  and preserves both successors and typed failures. The canonical assignment
+  rules expose rvalue, place, operand and memory effects. The Tree Borrows
+  rules expose ranged access, child insertion, exposure, release, deallocation
+  and collection continuations. Production callbacks and policies still need
+  their own client facts. Whole-body proofs still require loop invariants and
+  contracts for callees reached by the client.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

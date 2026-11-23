@@ -106,6 +106,25 @@ Repeated `--root` options select multiple functions. A selected generic function
 contributes a declaration; only discovered concrete instances have executable
 MIR. Schema 14 requires fresh exports from earlier input formats.
 
+### Generate verification conditions for interpreter steps
+
+Import `Miri.Verification.ExactWP` and enable `set_option experimental.vcgen true`.
+Use `vcgen` on a `Std.WP.Triple` for `Miri.Verification.StepWP.OutcomeStep.step`.
+The success postcondition can inspect the driver flag and successor state.
+The error postcondition receives the error and the state where execution stopped.
+The generated precondition covers every permitted choice. Use
+`simp only [miri_rvalue]` with the selected MIR and frame facts to expose the
+canonical assignment's place, operand, and copy effects. See the
+[assignment proof fixture](MiriTests/Verification/RvalueWP.lean).
+
+Build the Goto/Nop, Call/Return, and protected-alias proof fixtures.
+
+```bash
+flock --no-fork /tmp/lean-miri-lake-build.lock lake build \
+  MiriTests.Verification.StepWP MiriTests.Verification.CallReturnWP \
+  MiriTests.Verification.TreeBorrowsWP
+```
+
 ## Tests
 
 Run `lake build MiriTests` for self-contained Lean test modules, then
