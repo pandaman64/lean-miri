@@ -81,11 +81,31 @@ checked again on every run. Diagnostic logs are retained as workflow artifacts.
 
 ## Generated body verification condition
 
-From the repository root, generate the exact safety VC from the Rust source.
+[GeneratedBodySafety.lean](GeneratedBodySafety.lean) connects the same
+Rust body to `BodyVCGen.generateProgram`.
+`EmptyFunction.GeneratedBodySafety.localImmediate` proves the generated
+no-UB condition for every admitted caller with a local immediate return
+destination, including projected destinations. It checks initialization
+errors and every permitted in-call execution. The proof uses the canonical
+initializer to identify the entry frame and actual call depth.
+
+```bash
+bash tools/check-empty-function.sh GeneratedBodySafety
+```
+
+To emit the saved VC and check the proof that uses its named condition, run
+these commands from the repository root. Set `proof_deps` to the frozen
+output directory printed as `Frozen … roots/dependencies` above.
 
 ```bash
 tools/body-vc safety examples/empty_function/empty_function.rs \
   --output scratch/empty-function-vc/Generated.lean
+lean_path="$(lake env printenv LEAN_PATH)"
+LEAN_PATH="$PWD/scratch/empty-function-vc:$proof_deps:$lean_path" \
+  lean --root="$PWD/scratch/empty-function-vc" -o scratch/empty-function-vc/Generated.olean \
+    scratch/empty-function-vc/Generated.lean
+time env LEAN_PATH="$PWD/scratch/empty-function-vc:$proof_deps:$lean_path" \
+  lean -j1 examples/empty_function/ProveGenerated.lean
 ```
 
 For a concrete call under the source runner's initialized world,
