@@ -93,8 +93,12 @@ initializer to identify the entry frame and actual call depth.
 bash tools/check-empty-function.sh GeneratedBodySafety
 ```
 
-To emit the saved VC and check the proof that uses its named condition, run
-these commands from the repository root. Set `proof_deps` to the frozen
+[ProveGenerated.lean](ProveGenerated.lean) checks that the fresh exporter output
+has the same MIR and canonical body ID as the original proof. Its theorem
+`emptyFunctionSafe` proves the emitted `requiredForEveryChoiceAt` condition for
+a successfully initialized call in the local-immediate domain. It uses the
+`safetySpec` equivalence to discharge the condition with the call-safety proof
+above. To check the theorem, run these commands from the repository root. Set `proof_deps` to the frozen
 output directory printed as `Frozen … roots/dependencies` above.
 
 ```bash

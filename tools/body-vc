@@ -123,16 +123,26 @@ def requiredFromRoot (config : Config) (limits : ExecutionMachine.Limits)
   | .ok program => BodyVCGen.preparedProgramPre config limits program launch arguments destination
       span allowed (fun _ _ => True) BodyVCGen.noUB before
 
-/-- Use a proof of the saved VC to obtain the exact whole-program safety specification. -/
+/-- The saved VC holds exactly when the initialized state is at the imported
+entry and every permitted finite error in the call scope is non-UB. -/
 theorem safetySpec (config : Config) (limits : ExecutionMachine.Limits)
     (allowed : State → C → Prop) (entry : State) (program : BodyVCGen.LoadedProgram)
-    (selected : loaded = .ok program) (checked : requiredAt config limits allowed entry) :
-    BodyVCGen.ProgramNoUB config limits program allowed (· = entry) := by
-  simp only [requiredAt, selected] at checked
-  vcgen
-  rename_i state same
-  subst state
-  exact checked
+    (selected : loaded = .ok program) :
+    requiredAt config limits allowed entry ↔
+      WholeBodyWP.entryMatchesLoaded program.root entry ∧
+      ∀ failed error, WholeBodyWP.Finishes (ExecutionMachine.step config limits)
+        (fun state => state.stack.frames.size) allowed entry.stack.frames.size
+        entry failed (.error error) → RunLoop.reportsUB error = false := by
+  simp only [requiredAt, selected, BodyVCGen.generatedProgramPre_eq, WholeBodyWP.catalogBodyPre_iff]
+  constructor
+  · rintro ⟨entered, checked⟩
+    exact ⟨entered, fun failed error run => checked failed (.error error) run⟩
+  · rintro ⟨entered, safe⟩
+    refine ⟨entered, ?_⟩
+    intro after result run
+    cases result with
+    | ok _ => trivial
+    | error error => exact safe after error run
 
 /-- Supply either the safety postcondition or an explicit typed pair of posts
 and obtain the equation table used by the actual whole-program generator. -/

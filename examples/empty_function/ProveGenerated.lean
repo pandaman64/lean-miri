@@ -49,10 +49,10 @@ theorem savedVC (s : Static) (metadata : Metadata s) (profile : Profile s)
   change (BodyVCGen.generateProgram s.cfg s.limits (EmptyFunction.GeneratedBodySafety.program s)
     (fun _ _ => True) (fun _ _ => True) BodyVCGen.noUB).pre entry at safe
   rw [BodyVCGen.generatedProgramPre_eq, WholeBodyWP.catalogBodyPre_iff] at safe
-  simp only [_root_.GeneratedBodySafety.requiredForEveryChoiceAt,
-    _root_.GeneratedBodySafety.requiredAt, loaded]
-  rw [BodyVCGen.generatedProgramPre_eq, WholeBodyWP.catalogBodyPre_iff, sameRoot]
-  exact safe
+  apply (_root_.GeneratedBodySafety.safetySpec s.cfg s.limits (fun _ _ => True)
+    entry generated loaded).mpr
+  rw [sameRoot]
+  exact ⟨safe.1, fun failed error run => safe.2 failed (.error error) run⟩
 
 /-- The concrete saved VC for `empty_function` under the admitted local
 immediate domain, at its binding in the canonical root catalog. -/

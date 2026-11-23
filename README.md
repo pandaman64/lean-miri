@@ -138,8 +138,11 @@ tools/body-vc safety examples/body_vcgen/control.rs \
 The command saves the Lean condition and the paired MIR JSON. It reports
 generation time and the time to check that the generated file is well typed.
 Rust source exports use the pinned MIR-enabled sysroot and `-Cpanic=abort`.
-The safety VC must then be proved for the interpreter configuration, initial
-states, and choice policy of interest.
+The emitted `safetySpec` characterizes the VC at a prepared entry. It holds
+exactly when the frame matches the imported entry and every permitted finite
+error in the call scope is classified as non-UB. To see a proof that supplies
+these facts for a concrete Rust function and its admitted caller domain, follow
+the [empty_function example](examples/empty_function/README.md#generated-body-verification-condition).
 
 Export the Rust function and import the execution input with
 `Miri.Frontend.ImportMIR`. In a Lean client, import
