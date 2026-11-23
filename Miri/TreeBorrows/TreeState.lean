@@ -3066,7 +3066,8 @@ private theorem advancePre_iff (tree : BorrowTree) (prepared : IterMutResult Loc
         cases (current.1.setAtPos position access.location).outcome <;> rfl
   · simp only [completed, Bool.false_eq_true, ↓reduceIte]
 
-private theorem cursor_equation (tree : BorrowTree) (prepared : IterMutResult LocationTree)
+/-- The runtime range loop executes one `advance` for each iterator position. -/
+theorem cursor_equation (tree : BorrowTree) (prepared : IterMutResult LocationTree)
     (source : Option UniIndex) (kind : AccessKind) (tags : ProtectedTags)
     (mode : Tree.ChildrenVisitMode) (cursor : Nat) (current : Progress) :
     (do

@@ -1,0 +1,270 @@
+--- a/examples/duplicate_prefix/Program.lean
++++ b/examples/duplicate_prefix/Program.lean
+@@ -18 +18 @@
+-    "8144389c895da997dbdecaa635e41d6a50be6ffd" := by rfl
++    "8eb778d04094d3af4b26580cab327e0413eb1e02" := by rfl
+--- a/examples/duplicate_prefix/Reflection.lean
++++ b/examples/duplicate_prefix/Reflection.lean
+@@ -15,0 +16,2 @@
++  Std.HashMap.ofList entries
++private def uint32Map {α : Type} (entries : List (UInt32 × α)) : Std.HashMap UInt32 α :=
+@@ -39,0 +42,3 @@
++instance {α : Type} [ToExpr α] : ToExpr (Std.HashMap UInt32 α) where
++  toTypeExpr := mkApp2 (mkConst ``Std.HashMap [0, 0]) (toTypeExpr UInt32) (toTypeExpr α)
++  toExpr value := mkApp2 (mkConst ``uint32Map) (toTypeExpr α) (toExpr value.toList)
+--- a/examples/duplicate_prefix/Prepared.lean
++++ b/examples/duplicate_prefix/Prepared.lean
+@@ -22 +22 @@
+-  dead : Array DeadAllocation
++  dead : Array (AllocId × DeadAllocation)
+@@ -45 +45 @@
+-    live := #[], dead := data.dead,
++    live := {}, dead := data.dead.foldl (fun cache (id, entry) => cache.insert id entry) {},
+@@ -64 +64 @@
+-    issuedIds := memory.issuedIds, dead := memory.dead, globals := memory.globals,
++    issuedIds := memory.issuedIds, dead := memory.dead.toList.toArray, globals := memory.globals,
+@@ -95,2 +95,2 @@
+-    let abiResults := prepared.compiler.program.input.functionAbis.map fun row =>
+-      CallResolution.functionAbi prepared.compiler.runtime row
++    let abiResults := (Array.range prepared.compiler.program.input.instances.size).map fun id =>
++      CompilerInstanceAbi.abiOfInstance prepared.compiler.lifecycle.instances id #[]
+@@ -209,5 +209,7 @@
+-theorem initial_memory_has_no_live_allocations : actual.initialMemory.live = #[] := by rfl
+-
+-theorem prepared_body_count : actual.program.bundle.bodies.size = 58 := by rfl
+-
+-theorem prepared_byte_key_count : actual.bytes.keys.size = 15 := by rfl
++theorem initial_memory_has_no_live_allocations : actual.initialMemory.live = {} := by rfl
++
++theorem prepared_body_count : actual.program.bundle.bodies.size = 53 := by rfl
++
++
++
++theorem prepared_byte_key_count : actual.bytes.keys.size = 0 := by rfl
+--- a/examples/duplicate_prefix/RootBody.lean
++++ b/examples/duplicate_prefix/RootBody.lean
+@@ -98 +98 @@
+-      reflected.body.body.locals[2]?) = (some 0, some 3, some 5) := by
++      reflected.body.body.locals[2]?) = (some 0, some 1, some 4) := by
+@@ -110 +110 @@
+-        (.Constant ⟨⟨25⟩, none, .Val (.Scalar (.Int 0 8)) 5⟩))) := by
++        (.Constant ⟨⟨25⟩, none, .Val (.Scalar (.Int 0 8)) 4⟩))) := by
+@@ -121 +121 @@
+-        (.Constant ⟨⟨31⟩, none, .Val (.Scalar (.Int 2 8)) 5⟩))) := by
++        (.Constant ⟨⟨33⟩, none, .Val (.Scalar (.Int 2 8)) 4⟩))) := by
+--- a/examples/duplicate_prefix/AllocationCopy.lean
++++ b/examples/duplicate_prefix/AllocationCopy.lean
+@@ -16 +16 @@
+--- Only proof automation: expand the exact private implementation definition.
++-- Only proof automation: expand the exact implementation definition.
+@@ -21 +21 @@
+-    if name.toString.endsWith suffix.getString then some name else none
++    if ("." ++ name.toString).endsWith suffix.getString then some name else none
+@@ -29 +29 @@
+-    if name.toString.endsWith suffix.getString then some name else none
++    if ("." ++ name.toString).endsWith suffix.getString then some name else none
+@@ -277,0 +278 @@
++  simp only [nonzero, false_and, or_false, ↓reduceIte]
+--- a/examples/duplicate_prefix/PreparedContracts.lean
++++ b/examples/duplicate_prefix/PreparedContracts.lean
+@@ -2,0 +3 @@
++import duplicate_prefix.AllocationCopy
+@@ -107,0 +109,64 @@
++private theorem u8LayoutOk : (PreparedReflection.actual.runtime.lookup 3).isOk = true := by
++  have observation : PreparedReflection.actual.runtime.node 3 =
++      .ok PreparedReflection.actual.runtime.source.types[3] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[3].sourceLayout.normalizedType = 3 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[3]? =
++      some PreparedReflection.actual.runtime.source.types[3] := by rfl
++  have shape : PreparedReflection.actual.runtime.source.types[3].shape =
++      .uint (.known .u8) := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[3].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.isOk, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary]
++  try rfl
++
++private theorem i32LayoutOk : (PreparedReflection.actual.runtime.lookup 26).isOk = true := by
++  have observation : PreparedReflection.actual.runtime.node 26 =
++      .ok PreparedReflection.actual.runtime.source.types[26] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[26].sourceLayout.normalizedType = 26 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[26]? =
++      some PreparedReflection.actual.runtime.source.types[26] := by rfl
++  have shape : PreparedReflection.actual.runtime.source.types[26].shape =
++      .int (.known .i32) := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[26].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.isOk, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary]
++  try rfl
++
++private theorem unitLayoutOk : (PreparedReflection.actual.runtime.lookup 5).isOk = true := by
++  have observation : PreparedReflection.actual.runtime.node 5 =
++      .ok PreparedReflection.actual.runtime.source.types[5] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[5].sourceLayout.normalizedType = 5 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[5]? =
++      some PreparedReflection.actual.runtime.source.types[5] := by rfl
++  have shape : PreparedReflection.actual.runtime.source.types[5].shape =
++      .tuple #[] := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[5].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.isOk, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary]
++  try rfl
++
++
+@@ -112 +177,7 @@
+-    (PreparedReflection.actual.compiler.primitiveLayout "i32").isOk = true := by decide +kernel
++    (PreparedReflection.actual.compiler.primitiveLayout "i32").isOk = true := by
++  change ((PreparedReflection.actual.runtime.lookup 26).mapError toString).isOk = true
++  cases run : PreparedReflection.actual.runtime.lookup 26 with
++  | ok _ => rfl
++  | error _ =>
++    have h := i32LayoutOk
++    simp [run, Except.isOk, Except.toBool] at h
+@@ -118 +189,7 @@
+-    (PreparedReflection.actual.compiler.primitiveLayout "u8").isOk = true := by decide +kernel
++    (PreparedReflection.actual.compiler.primitiveLayout "u8").isOk = true := by
++  change ((PreparedReflection.actual.runtime.lookup 3).mapError toString).isOk = true
++  cases run : PreparedReflection.actual.runtime.lookup 3 with
++  | ok _ => rfl
++  | error _ =>
++    have h := u8LayoutOk
++    simp [run, Except.isOk, Except.toBool] at h
+@@ -121 +198,7 @@
+-    (PreparedReflection.actual.compiler.primitiveLayout "unit").isOk = true := by decide +kernel
++    (PreparedReflection.actual.compiler.primitiveLayout "unit").isOk = true := by
++  change ((PreparedReflection.actual.runtime.lookup 5).mapError toString).isOk = true
++  cases run : PreparedReflection.actual.runtime.lookup 5 with
++  | ok _ => rfl
++  | error _ =>
++    have h := unitLayoutOk
++    simp [run, Except.isOk, Except.toBool] at h
+--- a/examples/duplicate_prefix/CopyPreconditions.lean
++++ b/examples/duplicate_prefix/CopyPreconditions.lean
+@@ -453 +453 @@
+-    for sourceId in #[22, 23, 28, 29, 30, 32, 33, 34, 35, 36, 38, 39, 41, 47, 51, 9, 20, 5] do
++    for sourceId in #[24, 25, 31, 32, 33, 39, 40, 36, 35, 41, 46, 47, 43, 53, 57, 9, 21, 5] do
+--- a/examples/duplicate_prefix/MemoryCopyBridge.lean
++++ b/examples/duplicate_prefix/MemoryCopyBridge.lean
+@@ -135 +135 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
++    (present : memory.live[id]? = some entry) :
+@@ -162 +162 @@
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : machine.memory.live[id]? = some entry)
+@@ -226 +226 @@
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : machine.memory.live[id]? = some entry)
+@@ -252 +252 @@
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : machine.memory.live[id]? = some entry)
+@@ -275 +275 @@
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : machine.memory.live[id]? = some entry)
+@@ -339 +339 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -397 +397 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
++    (present : memory.live[id]? = some entry) :
+@@ -408 +408 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : memory.live[id]? = some entry)
+@@ -419 +419 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
++    (present : memory.live[id]? = some entry) :
+@@ -421,5 +421,2 @@
+-      {memory with live := (memory.live.filter fun row => row.1 != id).push (id, {entry with allocation})} := by
+-  unfold MemoryState.setLiveAllocation
+-  unfold_internal ".MemoryState.findLive?"
+-  unfold_internal ".MemoryState.insertLive"
+-  simp [present, bind, Except.bind, pure, Except.pure]
++      {memory with live := memory.live.insert id {entry with allocation}} := by
++  exact MemoryState.setLiveAllocation_of_find memory id entry allocation present
+@@ -430,5 +427 @@
+-    ((memory.live.filter fun row => row.1 != id).push (id, entry)).find?
+-      (fun row => row.1 == id) = some (id, entry) := by
+-  have noMatch : memory.live.find? (fun _ => false) = none := by
+-    simp [Array.find?_eq_none]
+-  simp [Array.find?_push, Array.find?_filter, noMatch]
++    (memory.live.insert id entry)[id]? = some entry := by simp
+@@ -439,3 +432 @@
+-    ((memory.live.filter fun row => row.1 != id).push (id, entry)).any
+-      (fun row => row.1 == id) = true := by
+-  simp
++    (memory.live.insert id entry).contains id = true := by simp
+@@ -446,4 +437,3 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
+-    memory.live.any (fun row => row.1 == id) = true := by
+-  apply Array.any_eq_true'.mpr
+-  exact ⟨(id, entry), Array.mem_of_find?_eq_some present, by simp⟩
++    (present : memory.live[id]? = some entry) :
++    memory.live.contains id = true := by
++  simp [Std.ExtTreeMap.contains_eq_isSome_getElem?, present]
+@@ -454,5 +444,9 @@
+-    let intermediate : MemoryState Prov Extra K := {memory with live := (memory.live.filter fun (row : AllocId × LocalAllocation Prov Extra K) => row.1 != id).push (id, first)}
+-    {intermediate with live := (intermediate.live.filter fun (row : AllocId × LocalAllocation Prov Extra K) => row.1 != id).push (id, second)} =
+-      {memory with live := (memory.live.filter fun (row : AllocId × LocalAllocation Prov Extra K) => row.1 != id).push (id, second)} := by
+-  dsimp only
+-  simp [Array.filter_push, Array.filter_filter]
++    let intermediate : MemoryState Prov Extra K := {memory with live := memory.live.insert id first}
++    {intermediate with live := intermediate.live.insert id second} =
++      {memory with live := memory.live.insert id second} := by
++  have insertTwice : (memory.live.insert id first).insert id second =
++      memory.live.insert id second := by
++    apply Std.ExtTreeMap.ext_getElem?
++    intro key
++    by_cases same : id = key <;> simp [Std.ExtTreeMap.getElem?_insert, same]
++  simp [insertTwice]
+@@ -501 +495 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
++    (present : state.machine.memory.live[id]? = some entry) :
+@@ -520 +514 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -676 +670 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩)) :
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩) :
+@@ -681,2 +675 @@
+-    let memory := {state.machine.memory with live :=
+-      (state.machine.memory.live.filter fun row => row.1 != id).push (id, ⟨kind, updated⟩)}
++    let memory := {state.machine.memory with live := state.machine.memory.live.insert id ⟨kind, updated⟩}
+--- a/examples/duplicate_prefix/OffsetAllocationCopy.lean
++++ b/examples/duplicate_prefix/OffsetAllocationCopy.lean
+@@ -214,0 +215,3 @@
++  have disjoint : ¬ (offset + n ≤ offset ∧ offset < offset + n + n) :=
++    fun overlap => (UInt64.not_le.mpr sourcePositive) overlap.1
++  simp only [disjoint, ↓reduceIte, pure, EStateM.pure]
+--- a/examples/duplicate_prefix/RetagPointerChecks.lean
++++ b/examples/duplicate_prefix/RetagPointerChecks.lean
+@@ -76 +76 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : memory.live[id]? = some entry)
+@@ -122 +122 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -156 +156 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
++    (present : state.machine.memory.live[id]? = some entry) :

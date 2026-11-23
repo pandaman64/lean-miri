@@ -6,15 +6,15 @@ Lean safety VC from this standalone Rust file. The stock runner uses the
 separate [runtime harness](runtime.rs) to prepare actual call states with
 Tree Borrows enabled.
 
-With the pinned MIR-enabled sysroot in `MIRI_SYSROOT`, build `native_runner`
-and the Lean libraries, then run:
+With the pinned MIR-enabled sysroot in `MIRI_SYSROOT`, build `native_runner`,
+`Miri.Verification.TreeRangeAccess`, and the Lean libraries. Then run the check.
 
 ```sh
 tools/check-duplicate-prefix-vc.sh
 ```
 
-The script typechecks the proof interface in
-[VerifyGenerated.lean](VerifyGenerated.lean) against the emitted Lean file.
+The script typechecks [VerifyGenerated.lean](VerifyGenerated.lean) against
+the emitted Lean file and checks the symbolic components below.
 The runner loads the saved standalone MIR and the same root with the same
 loader as the generated Lean file. Each certificate checks that the standalone
 root's lowered body and identity equal those of the live prepared frame.
@@ -59,3 +59,48 @@ slice contract therefore needs read and write authority over the referent in
 its calling context, including compatibility with the permissions and active
 protectors at the bytes it can touch. Layout, initialization, and the slice
 descriptor can all agree while that authority differs.
+
+### Symbolic proof components
+
+[PreparedArguments.lean](PreparedArguments.lean) identifies argument slots
+and branch instructions in the emitted MIR. It also checks the current
+compiler helper for the language UB guard and the switch on its result.
+[SymbolicCopyAccess.lean](SymbolicCopyAccess.lean) proves copy access through
+the canonical diagnostic, race, Tree Borrows, synchronization and allocation
+cache transitions, given their local premises. Its range proof extends
+authorized location slots to a complete access across the specified range.
+[ZeroProtector.lean](ZeroProtector.lean) proves release of a dormant,
+unexposed protector and the corresponding allocation and ownership-ledger
+updates. [ZeroTail.lean](ZeroTail.lean) verifies the three steps from the
+prepared zero-branch cleanup position through the jump to the return slot.
+The whole-function proof still needs to derive permissions at the
+relevant calls and compose the current helper and return paths.
+
+[LanguageGuardStack.lean](LanguageGuardStack.lean) checks the actual helper's
+false-result assignment, local destination copy, and canonical stack return
+under its explicit frame and call-policy premises.
+
+[ScopedSafetyTransfer.lean](ScopedSafetyTransfer.lean) connects separately
+proved scoped error safety and successful root preparation to the generated
+VC at the entry state.
+
+### Recheck migrated archive components
+
+The archive overlay imports the current standalone MIR and rebuilds its proof
+modules against the current interpreter. It pins the old source revision and
+applies [ArchiveMigration.patch](ArchiveMigration.patch) only in a fresh
+output directory. Its default target set covers the typed compiler metadata,
+the root and copy-helper opcode equations, and selected allocation, retagging
+and copy bridges. The complete archived zero and all-count call proofs still
+need further migration.
+
+```sh
+git fetch origin 7950c01b18013969c360df535b8b888dd6181dff
+python3 tools/check-duplicate-prefix-archive.py \
+  scratch/duplicate-prefix-vcgen/Representative.mir.json \
+  --output scratch/duplicate-prefix-archive-check
+```
+
+The checker uses prebuilt Lean library artifacts. Its logs and rebuilt
+proofs stay in the output directory. `--target RootZeroComplete` selects
+the larger proof closure for migration work.

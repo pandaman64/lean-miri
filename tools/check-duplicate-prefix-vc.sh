@@ -16,6 +16,14 @@ tools/body-vc safety "$source" \
   --output "$out/Representative.lean" --no-build --no-check
 lean -j1 -o "$out/Representative.olean" "$out/Representative.lean"
 lean -j1 examples/duplicate_prefix_vcgen/VerifyGenerated.lean
+lean -j1 examples/duplicate_prefix_vcgen/ScopedSafetyTransfer.lean
+lean -j1 examples/duplicate_prefix_vcgen/PreparedArguments.lean
+lean -j1 examples/duplicate_prefix_vcgen/SymbolicCopyAccess.lean
+lean -j1 examples/duplicate_prefix_vcgen/ZeroProtector.lean
+lean -j1 examples/duplicate_prefix_vcgen/ZeroTail.lean
+mkdir -p "$out/empty_function"
+lean -j1 --root=examples -o "$out/empty_function/FrameExit.olean" examples/empty_function/FrameExit.lean
+lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardStack.lean
 
 "${BODY_VC_RUNNER:-$PWD/.lake/build/bin/native_runner}" "$out/harness.json" \
   --ui-source "$harness" --ui-flags '["-Zmiri-tree-borrows"]' \

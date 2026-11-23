@@ -2,6 +2,7 @@ import Miri
 import Miri.Frontend.ImportMIR
 import Miri.Input.ExecutionChoicePolicy
 import Miri.Verification.ExactWP
+import Miri.Verification.TreeRangeAccess
 import MiriTests
 import Lean
 
