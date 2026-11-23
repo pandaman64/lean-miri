@@ -25,3 +25,25 @@ test "$(rg -c -x -F "$proof" "$out/proof.log")" = 7
 test "$(rg -c '^body_vc:' "$out/proof.log")" = 7
 rg '^body_vc\.proof_replay took' "$out/proof.log"
 rg 'upstream_result: .*"detail":"0".*"kind":"exit"' "$out/proof.log"
+
+adversarial="$PWD/examples/duplicate_prefix_vcgen/runtime_adversarial.rs"
+for case in zero positive; do
+  cfg=()
+  if [[ "$case" == positive ]]; then
+    cfg=(--cfg positive)
+  fi
+  LEAN_MIRI_PREPARED_ALLOC_ID_WORLD=1 bash tools/export-mir.sh \
+    --output "$out/adversarial-$case.json" --root miri_start --root duplicate_prefix::duplicate_prefix -- \
+    "$adversarial" --crate-type=bin --crate-name small_root \
+    -C debug-assertions=no -C overflow-checks=no -C panic=abort -Zmir-opt-level=0 "${cfg[@]}"
+  "${BODY_VC_RUNNER:-$PWD/.lake/build/bin/native_runner}" "$out/adversarial-$case.json" \
+    --ui-source "$adversarial" --ui-flags '["-Zmiri-tree-borrows"]' \
+    --check-body-vc-input "$out/Representative.mir.json" 0 >"$out/adversarial-$case.log" 2>&1
+  test "$(rg -c '^body_vc:' "$out/adversarial-$case.log")" = 1
+done
+
+rg -x -F "$proof" "$out/adversarial-zero.log"
+rg '^run: finalized_exit code=0;' "$out/adversarial-zero.log"
+rg '^body_vc: outcome=Except.error .*Tree Borrows write access: .*start := 1, stop := 2.*ProtectedDisabled.*Frozen.*no_ub=false$' \
+  "$out/adversarial-positive.log"
+rg '^run: undefined_behavior' "$out/adversarial-positive.log"

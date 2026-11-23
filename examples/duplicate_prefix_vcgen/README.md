@@ -37,3 +37,25 @@ The harness independently checks each return value and all eight bytes after
 each nonempty call. Certificate search has a finite budget. A successful
 search yields a proof of `GeneratedBodySafety.requiredAt` for that entry,
 using the exact finite-outcome semantics of the generated VC.
+
+### Mutable slice call boundary
+
+[The adversarial caller](runtime_adversarial.rs) uses unsafe raw-pointer
+dereferences to create a mutable slice while its enclosing frame still holds
+a protected shared slice over the same two bytes. The borrow checker rejects
+the analogous overlap constructed with ordinary shared and mutable borrows.
+The replay enters the same typed `duplicate_prefix` body with either count.
+Count zero returns normally. Count one reaches the copy and fails on the
+destination byte at offset one, where the write would disable a protected
+Frozen tag. The script checks both outcomes against the standalone generated
+safety condition.
+
+[VerifyGenerated.lean](VerifyGenerated.lean) turns a rejected replay
+certificate into a proof of the negated emitted condition at that prepared
+frame. Its permission lemma explains why successful entry is weaker than
+write authority. When implicit writes are disabled, the mutable slice retag
+requires a read and installs a protected reservation. A reusable mutable
+slice contract therefore needs read and write authority over the referent in
+its calling context, including compatibility with the permissions and active
+protectors at the bytes it can touch. Layout, initialization, and the slice
+descriptor can all agree while that authority differs.
