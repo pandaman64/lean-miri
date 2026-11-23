@@ -221,7 +221,7 @@ private def afterStackTagPre {K U : Type}
         (by have h := UInt64.toNat_lt size.bytes; omega)
       let allocation := Miri.Concurrency.VClockAlloc.newAllocation length (clocks.clock.index index) index
       complete { state with raceAllocations :=
-        (state.raceAllocations.filter fun entry => entry.1 != id).push (id, allocation) }
+        state.raceAllocations.insert id allocation }
 
 /-- Fresh tree creation uses either the stable root tag or the disabled
 tracker's dummy tag, then runs allocation clock and machine-tail effects. -/
