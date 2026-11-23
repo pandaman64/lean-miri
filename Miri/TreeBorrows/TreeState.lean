@@ -3232,6 +3232,7 @@ private theorem protectorsPre_iff (tree : BorrowTree) (location : LocationTree)
     dsimp only
     rw [Tree.TraversalTree.traverseWithSkipPre_iff]
     unfold Tree.TraversalTree.traverse
+    rw [show ([] : List Nat).contains = (fun _ => false) from rfl]
     generalize (traversalProjection tree).traverseWithSkip index.toNat .VisitChildrenOfAccessed
       (fun _ => false) = schedule
     rcases schedule with ⟨root, events⟩
