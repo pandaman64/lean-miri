@@ -161,7 +161,7 @@ theorem aliased_read (config : Config) (limits : ExecutionMachine.Limits)
     -- A Tree Borrows error reaches the caller even if caching the tree failed.
     simp only [MemoryWP.resultPre, scalarReadAfterAccess, finishPlaceAccess,
       AllocationAccess.finishCheckedAccess, failedReadStatus] at acceptError ⊢
-    generalize (if checked.rawMemory.live.any (fun row => row.1 == checked.resolved.allocId) then
+    generalize (if checked.rawMemory.live.contains checked.resolved.allocId then
       checked.rawMemory.setLiveAllocation checked.resolved.allocId
         (checked.allocation.setExtra failedRead.tree)
       else .ok checked.rawMemory) = cached at acceptError ⊢
