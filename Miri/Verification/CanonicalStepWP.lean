@@ -3,6 +3,7 @@ import Miri.Interpreter.ExecutionMachine
 import Miri.Verification.RvalueWP
 import Miri.Verification.CallWP
 import Miri.Verification.ProtectorReleaseWP
+import Miri.Verification.BranchControlWP
 
 /-! Specialize the driver continuations to the assembled execution machine. -/
 namespace Miri.Verification.CanonicalStepWP
@@ -380,6 +381,18 @@ def assertConditionEffect (config : Config) (limits : Limits) (choice : C)
       assertConditionEffect config limits choice condition :=
   EffectSpecs.machine_run_effect _
 
+/-- Pull back the production assertion condition through the operand read and
+pure boolean conversion. -/
+@[miri_rvalue] theorem canonical_assertConditionPre (config : Config) (limits : Limits)
+    (choice : C) (condition : Miri.MIR.Operand) (post : Bool → State → Prop)
+    (onError : Errors) :
+    wp (assertConditionEffect config limits choice condition) post onError =
+      RvalueWP.actionPre (BranchControlWP.readOperand config limits choice condition)
+        (fun value => RvalueWP.scalarCheckPre (BranchControlWP.readBool value) post onError)
+        onError := by
+  rw [← canonical_assertCondition, BranchControlWP.assertCondition_eq, ← RvalueWP.actionPre_eq_wp,
+    BranchControlWP.assertConditionPre]
+
 /-- Call the appropriate panic lang item with the original unwind action. -/
 def assertPanicEffect (config : Config) (limits : Limits) (choice : C)
     (message : AssertKind) (unwind : UnwindAction) : MachineHooks.M K U Unit :=
@@ -446,6 +459,8 @@ def selectedTerminatorPre (config : Config) (limits : Limits) (choice : C) (term
     if asyncDrop.isSome then
       onError (.invalidProgram "Async Drop must be expanded or reset to sync") before
     else wp (dropEffect config limits choice place target unwind) (fun _ => post) onError before
+  | .SwitchInt discriminant targets =>
+    BranchControlWP.switchPre config limits choice discriminant targets post onError before
   | .Assert condition expected message target unwind =>
     let ignored := hooks.ignoreOptionalOverflowChecks before && ControlFlow.isOptionalOverflowCheck message
     wp (assertConditionEffect config limits choice condition) (fun actual after =>
@@ -474,6 +489,8 @@ theorem selectedTerminatorPre_iff (config : Config) (limits : Limits) (choice : 
     · rfl
     · rw [← canonical_dropEffect]
       exact callbackWP_iff _ _ _ _
+  case SwitchInt =>
+    exact BranchControlWP.switchPre_iff _ _ _ _ _ _ _ _
   case Assert =>
     simp only [selectedTerminatorPre, InstructionWP.terminatorPreWithReturn,
       ← canonical_assertCondition, ← canonical_assertPanic, callbackWP_iff]
@@ -595,5 +612,6 @@ attribute [miri_rvalue] choicePre StepWP.driverChoicePreWith statementPre canoni
   EffectSpecs.canonical_rvalue_placeToOp EffectSpecs.canonical_rvalue_readDiscriminant
   EffectSpecs.canonical_rvalue_discriminantForVariant EffectSpecs.canonical_rvalue_binary
   EffectSpecs.canonical_rvalue_unary EffectSpecs.canonical_rvalue_cast
+  RvalueWP.actionPre_unary RvalueWP.scalarCheckPre
 
 end Miri.Verification.CanonicalStepWP
