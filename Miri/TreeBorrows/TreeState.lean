@@ -3737,6 +3737,60 @@ theorem locationContract_iff (tree : BorrowTree) (location : LocationTree) (sour
           exact otherRootsPre_iff tree normal.location (some index) (some root)
             kind tags mode range (some access) finish
 
+private theorem otherRoots_success_range_irrelevant (tree : BorrowTree) (accessedRoot : Option UniIndex)
+    (kind : AccessKind) (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode)
+    (first second : ByteRange) (minExposed maxLocalTag : Option Miri.Memory.BorTag)
+    (post : LocationTree → Prop) (positions : List Nat) (location : LocationTree) :
+    otherRootsContract tree accessedRoot kind tags mode first minExposed maxLocalTag
+        post (fun status after => status = .Completed ∧ post after) positions location ↔
+    otherRootsContract tree accessedRoot kind tags mode second minExposed maxLocalTag
+        post (fun status after => status = .Completed ∧ post after) positions location := by
+  induction positions generalizing location with
+  | nil => rfl
+  | cons position rest ih =>
+    simp only [otherRootsContract]
+    split
+    · exact ih location
+    · rfl
+    · rw [← wildcardPre_iff, ← wildcardPre_iff]
+      split
+      · exact ih _
+      · simp
+
+/-- The byte range decorates diagnostic failures. Success and the successful
+location, including cache updates, are independent of that decoration. -/
+theorem location_success_range_irrelevant (tree : BorrowTree) (location : LocationTree)
+    (source : Option UniIndex) (kind : AccessKind) (tags : ProtectedTags)
+    (mode : Tree.ChildrenVisitMode) (first second : ByteRange) (post : LocationTree → Prop) :
+    ((tree.performTreeAccessAt location source kind tags mode first).status.getD .Completed = .Completed ∧
+        post (tree.performTreeAccessAt location source kind tags mode first).location) ↔
+    ((tree.performTreeAccessAt location source kind tags mode second).status.getD .Completed = .Completed ∧
+        post (tree.performTreeAccessAt location source kind tags mode second).location) := by
+  let finish := fun result : TreeLocationAccessAtResult =>
+    result.status.getD .Completed = .Completed ∧ post result.location
+  refine (locationContract_iff tree location source kind tags mode first finish).trans
+    (Iff.trans ?_ (locationContract_iff tree location source kind tags mode second finish).symm)
+  have other (location : LocationTree) (accessedRoot : Option UniIndex)
+      (normal : Option Tree.NormalAccessResult) :
+      otherRootsPre tree location source accessedRoot kind tags mode first normal
+          (fun result => result.status.getD .Completed = .Completed ∧ post result.location) ↔
+      otherRootsPre tree location source accessedRoot kind tags mode second normal
+          (fun result => result.status.getD .Completed = .Completed ∧ post result.location) := by
+    simpa [otherRootsPre, Option.getD] using otherRoots_success_range_irrelevant tree accessedRoot kind tags mode
+      first second (otherRootBounds tree source accessedRoot mode).1
+      (otherRootBounds tree source accessedRoot mode).2 post (List.range' 0 tree.roots.size) location
+  cases source with
+  | none => exact other location none none
+  | some index =>
+    simp only [locationContract, Tree.NormalTreeState.accessPre_iff, ← normalCommitPre_iff]
+    split
+    · split
+      · simp [finish, Option.getD]
+      · split
+        · simp [finish, Option.getD]
+        · exact other _ _ _
+    · simp [finish, Option.getD]
+
 abbrev Progress :=
   DedupRangeMap LocationTree × Array BorrowTreeLocationResult × BorrowTreeAccessStatus
 

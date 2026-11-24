@@ -42,6 +42,31 @@ def readLocations (prepared : IterMutResult LocationTree)
       (snapshotLocationAt prepared retained position)
     { segment with data := updated.getD segment.data }⟩
 
+/-- Read locations depend only on results for the prepared cursors. -/
+theorem readLocations_congr (prepared : IterMutResult LocationTree)
+    (left right : Nat → TreeLocationAccessAtResult) (same : ∀ cursor, cursor < prepared.positions.size → left cursor = right cursor) :
+    readLocations prepared left = readLocations prepared right := by
+  have findSame (position : Nat) (cursors : List Nat)
+      (bounded : ∀ cursor ∈ cursors, cursor < prepared.positions.size) :
+      cursors.findSome? (snapshotLocationAt prepared left position) =
+        cursors.findSome? (snapshotLocationAt prepared right position) := by
+    induction cursors with
+    | nil => rfl
+    | cons cursor rest ih =>
+      have atHead := same cursor (bounded cursor (.head _))
+      have atTail := ih (fun index later => bounded index (.tail _ later))
+      have headResult : snapshotLocationAt prepared left position cursor =
+          snapshotLocationAt prepared right position cursor := by
+        simp only [snapshotLocationAt, atHead]
+      simp only [List.findSome?_cons, headResult, atTail]
+  unfold readLocations
+  congr 1
+  apply congrArg (prepared.state.entries.mapIdx)
+  funext position segment
+  rw [findSame]
+  intro cursor included
+  simpa [List.mem_range'] using included
+
 theorem readLocations_eq (tree : BorrowTree) (prepared : IterMutResult LocationTree)
     (retained : Nat → TreeLocationAccessAtResult) :
     readLocations prepared retained = (snapshotSuccessor tree prepared retained).1.locations := by

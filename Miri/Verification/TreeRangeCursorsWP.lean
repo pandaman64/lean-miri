@@ -98,30 +98,6 @@ private theorem readCursorsPre_iff (tree : BorrowTree) (prepared : IterMutResult
       rw [sameRetained]
       exact finished
 
-private theorem readLocations_congr (prepared : IterMutResult LocationTree)
-    (left right : Retained) (same : ∀ cursor, cursor < prepared.positions.size → left cursor = right cursor) :
-    readLocations prepared left = readLocations prepared right := by
-  have findSame (position : Nat) (cursors : List Nat)
-      (bounded : ∀ cursor ∈ cursors, cursor < prepared.positions.size) :
-      cursors.findSome? (snapshotLocationAt prepared left position) =
-        cursors.findSome? (snapshotLocationAt prepared right position) := by
-    induction cursors with
-    | nil => rfl
-    | cons cursor rest ih =>
-      have atHead := same cursor (bounded cursor (.head _))
-      have atTail := ih (fun index later => bounded index (.tail _ later))
-      have headResult : snapshotLocationAt prepared left position cursor =
-          snapshotLocationAt prepared right position cursor := by
-        simp only [snapshotLocationAt, atHead]
-      simp only [List.findSome?_cons, headResult, atTail]
-  unfold readLocations
-  congr 1
-  apply congrArg (prepared.state.entries.mapIdx)
-  funext position segment
-  rw [findSame]
-  intro cursor included
-  simpa [List.mem_range'] using included
-
 /-- Pair a read and write by passing each retained read result into the next
 cursor's continuation. The writer uses the resulting location map and checks
 its own prepared snapshots with the original tag mapping and topology. -/
@@ -199,7 +175,8 @@ theorem accessPre_read_write_cursors_iff (tree : BorrowTree) (reader writer : Pr
   rw [← wp_read_write_cursors_iff, wp_read_write_successPre_iff]
   simp only [accessPre_successPre_iff]
 
-private theorem wp_write_return_succeeds_iff (tree : BorrowTree) (writer : ProvenanceExtra)
+/-- A returned read trace leaves the following write's safety condition unchanged. -/
+theorem wp_write_return_succeeds_iff (tree : BorrowTree) (writer : ProvenanceExtra)
     (offset length : Size) (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode)
     (reads : TreeRangeOutcomeWP.Trace) :
     wp (do
