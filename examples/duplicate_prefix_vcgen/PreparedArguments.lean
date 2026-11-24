@@ -1,5 +1,6 @@
 import Representative
 import Miri.Verification.FunctionBody
+import Miri.Verification.StepWP
 import Miri.Interpreter.CompilerExecutionProviders
 
 /-!
@@ -327,9 +328,63 @@ theorem languageCheckBranchJump
   rw [value]
   simp only [bind, Bind.bind, pure, Pure.pure, Id.run, selected]
 
+private def runtimeExpression : Rvalue := .UnaryOp .Not (.Constant (boolConstant 1 ⟨350⟩))
+
+/-- Lift the actual imported helper assignment to a source machine step.
+All driver checks and the next local PC remain those of the live frame. -/
+theorem stepRuntimeGuardAssignment
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
+    (choice : C) (layout : LocalLayout) (place : ExecutionMachine.Value) (operand : OpTy Provenance)
+    (before prepared evaluated read classified laidOut : State)
+    (frame : Frame Provenance LocalLayout MachineHooks.FrameExtra)
+    (current : before.stack.currentFrame? = some frame)
+    (source : GeneratedBodySafety.input.document.bodies[19]?.map (·.mir) = some frame.body)
+    (location : frame.location = .mir ⟨0, 0⟩) :
+    let checked := ExecutionMachine.withValidation config limits
+    let hooks := ExecutionMachine.rvalueHooks checked limits
+    (hooks.evalPlace choice (atLocal 0) true).run before = .ok place prepared →
+    hooks.placeLayout place = layout →
+    (hooks.evalOperand choice (.Constant (boolConstant 1 ⟨350⟩))
+      (some layout)).run prepared = .ok operand evaluated →
+    (hooks.readImmediate choice operand).run evaluated = .ok ⟨.scalar (Scalar.fromBool true), layout⟩ read →
+    ((ExecutionMachine.scalarHooks (ExecutionMachine.withValidation checked limits)).classify
+      choice layout.ty).run read = .ok .boolean classified →
+    ((ExecutionMachine.scalarHooks (ExecutionMachine.withValidation checked limits)).boolLayout
+      choice).run classified = .ok layout laidOut →
+    ExecutionMachine.step config limits choice before = Step.finishStatement
+      (before.stack.frames.size - 1)
+      (MachineHooks.run (hooks.writeImmediate choice (.scalar (Scalar.fromBool false)) place) laidOut) := by
+  intro checked hooks destination placeType constant immediate classification boolLayout
+  have matching : (StepWP.Instruction.statement (.Assign (atLocal 0) runtimeExpression)).matches before := by
+    unfold StepWP.Instruction.matches
+    simp only [current, location]
+    have first := congrArg (fun code : Option Body =>
+      code.bind fun body => body.basicBlocks[0]?.bind fun block => block.statements[0]?.map (·.kind)) source
+    change some (StatementKind.Assign (atLocal 0) runtimeExpression) =
+      (frame.body.basicBlocks[0]?.bind fun block => block.statements[0]?.map (·.kind)) at first
+    cases block : frame.body.basicBlocks[0]? with
+    | none => simp [block] at first
+    | some codeBlock =>
+      cases slot : codeBlock.statements[0]? with
+      | none => simp [block, slot] at first
+      | some stmt =>
+        simp only [block, slot, Option.bind_some, Option.map_some, Option.some.injEq] at first
+        simpa [block, slot] using first.symm
+  unfold ExecutionMachine.step
+  rw [StepWP.step_eq_assign matching, ExecutionMachine.stepHooks_assign]
+  have result := languageCheckRuntimeAssignment checked limits choice layout place operand
+    before prepared evaluated read classified laidOut hooks rfl
+    destination placeType constant immediate classification boolLayout
+  simp only [runExportedAssignment, languageCheckRuntimeCode] at result
+  unfold MachineHooks.run Call.run
+  rw [show evalRvalueIntoPlace hooks choice runtimeExpression (atLocal 0) before =
+    hooks.writeImmediate choice (.scalar (Scalar.fromBool false)) place laidOut from result]
+
 end DuplicatePrefix.PreparedArguments
 
 #print axioms DuplicatePrefix.PreparedArguments.EntryArguments.entered
 #print axioms DuplicatePrefix.PreparedArguments.languageCheckRuntimeAssignment
 #print axioms DuplicatePrefix.PreparedArguments.languageCheckFalseSuccessor
 #print axioms DuplicatePrefix.PreparedArguments.languageCheckBranchJump
+
+#print axioms DuplicatePrefix.PreparedArguments.stepRuntimeGuardAssignment

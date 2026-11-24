@@ -154,6 +154,86 @@ theorem validateCanonicalBooleanPlace [DecidableEq K] (value : Bool)
       (ValidityMachine.placeHooks access allocation (ValidityMachine.compilerPolicy compiler))
       choice ValidityMachine.validationInProgress MachineHooks.afterLocalWrite place (ghostOn before) operand
 
+/-- The copied value is read from the indexed caller slot, through the
+ordinary typed place and local-layout cache. Ghost validation suppresses
+local read hooks independently of the caller's local clock state. -/
+theorem ghostLocalBoolean [DecidableEq K]
+    (access : ValidityMachine.Access K U)
+    (allocation : PlaceMachine.AllocationConfig K (ValidityMachine.UserState U))
+    (compiler : ValidityMachine.Compiler K U C)
+    (value : Bool) (choice : C)
+    (older : Array (Frame Provenance LocalLayout MachineHooks.FrameExtra))
+    (caller : Frame Provenance LocalLayout MachineHooks.FrameExtra)
+    (machine : MachineHooks.MachineState K (ValidityMachine.UserState U))
+    (index : LocalId) (layout : LocalLayout) (slot : LocalState Provenance LocalLayout)
+    (atSlot : caller.locals[index]? = some slot)
+    (cached : slot.layout = some layout)
+    (stored : slot.value = .live (.immediate (.scalar (Scalar.fromBool value))))
+    (sized : layout.layout.isSized = true)
+    (ghost : machine.user.payload.ghost = true)
+    (debugOff : compiler.debugAssertions = false) :
+    let before : State := ⟨⟨older.push caller⟩, machine⟩
+    let dest : RuntimePlace Provenance := ⟨.local older.size index none caller.localsIdentity, layout⟩
+    placeToOp (ValidityMachine.placeHooks access allocation (ValidityMachine.compilerPolicy compiler))
+      choice dest before = .ok (booleanValue value layout) before := by
+  have bound := (Array.getElem?_eq_some_iff.mp atSlot).1
+  have found := (Array.getElem?_eq_some_iff.mp atSlot).2
+  have getSlot : Frame.getLocal caller index = .ok slot := by
+    simp [Frame.getLocal, bound, found, pure, Pure.pure, Except.pure]
+  have operand : Frame.getLocalOperand caller index =
+      .ok (.immediate (.scalar (Scalar.fromBool value))) := by
+    simp [Frame.getLocalOperand, getSlot, LocalState.access, stored,
+      bind, Bind.bind, Except.bind, Except.mapError]
+  simp [placeToOp, placeToOpCore, ValidityMachine.placeHooks, ValidityMachine.compilerPolicy,
+    PlaceMachine.placeHooks, PlaceMachine.localToOp, PlaceMachine.localToOpCore, PlaceMachine.layoutLocal,
+    ValidityMachine.validationInProgress, Stack.frameIndex, MachineHooks.currentFrame, Stack.currentFrame?,
+    getSlot, cached, operand, sized, debugOff, ghost, booleanValue,
+    get, getThe, MonadStateOf.get, EStateM.get, bind, Bind.bind, EStateM.bind,
+    pure, Pure.pure, EStateM.pure, Except.pure]
+
+/-- The canonical visitor validates a live immediate Boolean in the real
+current frame. The remaining facts are readonly compiler and layout data. -/
+theorem validateCachedBoolean [DecidableEq K]
+    (queries : ExecutionValidity.Leaves State C)
+    (access : ValidityMachine.Access K U)
+    (allocation : PlaceMachine.AllocationConfig K (ValidityMachine.UserState U))
+    (compiler : ValidityMachine.Compiler K U C)
+    (projection : PlaceProjectionHooks Provenance State C MachineHooks.FrameExtra)
+    (vtable : VTableHooks Provenance State C F A)
+    (discriminant : DiscriminantHooks Provenance State C (RuntimePlace Provenance))
+    (retag : TypedRetag.Hooks K (ValidityMachine.UserState U))
+    (retagBudget fuel : Nat) (value : Bool) (choice : C)
+    (older : Array (Frame Provenance LocalLayout MachineHooks.FrameExtra))
+    (caller : Frame Provenance LocalLayout MachineHooks.FrameExtra)
+    (machine : MachineHooks.MachineState K (ValidityMachine.UserState U))
+    (index : LocalId) (layout : LocalLayout) (slot : LocalState Provenance LocalLayout)
+    (atSlot : caller.locals[index]? = some slot)
+    (cached : slot.layout = some layout)
+    (stored : slot.value = .live (.immediate (.scalar (Scalar.fromBool value))))
+    (sized : layout.layout.isSized = true)
+    (inactive : machine.user.payload.ghost = false)
+    (debugOff : compiler.debugAssertions = false)
+    (readable : isPrimitiveReadable layout.layout.backendRepr = true)
+    (retain : ∀ machine, access.retainTouched machine none = machine)
+    (name : String) :
+    let before : State := ⟨⟨older.push caller⟩, machine⟩
+    let destination : RuntimePlace Provenance := ⟨.local older.size index none caller.localsIdentity, layout⟩
+    queries.typeName choice layout.ty before = .ok name before →
+    queries.classify choice layout.ty (ghostOn before) = .ok .boolean (ghostOn before) →
+    validatePlace (ExecutionValidity.hooks queries access allocation compiler projection vtable
+      discriminant retag retagBudget) choice (fuel + 1) destination false true before = .ok () before := by
+  intro before destination typeName classified
+  apply validateCanonicalBooleanPlace value queries access allocation compiler projection vtable
+    discriminant retag retagBudget fuel choice destination before name inactive typeName classified
+  · exact ghostLocalBoolean access allocation compiler value choice older caller (ghostOn before).machine
+      index layout slot atSlot cached stored sized rfl debugOff
+  · exact readable
+  · exact retain _
+
 end DuplicatePrefix.LanguageGuardValidity
 
 #print axioms DuplicatePrefix.LanguageGuardValidity.validateCanonicalBooleanPlace
+
+#print axioms DuplicatePrefix.LanguageGuardValidity.ghostLocalBoolean
+
+#print axioms DuplicatePrefix.LanguageGuardValidity.validateCachedBoolean

@@ -91,8 +91,8 @@ structure PreparedConcreteSlice
       pointer.provenance = some (.concrete storage.id tag) ∧
       pointer.offset.bytes.toNat = base.toNat + storage.relativeStart.bytes.toNat ∧
       base.toNat + storage.entry.allocation.byteSize.bytes.toNat < 2 ^ 64 ∧
-      (∃ entry ∈ (addresses before.machine.user).baseAddr,
-        entry.allocId = storage.id ∧ entry.address = base) ∧
+      ((addresses before.machine.user).baseAddr.find? (·.allocId == storage.id)) =
+        some ⟨storage.id, base⟩ ∧
       Nonempty (ExclusiveRegion before length storage tag)
 
 /-- The saved destination is represented in caller coordinates. Memory

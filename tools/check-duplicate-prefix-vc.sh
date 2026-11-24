@@ -21,19 +21,27 @@ lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/PreparedArguments.olean" examples/duplicate_prefix_vcgen/PreparedArguments.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/SourceDomain.olean" examples/duplicate_prefix_vcgen/SourceDomain.lean
-lean -j1 examples/duplicate_prefix_vcgen/MutableSliceRights.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/MutableSliceRights.olean" examples/duplicate_prefix_vcgen/MutableSliceRights.lean
+lean -j1 examples/duplicate_prefix_vcgen/MutableSliceRetag.lean
 lean -j1 examples/duplicate_prefix_vcgen/SymbolicCopyAccess.lean
 lean -j1 examples/duplicate_prefix_vcgen/ZeroProtector.lean
-lean -j1 examples/duplicate_prefix_vcgen/ZeroTail.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/ZeroTail.olean" examples/duplicate_prefix_vcgen/ZeroTail.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/ZeroBoolean.olean" examples/duplicate_prefix_vcgen/ZeroBoolean.lean
-lean -j1 examples/duplicate_prefix_vcgen/ZeroAssignment.lean
-lean -j1 examples/duplicate_prefix_vcgen/ZeroReturn.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/ZeroAssignment.olean" examples/duplicate_prefix_vcgen/ZeroAssignment.lean
+lean -j1 examples/duplicate_prefix_vcgen/ZeroNodes.lean
+lean -j1 examples/duplicate_prefix_vcgen/ZeroReturnDriver.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/ZeroReturn.olean" examples/duplicate_prefix_vcgen/ZeroReturn.lean
 mkdir -p "$out/empty_function"
 lean -j1 --root=examples -o "$out/empty_function/FrameExit.olean" examples/empty_function/FrameExit.lean
 lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardStack.lean
 lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardCall.lean
 lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardValidity.lean
+lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardAssignment.lean
 lean -j1 examples/duplicate_prefix_vcgen/NestedGuardDriver.lean
 
 "${BODY_VC_RUNNER:-$PWD/.lake/build/bin/native_runner}" "$out/harness.json" \
