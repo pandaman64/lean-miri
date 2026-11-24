@@ -4377,3 +4377,62 @@
 -  rfl
 +  exact PointerAddFacts.compute_local framesBefore frame machine 2 44 rawLayout
 +    (normalized_local2 frame sourceBody identity callee) raw_layout_eq
+--- a/examples/duplicate_prefix/MetadataCallQueries.lean
++++ b/examples/duplicate_prefix/MetadataCallQueries.lean
+@@ -2,2 +2 @@
+-import duplicate_prefix.SliceLenFacts
+-import duplicate_prefix.ProjectionMetadataFacts
++import duplicate_prefix.Storage
+@@ -5,2 +4 @@
+-/-! Concrete compiler leaves used to evaluate check_language_ub's zero-argument
+-runtime guard call. -/
++/-! Concrete compiler leaves for the slice length helper's pointer metadata call. -/
+@@ -26 +24 @@
+-  ((PreparedReflection.actual.layoutResults[50]'(by decide +kernel))).toOption.getD RootCompilerFacts.boolLayout
++  ((PreparedReflection.actual.layoutResults[45]'(by decide +kernel))).toOption.getD RootCompilerFacts.boolLayout
+@@ -28 +26,23 @@
+-theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 50 = .ok functionLayout := by decide +kernel
++private theorem functionLayout_reflection :
++    (PreparedReflection.actual.runtime.lookup 45).toOption = some functionLayout := by
++  let metadata := PreparedReflection.actual.runtime
++  have observation : metadata.node 45 = .ok metadata.source.types[45] := by rfl
++  change (metadata.lookup 45).toOption = _
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : metadata.source.types[45].sourceLayout.normalizedType = 45 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have row : metadata.source.types[45]? = some metadata.source.types[45] := by rfl
++  have ordinary : metadata.source.types[45].sourceLayout.specialFloat = none := by rfl
++  have noX87 : metadata.source.types[45].sourceLayout.isX87F80 = false := rfl
++  have fnShape : (match metadata.source.types[45].shape with
++    | .functionDefinition .. => true | _ => false) = true := rfl
++  cases shape : metadata.source.types[45].shape <;> simp [shape] at fnShape
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet, StateT.map,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    get, modify, modifyGet, MonadStateOf.modifyGet, MonadLift.monadLift, Except.map, Functor.map,
++    Except.toOption, Std.HashMap.getElem?_empty, row, normalized, shape, ordinary, noX87]
++  with_unfolding_all rfl
+@@ -30 +50,6 @@
+-theorem functionLayout_shape : functionLayout.ty = 50 ∧ functionLayout.layout.isSized = true ∧
++theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 45 = .ok functionLayout := by
++  have h := functionLayout_reflection
++  generalize PreparedReflection.actual.runtime.lookup 45 = actual at h ⊢
++  cases actual <;> simpa [Except.toOption] using h
++
++theorem functionLayout_shape : functionLayout.ty = 45 ∧ functionLayout.layout.isSized = true ∧
+@@ -34 +59 @@
+-theorem function_kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 50 =
++theorem function_kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 45 =
+@@ -41 +66 @@
+-    PreparedReflection.actual.compiler.functions 50 = .ok (1, rustExternAbi) := by
++    PreparedReflection.actual.compiler.functions 45 = .ok (1, rustExternAbi) := by
+@@ -45 +70 @@
+-    PtrMetadataHelper.resolved.source.functionType = some 50 := by
++    PtrMetadataHelper.resolved.source.functionType = some 45 := by
+@@ -124 +149,2 @@
+-  for name in #[``DuplicatePrefix.MetadataCallQueries.resolve_current, ``DuplicatePrefix.MetadataCallQueries.function_signature_query, ``DuplicatePrefix.MetadataCallQueries.function_kind] do
++  for name in #[``DuplicatePrefix.MetadataCallQueries.resolve_current, ``DuplicatePrefix.MetadataCallQueries.functionLayout_query,
++      ``DuplicatePrefix.MetadataCallQueries.function_signature_query, ``DuplicatePrefix.MetadataCallQueries.function_kind] do
