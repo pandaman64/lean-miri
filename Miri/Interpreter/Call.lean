@@ -147,12 +147,14 @@ theorem require_eq (condition : Bool) (message : String) :
     (require (S := S) condition message) = if condition then pure () else throw (.invalidProgram message) := by
   cases condition <;> rfl
 
-private def at? (values : Array A) (index : Nat) (message : String) : CallM S A :=
+/-- Read a required ABI or operand record from a call table. -/
+def at? (values : Array A) (index : Nat) (message : String) : CallM S A :=
   match values[index]? with
   | none => throw (.invalidProgram message)
   | some value => pure value
 
-private def setSpan (h : Hooks) (span : SpanRef) : M Unit := do
+/-- Change the frame location used for diagnostics during call initialization. -/
+def setSpan (h : Hooks) (span : SpanRef) : M Unit := do
   let frame ← h.getFrame
   h.setFrame { frame with location := .unwinding span }
 
@@ -235,6 +237,116 @@ def allocateVarargs (h : Hooks) (choice : C) (args : Array (FnArg P × ArgABI)) 
     varargs := varargs.push place
   return varargs
 
+/-- Select the caller operand and ABI records for one body argument. -/
+def initOrdinaryArgument (h : Hooks) (choice : C) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (callerIndex calleeIndex : Nat)
+    (dest : Place) (ty : TyId) : M Unit := do
+  let calleeAbi ← at? calleeAbis calleeIndex "missing callee ABI"
+  let caller ← match args[callerIndex]? with
+    | none => throw (.undefinedBehavior "calling a function with fewer arguments than it requires")
+    | some arg => pure arg
+  let callerAbi ← at? callerAbis callerIndex "missing caller ABI"
+  passArgument h choice caller callerAbi calleeAbi calleeIndex dest ty false
+
+/-- Initialize a MIR argument local, advancing the ABI cursors according to its kind. -/
+def initFrameArgumentStep (h : Hooks) (choice : C) (body : Body) (nonCapturing : Bool)
+    (vaListArg : Option LocalId) (args : Array (FnArg P)) (callerAbis calleeAbis : Array ArgABI)
+    (zeroIndex : Nat) (indices : Nat × Nat) : M (ForInStep (Nat × Nat)) := do
+  let mut callerIndex := indices.1
+  let mut calleeIndex := indices.2
+  let localId := zeroIndex + 1
+  setSpan h (← h.localSpan body localId)
+  let dest : Place := ⟨localId, #[]⟩
+  let ty := (← h.localLayout choice localId).ty
+  if nonCapturing && localId == 1 then
+    require (vaListArg.isNone && body.spreadArgument != some localId) "special closure argument conflict"
+    let calleeAbi ← at? calleeAbis calleeIndex "missing closure ABI"
+    calleeIndex := calleeIndex + 1
+    require (h.isOneZst (h.argLayout calleeAbi) && h.argIsIgnore calleeAbi) "closure self ABI not ignorable 1-ZST"
+    h.storageLiveDyn choice localId .none
+    if callerAbis.size == calleeAbis.size then
+      let _ ← at? args callerIndex "missing closure caller argument"
+      let callerAbi ← at? callerAbis callerIndex "missing closure caller ABI"
+      callerIndex := callerIndex + 1
+      unless h.isOneZst (h.argLayout callerAbi) do
+        throw (.undefinedBehavior "AbiMismatchArgument closure self")
+      require (h.argIsIgnore callerAbi) "closure caller ABI not ignored"
+  else if vaListArg == some localId then
+    h.storageLiveDyn choice localId .none
+    let dest ← h.evalPlace choice dest false
+    let mplace ← h.forceAllocation choice dest
+    let mut remaining := #[]
+    for idx in [callerIndex:args.size] do
+      remaining := remaining.push ((← at? args idx "missing vararg"),
+        (← at? callerAbis idx "missing vararg ABI"))
+    require (calleeIndex == calleeAbis.size) "excess variadic callee ABI"
+    let varargs ← h.withRetagMode choice .None
+      (allocateVarargs h choice remaining)
+    callerIndex := args.size
+    let frame ← h.getFrame
+    h.setFrame { frame with vaList := varargs.map fun p => ⟨p.mplace, localMemoryLayout p.layout⟩ }
+    let key ← h.vaListPtr choice varargs
+    h.writeZeroBytes choice mplace.mplace.ptr mplace.layout.layout.size
+    let keyPlace ← h.vaListKeyField choice mplace
+    h.writePointerToMemory choice key keyPlace
+  else if body.spreadArgument == some localId then
+    h.storageLiveDyn choice localId .none
+    let fields ← h.tupleFields ty
+    for idx in [:fields.size] do
+      let fieldTy ← at? fields idx "missing spread field"
+      let dest := { dest with projection := #[.Field idx fieldTy] }
+      let calleeAbi ← at? calleeAbis calleeIndex "missing spread callee ABI"
+      let caller ← match args[callerIndex]? with
+        | none => throw (.undefinedBehavior "calling a function with fewer arguments than it requires")
+        | some arg => pure arg
+      let callerAbi ← at? callerAbis callerIndex "missing spread caller ABI"
+      passArgument h choice caller callerAbi calleeAbi calleeIndex dest fieldTy true
+      callerIndex := callerIndex + 1
+      calleeIndex := calleeIndex + 1
+  else
+    initOrdinaryArgument h choice args callerAbis calleeAbis callerIndex calleeIndex dest ty
+    callerIndex := callerIndex + 1
+    calleeIndex := calleeIndex + 1
+  pure (.yield (callerIndex, calleeIndex))
+
+/-- Traverse body arguments and report the caller and callee ABI cursor positions. -/
+def initFrameArgumentsBody (h : Hooks) (choice : C) (body : Body) (nonCapturing : Bool)
+    (vaListArg : Option LocalId) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) : M (Nat × Nat) := do
+  let indices ← forIn [:body.argumentCount] (0, 0)
+    (initFrameArgumentStep h choice body nonCapturing vaListArg args callerAbis calleeAbis)
+  pure (indices.1, indices.2)
+
+/-- Initialize the body arguments under the function-entry retag mode. -/
+def initFrameArguments (h : Hooks) (choice : C) (body : Body) (nonCapturing : Bool)
+    (vaListArg : Option LocalId) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) : M (Nat × Nat) :=
+  h.withRetagMode choice .FnEntry
+    (initFrameArgumentsBody h choice body nonCapturing vaListArg args callerAbis calleeAbis)
+
+/-- Check return ABI and protect an indirect destination before publishing the frame. -/
+def finishFrameInit (h : Hooks) (choice : C) (body : Body) (callerFnAbi calleeFnAbi : FnABI)
+    (args : Array (FnArg P)) (requiresLocation : Bool) (calleeAbis : Array ArgABI)
+    (destinationOp : OpTy P) (preambleSpan : SpanRef) (indices : Nat × Nat) : M Unit := do
+  let (callerIndex, calleeIndex) := indices
+  let destinationMplace := match destinationOp.op with
+    | .indirect place => some (MPlaceTy.mk place destinationOp.layout)
+    | .immediate _ => none
+  setSpan h (← h.localSpan body 0)
+  unless ← h.checkArgumentCompat choice (h.abiReturn callerFnAbi) (h.abiReturn calleeFnAbi) do
+    throw (.undefinedBehavior "AbiMismatchReturn")
+  if let some mplace := destinationMplace then h.protectArgument choice mplace
+  setSpan h preambleSpan
+  let calleeIndex ← if requiresLocation then do
+      let _ ← at? calleeAbis calleeIndex "missing implicit caller location ABI"
+      pure (calleeIndex + 1)
+    else pure calleeIndex
+  require (calleeIndex == calleeAbis.size) "mismatch between callee ABI and callee body arguments"
+  if callerIndex < args.size then
+    throw (.undefinedBehavior "calling a function with more arguments than it expected")
+  h.afterFrameInit choice
+  h.pushDone choice
+
 /-- Source `init_stack_frame`, including all four argument initialization arms. -/
 def initStackFrame (h : Hooks) (choice : C) (fnInstance : CallInstance) (loadedBody : LoadedBody)
     (callerFnAbi : FnABI) (args : Array (FnArg P)) (withCallerLocation : Bool)
@@ -257,9 +369,6 @@ def initStackFrame (h : Hooks) (choice : C) (fnInstance : CallInstance) (loadedB
     | .stop _ => cont
     | .goto ret _ => .goto ret .Unreachable
   let destinationOp ← h.placeToOp choice destination
-  let destinationMplace := match destinationOp.op with
-    | .indirect place => some (MPlaceTy.mk place destinationOp.layout)
-    | .immediate _ => none
   h.pushRaw choice fnInstance loadedBody destination cont
   let frame ← h.getFrame
   let preambleSpan ← match frame.location with
@@ -272,83 +381,10 @@ def initStackFrame (h : Hooks) (choice : C) (fnInstance : CallInstance) (loadedB
   let calleeAbis := h.abiArgs calleeFnAbi
   require (args.size + (if withCallerLocation then 1 else 0) == callerAbis.size)
     "mismatch between caller ABI and arguments"
-  let (callerIndex, calleeIndex) ← h.withRetagMode choice .FnEntry do
-    let mut callerIndex := 0
-    let mut calleeIndex := 0
-    for zeroIndex in [:body.argumentCount] do
-      let localId := zeroIndex + 1
-      setSpan h (← h.localSpan body localId)
-      let dest : Place := ⟨localId, #[]⟩
-      let ty := (← h.localLayout choice localId).ty
-      if nonCapturing && localId == 1 then
-        require (vaListArg.isNone && body.spreadArgument != some localId) "special closure argument conflict"
-        let calleeAbi ← at? calleeAbis calleeIndex "missing closure ABI"
-        calleeIndex := calleeIndex + 1
-        require (h.isOneZst (h.argLayout calleeAbi) && h.argIsIgnore calleeAbi) "closure self ABI not ignorable 1-ZST"
-        h.storageLiveDyn choice localId .none
-        if callerAbis.size == calleeAbis.size then
-          let _ ← at? args callerIndex "missing closure caller argument"
-          let callerAbi ← at? callerAbis callerIndex "missing closure caller ABI"
-          callerIndex := callerIndex + 1
-          unless h.isOneZst (h.argLayout callerAbi) do
-            throw (.undefinedBehavior "AbiMismatchArgument closure self")
-          require (h.argIsIgnore callerAbi) "closure caller ABI not ignored"
-      else if vaListArg == some localId then
-        h.storageLiveDyn choice localId .none
-        let dest ← h.evalPlace choice dest false
-        let mplace ← h.forceAllocation choice dest
-        let mut remaining := #[]
-        for idx in [callerIndex:args.size] do
-          remaining := remaining.push ((← at? args idx "missing vararg"),
-            (← at? callerAbis idx "missing vararg ABI"))
-        require (calleeIndex == calleeAbis.size) "excess variadic callee ABI"
-        let varargs ← h.withRetagMode choice .None
-          (allocateVarargs h choice remaining)
-        callerIndex := args.size
-        let frame ← h.getFrame
-        h.setFrame { frame with vaList := varargs.map fun p => ⟨p.mplace, localMemoryLayout p.layout⟩ }
-        let key ← h.vaListPtr choice varargs
-        h.writeZeroBytes choice mplace.mplace.ptr mplace.layout.layout.size
-        let keyPlace ← h.vaListKeyField choice mplace
-        h.writePointerToMemory choice key keyPlace
-      else if body.spreadArgument == some localId then
-        h.storageLiveDyn choice localId .none
-        let fields ← h.tupleFields ty
-        for idx in [:fields.size] do
-          let fieldTy ← at? fields idx "missing spread field"
-          let dest := { dest with projection := #[.Field idx fieldTy] }
-          let calleeAbi ← at? calleeAbis calleeIndex "missing spread callee ABI"
-          let caller ← match args[callerIndex]? with
-            | none => throw (.undefinedBehavior "calling a function with fewer arguments than it requires")
-            | some arg => pure arg
-          let callerAbi ← at? callerAbis callerIndex "missing spread caller ABI"
-          passArgument h choice caller callerAbi calleeAbi calleeIndex dest fieldTy true
-          callerIndex := callerIndex + 1
-          calleeIndex := calleeIndex + 1
-      else
-        let calleeAbi ← at? calleeAbis calleeIndex "missing callee ABI"
-        let caller ← match args[callerIndex]? with
-          | none => throw (.undefinedBehavior "calling a function with fewer arguments than it requires")
-          | some arg => pure arg
-        let callerAbi ← at? callerAbis callerIndex "missing caller ABI"
-        passArgument h choice caller callerAbi calleeAbi calleeIndex dest ty false
-        callerIndex := callerIndex + 1
-        calleeIndex := calleeIndex + 1
-    pure (callerIndex, calleeIndex)
-  setSpan h (← h.localSpan body 0)
-  unless ← h.checkArgumentCompat choice (h.abiReturn callerFnAbi) (h.abiReturn calleeFnAbi) do
-    throw (.undefinedBehavior "AbiMismatchReturn")
-  if let some mplace := destinationMplace then h.protectArgument choice mplace
-  setSpan h preambleSpan
-  let calleeIndex ← if requiresLocation then do
-      let _ ← at? calleeAbis calleeIndex "missing implicit caller location ABI"
-      pure (calleeIndex + 1)
-    else pure calleeIndex
-  require (calleeIndex == calleeAbis.size) "mismatch between callee ABI and callee body arguments"
-  if callerIndex < args.size then
-    throw (.undefinedBehavior "calling a function with more arguments than it expected")
-  h.afterFrameInit choice
-  h.pushDone choice
+  let (callerIndex, calleeIndex) ←
+    initFrameArguments h choice body nonCapturing vaListArg args callerAbis calleeAbis
+  finishFrameInit h choice body callerFnAbi calleeFnAbi args requiresLocation calleeAbis
+    destinationOp preambleSpan (callerIndex, calleeIndex)
 
 /-- One source dispatch, returning a recursive request for intrinsic fallback
 or virtual dispatch. This avoids hiding recursion in opaque machine callbacks. -/
@@ -561,8 +597,9 @@ abbrev ZeroHooks (P S C E Other Extern : Type) := CallHooks P S C E Other Extern
     (count : body.body.argumentCount = 0) :
     initStackFrame h choice fnInstance body abi #[] false (.memory destination) cont =
       zeroCore h choice fnInstance body abi destination cont := by
-  simp [initStackFrame,zeroCore,requires,instanceAbi,features,memory,closure,variadic,
-    convention,arguments,ret,count,require,setSpan,bind_assoc]
+  simp [initStackFrame, initFrameArguments, initFrameArgumentsBody, finishFrameInit, zeroCore,
+    requires, instanceAbi, features, memory, closure, variadic, convention, arguments, ret, count,
+    require, setSpan, bind_assoc]
 
 /-- Source specialization for a zero-argument call whose actual preflight
 operand is immediate. The preflight equation is an internal composition edge. -/
@@ -600,8 +637,9 @@ def zeroImmediateCore (h : ZeroHooks P S C E Other Extern) (choice : C)
     (count : body.body.argumentCount = 0) :
     initStackFrame h choice fnInstance body abi #[] false destination cont before =
       zeroImmediateCore h choice fnInstance body abi destination cont cached := by
-  simp only [initStackFrame,zeroImmediateCore,requires,instanceAbi,features,closure,variadic,
-    convention,arguments,ret,count,require,setSpan,bind_assoc,pure_bind]
+  simp only [initStackFrame, initFrameArguments, initFrameArgumentsBody, finishFrameInit,
+    zeroImmediateCore, requires, instanceAbi, features, closure, variadic, convention, arguments, ret, count,
+    require, setSpan, bind_assoc, pure_bind]
   simp [bind,Bind.bind,EStateM.bind,pure,Pure.pure,EStateM.pure,immediate]
   rfl
 
@@ -642,8 +680,9 @@ def zeroIndirectCore (h : ZeroHooks P S C E Other Extern) (choice : C) (fnInstan
     (count : body.body.argumentCount = 0) :
     initStackFrame h choice fnInstance body abi #[] false destination cont before =
       zeroIndirectCore h choice fnInstance body abi destination memory cont cached := by
-  simp only [initStackFrame,zeroIndirectCore,requires,instanceAbi,features,closure,variadic,
-    convention,arguments,ret,count,require,setSpan,bind_assoc,pure_bind]
+  simp only [initStackFrame, initFrameArguments, initFrameArgumentsBody, finishFrameInit,
+    zeroIndirectCore, requires, instanceAbi, features, closure, variadic, convention, arguments, ret, count,
+    require, setSpan, bind_assoc, pure_bind]
   simp [bind,Bind.bind,EStateM.bind,pure,Pure.pure,EStateM.pure,indirect]
   rfl
 
