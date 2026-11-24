@@ -140,7 +140,10 @@ returning trace to the current VC.
 `--target RootZeroCompletePrefix` checks the current zero-count root from
 entry through the selected `Return` under its stated canonical Shallow machine
 premises, with any surrounding frame array.
-`--target RootZeroComplete` selects the larger proof closure for migration work.
+`--target RootZeroComplete` checks the whole zero-count root call with a
+physical Boolean destination and the stated release profile, down to the
+actual memory update and root stop. The nested caller-return case has a
+separate proof boundary.
 
 The optional `RetagFrozenChild` target checks actual child insertion and
 the resulting range and permission frame under its concrete fresh-tag premises.

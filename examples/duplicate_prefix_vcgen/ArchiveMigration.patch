@@ -3198,3 +3198,388 @@
 @@ -326 +302 @@
 -    (present2 : state.machine.memory.live.find? (fun row => row.1 == id2) = some (id2, entry2))
 +    (present2 : state.machine.memory.live[id2]? = some entry2)
+--- a/examples/duplicate_prefix/PtrMetadataHelper.lean
++++ b/examples/duplicate_prefix/PtrMetadataHelper.lean
+@@ -1,0 +2 @@
++import duplicate_prefix.RootCompilerFacts
+@@ -44 +45 @@
+-    body.body.basicBlocks.size) = (6,1,#[5,49,49],1) := by decide +kernel
++    body.body.basicBlocks.size) = (6,1,#[4,44,44],1) := by decide +kernel
+@@ -58 +59 @@
+-theorem raw_pointer_class : CompilerExecutionProviders.scalarClass context 49 = .ok .pointer := by
++theorem raw_pointer_class : CompilerExecutionProviders.scalarClass context 44 = .ok .pointer := by
+@@ -63,2 +64,2 @@
+-theorem raw_pointer_pointee : CompilerFacts.requiredType context 49 "builtin_deref_explicit" = .ok 4 := by
+-  unfold CompilerFacts.requiredType CompilerFacts.optionalType
++theorem raw_pointer_pointee : CompilerFacts.requiredType context 44 "builtin_deref_explicit" = .ok 2 := by
++  unfold CompilerFacts.requiredType CompilerFacts.optionalType ConcreteTypeQueries.optionalType
+@@ -69,2 +70,2 @@
+-theorem slice_metadata_type : CompilerFacts.requiredType context 4 "pointer_metadata_type" = .ok 5 := by
+-  unfold CompilerFacts.requiredType CompilerFacts.optionalType
++theorem slice_metadata_type : CompilerFacts.requiredType context 2 "pointer_metadata_type" = .ok 4 := by
++  unfold CompilerFacts.requiredType CompilerFacts.optionalType ConcreteTypeQueries.optionalType
+@@ -87 +88 @@
+-theorem context_usize_layout : CompilerFacts.layoutOf context 5 = .ok RootCompilerFacts.usizeLayout := by
++theorem context_usize_layout : CompilerFacts.layoutOf context 4 = .ok RootCompilerFacts.usizeLayout := by
+@@ -89 +90 @@
+-  rw [show context.runtime.lookup 5 = PreparedReflection.actual.runtime.lookup 5 from
++  rw [show context.runtime.lookup 4 = PreparedReflection.actual.runtime.lookup 4 from
+@@ -94,2 +95,2 @@
+-def rawLayoutQuery := (PreparedReflection.actual.layoutResults[49]'(by decide +kernel))
+-def sliceLayoutQuery := (PreparedReflection.actual.layoutResults[4]'(by decide +kernel))
++def rawLayoutQuery := (PreparedReflection.actual.layoutResults[44]'(by decide +kernel))
++def sliceLayoutQuery := (PreparedReflection.actual.layoutResults[2]'(by decide +kernel))
+@@ -99,7 +100,32 @@
+-def sliceLayout := checkedOk sliceLayoutQuery slice_layout_supported
+-theorem raw_layout_eq : PreparedReflection.actual.runtime.lookup 49 = .ok rawLayout := by decide +kernel
+-
+-theorem slice_layout_eq : PreparedReflection.actual.runtime.lookup 4 = .ok sliceLayout := by decide +kernel
+-
+-theorem raw_layout_type : rawLayout.ty = 49 := by with_unfolding_all rfl
+-theorem slice_layout_type : sliceLayout.ty = 4 := by with_unfolding_all rfl
++def sliceLayout := RootCompilerFacts.pointeeLayout
++private theorem raw_layout_exact :
++    (PreparedReflection.actual.runtime.lookup 44).toOption = some rawLayout := by
++  have observation : PreparedReflection.actual.runtime.node 44 =
++      .ok PreparedReflection.actual.runtime.source.types[44] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[44].sourceLayout.normalizedType = 44 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[44]? =
++      some PreparedReflection.actual.runtime.source.types[44] := by rfl
++  have shape : PreparedReflection.actual.runtime.source.types[44].shape = .rawPointer 2 .Not := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[44].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.toOption, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary]
++  try rfl
++
++theorem raw_layout_eq : PreparedReflection.actual.runtime.lookup 44 = .ok rawLayout := by
++  have h := raw_layout_exact
++  generalize PreparedReflection.actual.runtime.lookup 44 = result at h ⊢
++  cases result <;> simpa [Except.toOption] using h
++
++
++theorem slice_layout_eq : PreparedReflection.actual.runtime.lookup 2 = .ok sliceLayout := RootCompilerFacts.pointee_layout_eq
++
++theorem raw_layout_type : rawLayout.ty = 44 := by with_unfolding_all rfl
++theorem slice_layout_type : sliceLayout.ty = 2 := by with_unfolding_all rfl
+@@ -109 +135 @@
+-theorem context_slice_layout : CompilerFacts.layoutOf context 4 = .ok sliceLayout := by
++theorem context_slice_layout : CompilerFacts.layoutOf context 2 = .ok sliceLayout := by
+@@ -111 +137 @@
+-  rw [show context.runtime.lookup 4 = PreparedReflection.actual.runtime.lookup 4 from
++  rw [show context.runtime.lookup 2 = PreparedReflection.actual.runtime.lookup 2 from
+@@ -119 +145 @@
+-    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) prepared).kind choice 49 = pure .raw := by
++    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) prepared).kind choice 44 = pure .raw := by
+@@ -126,2 +152,2 @@
+-theorem raw_builtin_deref : CompilerFacts.builtinDeref context 49 true = .ok (some 4) := by
+-  unfold CompilerFacts.builtinDeref CompilerFacts.optionalType
++theorem raw_builtin_deref : CompilerFacts.builtinDeref context 44 true = .ok (some 2) := by
++  unfold CompilerFacts.builtinDeref CompilerFacts.optionalType ConcreteTypeQueries.optionalType
+@@ -133 +159 @@
+-    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) prepared).builtinDeref choice 49 = pure (some 4) := by
++    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) prepared).builtinDeref choice 44 = pure (some 2) := by
+@@ -139 +165 @@
+-    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) prepared).layoutOf choice 4 = pure sliceLayout := by
++    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) prepared).layoutOf choice 2 = pure sliceLayout := by
+@@ -145 +171 @@
+-    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) prepared).structTail choice 4 = pure .slice := by
++    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) prepared).structTail choice 2 = pure .slice := by
+@@ -158 +184 @@
+-theorem metadata_layout : CompilerExecutionProviders.metadataLayout context 49 = .ok RootCompilerFacts.usizeLayout := by
++theorem metadata_layout : CompilerExecutionProviders.metadataLayout context 44 = .ok RootCompilerFacts.usizeLayout := by
+@@ -185 +211 @@
+-    (pointerType : pointerLayout.ty = 49) :
++    (pointerType : pointerLayout.ty = 44) :
+@@ -258 +284 @@
+-    (rawType : raw.ty = 49)
++    (rawType : raw.ty = 44)
+@@ -474,5 +500,43 @@
+-theorem abi_supported : abiQuery.isOk = true := by
+-  unfold abiQuery HelperCompilerFacts.abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-def abi := checkedOk (PreparedReflection.actual.abiResults[4]'(by decide +kernel)) (by decide +kernel)
++def abi := checkedOk (PreparedReflection.actual.abiResults[6]'(by decide +kernel)) (by decide +kernel)
++
++private def abiContext : CompilerFacts.Context :=
++  ⟨PreparedReflection.actual.runtime,
++    PreparedReflection.actual.compiler.lifecycle.instances.program, none⟩
++
++private def abiPolicy : SourceAbiPolicy :=
++  ⟨"x86_64", false, false, true, false, 536870912, true, false, false, false, true⟩
++
++private def abiDefinition : SourceAbiDefinition :=
++  ⟨6, ⟨#[44], 4, .Safe, .Rust, false, none⟩, none, false, true, false, false, false, false⟩
++
++private theorem abiDispatch :
++    abiQuery = SourceAbi.compute abiPolicy abiContext.runtime.target
++      (SourceAbiRuntime.queries abiContext abiPolicy) abiDefinition.signature #[] (some abiDefinition) true := by
++  unfold abiQuery HelperCompilerFacts.abiQuery CompilerInstanceAbi.abiOfInstance SourceAbiRuntime.ofInstance
++  rfl
++
++private theorem queriesRaw :
++    (SourceAbiRuntime.queries abiContext abiPolicy).lookup 44 = .ok rawLayout := by
++  change (PreparedReflection.actual.runtime.lookup 44).mapError toString = _
++  rw [raw_layout_eq]
++  rfl
++
++private theorem queriesUsize :
++    (SourceAbiRuntime.queries abiContext abiPolicy).lookup 4 = .ok RootCompilerFacts.usizeLayout := by
++  change (PreparedReflection.actual.runtime.lookup 4).mapError toString = _
++  rw [RootCompilerFacts.usize_layout_eq]
++  rfl
++
++private theorem rawBackend : rawLayout.layout.backendRepr =
++    .ScalarPair
++      (a := .Initialized (value := .Pointer AddressSpace.ZERO) (validRange := ⟨0, 18446744073709551615⟩))
++      (b := .Initialized (value := .Int .I64 false) (validRange := ⟨0, 18446744073709551615⟩))
++      (bOffset := Size.ofBytes 8) := rfl
++
++private theorem usizeBackend : RootCompilerFacts.usizeLayout.layout.backendRepr =
++    .Scalar (.Initialized (value := .Int .I64 false) (validRange := ⟨0, 18446744073709551615⟩)) := rfl
++
++private theorem rawPointee :
++    (SourceAbiRuntime.queries abiContext abiPolicy).pointeeInfo rawLayout Size.ZERO =
++      .ok (some ⟨Size.ZERO, Align.ONE, none⟩) := rfl
++
+@@ -480,4 +544,17 @@
+-  unfold abiQuery HelperCompilerFacts.abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-theorem site_abi : resolved.abi = .normal 4 := by with_unfolding_all rfl
++  rw [abiDispatch]
++  have architecture : (abiPolicy.architecture == "x86_64") = true := rfl
++  have notRustCall : ((ExternAbi.Rust : ExternAbi) == .RustCall) = false := rfl
++  have indices : List.range' 0 1 = [0] := rfl
++  simp [SourceAbi.compute, abiDefinition, architecture, notRustCall, indices,
++    SourceAbi.canonicalConvention, SourceAbi.canUnwind, bind, Bind.bind, Except.bind,
++    pure, Pure.pure, Except.pure, queriesRaw, queriesUsize, CanonAbi.isRusticAbi]
++  have rawNZ : rawLayout.layout.isZst = false := rfl
++  have usizeNZ : RootCompilerFacts.usizeLayout.layout.isZst = false := rfl
++  simp [SourceAbi.argument, SourceAbi.scalarAttributes, rawBackend, usizeBackend,
++    rawNZ, usizeNZ, rawPointee, bind, Bind.bind, Except.bind, pure, Pure.pure, Except.pure]
++  have panicAbort : abiPolicy.panicUnwinds = false := rfl
++  simp [Scalar.isUninitValid, Align.ONE, WrappingRange.contains, ArgAttributes.new, panicAbort]
++  try rfl
++
++theorem abi_supported : abiQuery.isOk = true := by rw [abi_eq]; rfl
++theorem site_abi : resolved.abi = .normal := by with_unfolding_all rfl
+@@ -485 +562 @@
+-    abi.cVariadic,abi.conv,abi.canUnwind) = (#[49],5,1,false,.Rust,true) := by decide +kernel
++    abi.cVariadic,abi.conv,abi.canUnwind) = (#[44],4,1,false,.Rust,false) := by decide +kernel
+@@ -501 +578 @@
+-      ``actual_integer_metadata, ``abi_shape] do
++      ``actual_integer_metadata, ``abi_shape, ``abi_eq, ``site_abi] do
+--- a/examples/duplicate_prefix/PhysicalActualBoolWrite.lean
++++ b/examples/duplicate_prefix/PhysicalActualBoolWrite.lean
+@@ -25 +25 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -50,2 +50 @@
+-        {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-          (id,{entry with allocation := updated}))}}} ∧
++        {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))}}} ∧
+@@ -68,2 +67,7 @@
+-  have canonicalHeap : (after.machine.memory.live.filter fun row => row.1 != id).push (id,⟨entry.kind,updated⟩) = after.machine.memory.live := by
+-    simp [after, CanonicalCopy.replaceAllocation, Array.filter_push, Array.filter_filter]
++  have canonicalHeap : (after.machine.memory.live.insert id ⟨entry.kind,updated⟩) = after.machine.memory.live := by
++    apply Std.ExtTreeMap.ext_getElem?
++    intro key
++    by_cases same : key = id
++    · subst key
++      simpa only [Std.ExtTreeMap.getElem?_insert_self] using afterPresent.symm
++    · simp [Std.ExtTreeMap.getElem?_insert, Ne.symm same]
+--- a/examples/duplicate_prefix/PhysicalActualBoolValidity.lean
++++ b/examples/duplicate_prefix/PhysicalActualBoolValidity.lean
+@@ -20 +20 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -31 +31 @@
+-    (canonicalHeap : (state.machine.memory.live.filter fun row => row.1 != id).push (id,entry) = state.machine.memory.live)
++    (canonicalHeap : (state.machine.memory.live.insert id entry) = state.machine.memory.live)
+--- a/examples/duplicate_prefix/PhysicalBoolValidation.lean
++++ b/examples/duplicate_prefix/PhysicalBoolValidation.lean
+@@ -17 +17 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -28 +28 @@
+-    (canonicalHeap : (state.machine.memory.live.filter fun row => row.1 != id).push (id,entry) = state.machine.memory.live)
++    (canonicalHeap : (state.machine.memory.live.insert id entry) = state.machine.memory.live)
+--- a/examples/duplicate_prefix/PhysicalValidityMemory.lean
++++ b/examples/duplicate_prefix/PhysicalValidityMemory.lean
+@@ -13 +13 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -26 +26 @@
+-        {state.machine.memory with live := (state.machine.memory.live.filter fun row => row.1 != id).push (id,entry)}}} := by
++        {state.machine.memory with live := (state.machine.memory.live.insert id entry)}}} := by
+@@ -57 +57 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -68 +68 @@
+-        {state.machine.memory with live := (state.machine.memory.live.filter fun row => row.1 != id).push (id,entry)}}} := by
++        {state.machine.memory with live := (state.machine.memory.live.insert id entry)}}} := by
+--- a/examples/duplicate_prefix/PhysicalBoolReturn.lean
++++ b/examples/duplicate_prefix/PhysicalBoolReturn.lean
+@@ -28 +28 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -55,2 +55 @@
+-        {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-          (id,{entry with allocation := updated}))}}},.ok ()) ∧
++        {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))}}},.ok ()) ∧
+--- a/examples/duplicate_prefix/PhysicalMemoryRead.lean
++++ b/examples/duplicate_prefix/PhysicalMemoryRead.lean
+@@ -13 +13 @@
+-    if name.toString.endsWith suffix then some name else none
++    if ("." ++ name.toString).endsWith suffix then some name else none
+@@ -44,0 +45 @@
++  unfold readImmediateAfterAccess
+@@ -79 +79,0 @@
+-  simp only [Bind.bind, Pure.pure, Id.instMonad]
+--- a/examples/duplicate_prefix/ReferenceChecks.lean
++++ b/examples/duplicate_prefix/ReferenceChecks.lean
+@@ -41 +41 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : state.machine.memory.live[id]? = some entry)
+--- a/examples/duplicate_prefix/ReferenceValidity.lean
++++ b/examples/duplicate_prefix/ReferenceValidity.lean
+@@ -53 +53 @@
+-  unfold_internal ".Miri.Interpreter.isPrimitiveReadable"
++  unfold Miri.Interpreter.isPrimitiveReadable
+@@ -56 +56 @@
+-    Miri.Interpreter.readImmediateRaw, retain, get, getThe, MonadStateOf.get, EStateM.get,
++    Miri.Interpreter.readImmediateRaw, Miri.Interpreter.finishImmediateRead, retain, get, getThe, MonadStateOf.get, EStateM.get,
+--- a/examples/duplicate_prefix/RootFatRawPointerValidity.lean
++++ b/examples/duplicate_prefix/RootFatRawPointerValidity.lean
+@@ -56 +56 @@
+-  have kindQuery : hooks.classify () layout.ty active = .ok (.rawPointer 4 false) active := by
++  have kindQuery : hooks.classify () layout.ty active = .ok (.rawPointer 2 false) active := by
+@@ -93 +93 @@
+-    valid live cached sized pa pb ra rb offset repr debug ghostFalse retain "*const [u8]" 4
++    valid live cached sized pa pb ra rb offset repr debug ghostFalse retain "*const [u8]" 2
+@@ -150 +150 @@
+-  have kindQuery : hooks.classify () layout.ty active = .ok (.rawPointer 4 false) active := by
++  have kindQuery : hooks.classify () layout.ty active = .ok (.rawPointer 2 false) active := by
+@@ -190 +190 @@
+-    valid live cached sized pa pb ra rb offset repr debug ghostFalse retain "*const [u8]" 4
++    valid live cached sized pa pb ra rb offset repr debug ghostFalse retain "*const [u8]" 2
+--- a/examples/duplicate_prefix/RootPhysicalReturn.lean
++++ b/examples/duplicate_prefix/RootPhysicalReturn.lean
+@@ -49 +49 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -76,2 +76 @@
+-        {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-          (id,{entry with allocation := updated}))}}},.ok ()) ∧
++        {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))}}},.ok ()) ∧
+@@ -156 +155 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -182,2 +181 @@
+-        {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-          (id,{entry with allocation := updated}))}}},.ok true) ∧
++        {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))}}},.ok true) ∧
+@@ -260 +258 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+--- a/examples/duplicate_prefix/RootPhysicalReturnPlan.lean
++++ b/examples/duplicate_prefix/RootPhysicalReturnPlan.lean
+@@ -19 +19 @@
+-      (present : memory.live.find? (fun row => row.1 == id) = some (id,entry))
++      (present : memory.live[id]? = some entry)
+@@ -26 +26 @@
+-      (present : memory.live.find? (fun row => row.1 == id) = some (id,entry))
++      (present : memory.live[id]? = some entry)
+@@ -34 +34 @@
+-      (present : memory.live.find? (fun row => row.1 == id) = some (id,entry))
++      (present : memory.live[id]? = some entry)
+@@ -40 +40 @@
+-      (present : memory.live.find? (fun row => row.1 == id) = some (id,entry))
++      (present : memory.live[id]? = some entry)
+@@ -48 +48 @@
+-      (present : memory.live.find? (fun row => row.1 == id)=some (id,entry))
++      (present : memory.live[id]?=some entry)
+@@ -55 +55 @@
+-      (present : memory.live.find? (fun row => row.1 == id)=some (id,entry))
++      (present : memory.live[id]?=some entry)
+--- a/examples/duplicate_prefix/RootZeroComplete.lean
++++ b/examples/duplicate_prefix/RootZeroComplete.lean
+@@ -66 +66 @@
+-    (initialPresent : initialMachine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (initialPresent : initialMachine.memory.live[id]? = some entry)
+@@ -110 +110 @@
+-    RootZeroCompletePrefix.reaches_return options limits remaining span source debugOff fuel validationFuel frame initialMachine
++    RootZeroCompletePrefix.reaches_return options limits remaining span source debugOff fuel validationFuel #[] frame initialMachine
+@@ -141 +141 @@
+-  have presentDerived : state.machine.memory.live.find? (fun row => row.1 == id)=some (id,entry) := by
++  have presentDerived : state.machine.memory.live[id]?=some entry := by
+--- a/examples/duplicate_prefix/RootZeroCompleteExitState.lean
++++ b/examples/duplicate_prefix/RootZeroCompleteExitState.lean
+@@ -15,3 +15,3 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id,entry))
+-    (targetPresent : memory.live.find? (fun row => row.1 == target) = some (target,targetEntry)) :
+-    (StackPopRelease.commitTree memory id entry entry.allocation.extra).live.find? (fun row => row.1 == target) = some (target,targetEntry) := by
++    (present : memory.live[id]? = some entry)
++    (targetPresent : memory.live[target]? = some targetEntry) :
++    (StackPopRelease.commitTree memory id entry entry.allocation.extra).live[target]? = some targetEntry := by
+@@ -21 +21 @@
+-    have equal : targetEntry=entry := (Prod.mk.inj (Option.some.inj targetPresent)).2.symm
++    have equal : targetEntry=entry := (Option.some.inj targetPresent).symm
+@@ -29,2 +29,2 @@
+-    (present : before.live.find? (fun row => row.1 == id)= some (id,entry)) :
+-    after.live.find? (fun row => row.1 == id)= some (id,entry) := by
++    (present : before.live[id]?= some entry) :
++    after.live[id]?= some entry := by
+--- a/examples/duplicate_prefix/TypedRetagEntry.lean
++++ b/examples/duplicate_prefix/TypedRetagEntry.lean
+@@ -108 +108 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
++    (present : state.machine.memory.live[id]? = some entry) :
+@@ -117 +117 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
++    (present : state.machine.memory.live[id]? = some entry) :
+@@ -245 +245 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
+@@ -320,2 +320,2 @@
+-  have parentPresent : parentState.machine.memory.live.find? (fun row => row.1 == id) =
+-      some (id, {entry with allocation := entry.allocation.setExtra parentTree}) :=
++  have parentPresent : parentState.machine.memory.live[id]? =
++      some {entry with allocation := entry.allocation.setExtra parentTree} :=
+@@ -364 +364 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
+@@ -455 +455 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
+@@ -524 +524 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
+--- a/examples/duplicate_prefix/TypedRetagGeneric.lean
++++ b/examples/duplicate_prefix/TypedRetagGeneric.lean
+@@ -127 +127 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
+@@ -207,2 +207,2 @@
+-  have parentPresent : parentState.machine.memory.live.find? (fun row => row.1 == id) =
+-      some (id, {entry with allocation := entry.allocation.setExtra parentTree}) :=
++  have parentPresent : parentState.machine.memory.live[id]? =
++      some {entry with allocation := entry.allocation.setExtra parentTree} :=
+@@ -255 +255 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
+@@ -352 +352 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
+@@ -425 +425 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
