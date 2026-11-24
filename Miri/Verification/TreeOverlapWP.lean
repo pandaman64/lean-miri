@@ -470,7 +470,7 @@ private theorem read_write_geometry (tree : BorrowTree)
     (by rwa [extent, preserved])).1
 
 /-- Rewrite a paired read/write goal using two iterator geometry proofs. -/
-macro "miri_tree_range_wp" "bytes" "using" readProof:term "and" writeProof:term : tactic =>
+macro "miri_tree_range_wp" &"bytes" "using" readProof:term "and" writeProof:term : tactic =>
   `(tactic| first
     | rw [wp_read_write_bytes_iff _ _ _ _ _ _ _ _ _ _ _ _ _ $readProof $writeProof]
     | simp only [binderNameHint, TreeRangeCursorsWP.wp_write_return_succeeds_iff]
@@ -522,14 +522,14 @@ theorem accessPre_read_write_wellFormed_iff (tree : BorrowTree) (reader writer :
 
 /-- Lower a pair of checked ranged accesses using the initial partition and
 the checked endpoints in the local context. -/
-macro "miri_tree_range_wp" "bytes" : tactic =>
+macro "miri_tree_range_wp" &"bytes" : tactic =>
   `(tactic| simp (disch := assumption) only [binderNameHint,
     TreeRangeCursorsWP.wp_write_return_succeeds_iff, wp_read_write_wellFormed_iff,
     accessPre_read_write_wellFormed_iff])
 
 /-- Lower a pair using specified proofs of the partition invariant and the
 checked endpoints and bounds. -/
-macro "miri_tree_range_wp" "bytes" "using" formed:term "," readEnd:term "," writeEnd:term ","
+macro "miri_tree_range_wp" &"bytes" "using" formed:term "," readEnd:term "," writeEnd:term ","
     readBound:term "," writeBound:term : tactic =>
   `(tactic| first
     | rw [wp_read_write_wellFormed_iff _ _ _ _ _ _ _ _ _ _ _ _ _
