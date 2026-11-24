@@ -36,7 +36,6 @@ theorem rejectedFromCanonicalAdmitted
     (positiveLen : 0 < len) (bounded : len ≤ 9223372036854775807)
     (memoryBounds : offset.toNat + len.toNat ≤ entry.allocation.byteSize.bytes.toNat)
     (notNull : base + offset ≠ 0)
-    (cmp : ProjectionMetadataFacts.NullComparator)
     (coherent : CoherentForest entry.allocation.extra) (parentNode : TreeNode)
     (parentStored : entry.allocation.extra.nodeAt parent = some parentNode)
     (roots : entry.allocation.extra.roots = #[root]) (parentFound : entry.allocation.extra.indexOfTag parentTag = some parent)
@@ -94,7 +93,7 @@ theorem rejectedFromCanonicalAdmitted
     uncached4 uncached5 live2 cached2 admitted.stack.calleeClocksOff admitted.immediateLocals tracker tracked defaultMode
     profile.ghostOff profile.shallow profile.unchecked profile.noGc profile.fixed sizing
     profile.preciseInteriorMutOff profile.implicitWritesOff id parentTag parent root base offset len entry fresh cached live
-    allocationMut profile.raceOff positiveLen bounded memoryBounds notNull cmp profile.compilerRuntime profile.noSyntheticSliceCache
+    allocationMut profile.raceOff positiveLen bounded memoryBounds notNull ProjectionMetadataFacts.nullComparator profile.compilerRuntime profile.noSyntheticSliceCache
     coherent parentNode parentStored roots parentFound depth rank tagFresh nodeFresh unheld room aligned reuse clean bounds
     owners extent sourceSlot ready sameId sameRoot sameHolder sameTag heldUnexposed admitted.resultSlot tempSlot rejected
     profile.backendOff dispatch dispatchFuel cacheValid tagHeadroom pool keyShape nodeRoom keyAge nodeAge protectedAge

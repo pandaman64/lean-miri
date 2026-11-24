@@ -7,8 +7,10 @@ import duplicate_prefix.RootPhysicalReturnPlan
 namespace DuplicatePrefix.CanonicalCallDomain
 open Miri Miri.DataStructures Miri.Input Miri.Interpreter Miri.Memory Miri.TreeBorrows Miri.Verification
 
-theorem ReleaseRange.releaseEmpty {tree holder start tag}
-    (range : ReleaseRange tree holder start 0) (formed : tree.locations.WellFormed)
+/-- A dormant, unexposed tag has no recorded location to visit on release. -/
+theorem releaseDormant {tree : BorrowTree} {holder : UniIndex} {tag : BorTag}
+    (dormant : ∀ position (inside : position < tree.locations.entries.size),
+      tree.locations.entries[position].data.perms.get holder = none)
     {node : TreeNode} (tagAt : tree.indexOfTag tag = some holder)
     (nodeAt : tree.nodeAt holder = some node) (unexposed : node.isExposed = false)
     (tags : ProtectedTags) :
@@ -18,7 +20,7 @@ theorem ReleaseRange.releaseEmpty {tree holder start tag}
     refine ⟨tree.locations.entries[position], ?_, ?_⟩
     · exact GeneralRangeMapState.index_exact tree.locations position inside
     · intro state found
-      rw [range.noEmptyMaterialization formed inside] at found
+      rw [dormant position inside] at found
       contradiction
   have exactWP := (ZeroTail.release_unused tree tag tags holder tagAt node nodeAt unexposed unused
     (· = tree) (fun _ _ => False)).mpr rfl
@@ -28,16 +30,24 @@ theorem ReleaseRange.releaseEmpty {tree holder start tag}
     rw [release] at result
     cases status <;> first | exact congrArg (fun output => BorrowTree.ProtectorReleaseResult.mk output .Released) result | contradiction
 
-/-- Prefix a physical return release plan by an empty concrete argument's
-ordered protector row. The exact tree is preserved, even when the next
-protector belongs to the same allocation. -/
-theorem ReleaseRange.prependEmptyRelease
+theorem ReleaseRange.releaseEmpty {tree holder start tag}
+    (range : ReleaseRange tree holder start 0) (formed : tree.locations.WellFormed)
+    {node : TreeNode} (tagAt : tree.indexOfTag tag = some holder)
+    (nodeAt : tree.nodeAt holder = some node) (unexposed : node.isExposed = false)
+    (tags : ProtectedTags) :
+    tree.releaseProtector tag tags = ⟨tree, .Released⟩ :=
+  releaseDormant (fun _ inside => range.noEmptyMaterialization formed inside) tagAt nodeAt unexposed tags
+
+/-- Prefix the ordered release plan with a dormant protector. The exact tree
+and keyed memory are preserved, including when the next protector belongs
+to the same allocation. -/
+theorem prependDormantRelease
     (memory final : MemoryState Provenance BorrowTree MiriMemoryKind)
     {id : AllocId} {entry : LocalAllocation Provenance BorrowTree MiriMemoryKind}
     (present : memory.live[id]? = some entry) {tag : BorTag} {holder : UniIndex}
-    {start : ABI.Size} {node : TreeNode}
-    (range : ReleaseRange entry.allocation.extra holder start 0)
-    (formed : entry.allocation.extra.locations.WellFormed)
+    {node : TreeNode}
+    (dormant : ∀ position (inside : position < entry.allocation.extra.locations.entries.size),
+      entry.allocation.extra.locations.entries[position].data.perms.get holder = none)
     (tagAt : entry.allocation.extra.indexOfTag tag = some holder)
     (nodeAt : entry.allocation.extra.nodeAt holder = some node)
     (unexposed : node.isExposed = false)
@@ -57,7 +67,23 @@ theorem ReleaseRange.prependEmptyRelease
       · simp [Std.ExtTreeMap.getElem?_insert, Ne.symm equal]
     simp [StackPopRelease.commitTree, sameExtra, sameLive]
   exact .live id tag entry entry.allocation.extra rows memory final present
-    (range.releaseEmpty formed tagAt nodeAt unexposed tags) (sameMemory.symm ▸ tail)
+    (releaseDormant dormant tagAt nodeAt unexposed tags) (sameMemory.symm ▸ tail)
+
+theorem ReleaseRange.prependEmptyRelease
+    (memory final : MemoryState Provenance BorrowTree MiriMemoryKind)
+    {id : AllocId} {entry : LocalAllocation Provenance BorrowTree MiriMemoryKind}
+    (present : memory.live[id]? = some entry) {tag : BorTag} {holder : UniIndex}
+    {start : ABI.Size} {node : TreeNode}
+    (range : ReleaseRange entry.allocation.extra holder start 0)
+    (formed : entry.allocation.extra.locations.WellFormed)
+    (tagAt : entry.allocation.extra.indexOfTag tag = some holder)
+    (nodeAt : entry.allocation.extra.nodeAt holder = some node)
+    (unexposed : node.isExposed = false)
+    (tags : ProtectedTags) (rows : List (AllocId × BorTag))
+    (tail : StackPopRelease.Plan tags rows memory final) :
+    StackPopRelease.Plan tags ((id, tag) :: rows) memory final :=
+  prependDormantRelease memory final present (fun _ inside => range.noEmptyMaterialization formed inside)
+    tagAt nodeAt unexposed tags rows tail
 
 /-- A dedicated physical Bool slot is a specific return-place representation.
 General in-bounds Bool destinations in `CanonicalCallDomain` can have a
@@ -99,6 +125,7 @@ theorem Admitted.prependEmptyArgumentRelease {program options remaining tagHeadr
 
 #print axioms Admitted.prependEmptyArgumentRelease
 #print axioms dedicatedPhysicalSlotRelease
+#print axioms prependDormantRelease
 #print axioms ReleaseRange.prependEmptyRelease
 #print axioms ReleaseRange.releaseEmpty
 end DuplicatePrefix.CanonicalCallDomain

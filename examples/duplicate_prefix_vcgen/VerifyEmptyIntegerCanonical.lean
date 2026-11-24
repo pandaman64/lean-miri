@@ -36,7 +36,6 @@ theorem emptyIntegerRejects
     (remaining dynamicFuel fuel dispatch : Nat) (span : PreparedContracts.FixedSpanQuery)
     (sizing : options.place.dynamicFuel = dynamicFuel+1)
     (validation : options.limits.validation = fuel+1) (calling : limits.callDispatch = dispatch+1)
-    (cmp : ProjectionMetadataFacts.NullComparator)
     (before : MachineHooks.State MiriMemoryKind Machine.RootUser)
     (frame : CompilerFrameContext.ActualFrame) (pointer : Pointer (Option Provenance)) (count : UInt64)
     (noProvenance : pointer.provenance = none) (positive : count ≠ 0)
@@ -104,7 +103,7 @@ theorem emptyIntegerRejects
     resultPlace, resultContinue, resultArgs, immediate, memory, tracking, ghost, shallow, race, fixed, unchecked,
     noGc, addresses, types, backend, extras, finalActive⟩ :=
     EmptyIntegerPrefix.reaches_return options limits remaining dispatch calling span profile.preciseInteriorMutOff
-      profile.implicitWritesOff profile.debugOff cmp compilerSourceComparator
+      profile.implicitWritesOff profile.debugOff ProjectionMetadataFacts.nullComparator compilerSourceComparator
       dynamicFuel fuel sizing validation frames frame machine pointer.offset.bytes count admitted.slice.nonnull positive
       body identity callee location size unused admitted.resultSlot slot1 slot2
       (by simpa using k3) (by simpa using k4) (by simpa using k5) (by simpa using k13)

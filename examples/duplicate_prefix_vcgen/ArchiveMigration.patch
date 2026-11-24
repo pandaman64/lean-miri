@@ -3998,9 +3998,15 @@
 +    change (CompilerFactAdapters.validityHooks PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts base).opsemInhabited () 5 active = _
 --- a/examples/duplicate_prefix/ProjectionMetadataFacts.lean
 +++ b/examples/duplicate_prefix/ProjectionMetadataFacts.lean
-@@ -0,0 +1 @@
+@@ -1,3 +1,4 @@
 +import duplicate_prefix.ActualCurrentSlice
-@@ -51,6 +52,6 @@
+ import duplicate_prefix.CanonicalConfigFacts
+ import duplicate_prefix.ReferenceMetadataFacts
+ import duplicate_prefix.CopyCompilerFacts
+@@ -48,41 +49,39 @@
+
+
+ open Miri Miri.Input
 -noncomputable def sliceLayout : LocalLayout :=
 -  ((PreparedReflection.actual.layoutResults[4]'(by decide +kernel))).toOption.getD CopyCompilerFacts.byteLayout
 -
@@ -4013,11 +4019,12 @@
 +  ActualCurrentSlice.lookup
 +
 +theorem slice_layout_shape : sliceLayout.ty = 2 ∧ sliceLayout.layout.isSized = false ∧
-@@ -59,2 +60 @@
+     sliceLayout.layout.align.abi = Align.ONE := by decide +kernel
+
 -/-- Exact leaf JSON comparison used by the pinned slice projection catalog.
 -This is separate from the immutable source-document comparison contract. -/
-+/-- Exact leaf JSON comparison in the archive's projection hypotheses. -/
-@@ -63,11 +63 @@
+-def NullComparator : Prop := (Lean.Json.null == Lean.Json.null) = true
+-
 -open Lean Elab Command in
 -run_cmd do
 - let names := (← getEnv).constants.toList.filterMap fun (n,_) =>
@@ -4029,15 +4036,21 @@
 -   with_unfolding_all rfl))
 -
 -theorem slice_field (cmp : NullComparator) :
++/-- Legacy proof parameter. The current typed slice lookup does not use a
++comparison of JSON values. -/
++abbrev NullComparator : Prop := True
++
++theorem nullComparator : NullComparator := True.intro
++
 +theorem slice_field (_cmp : NullComparator) :
-@@ -74,0 +65,6 @@
+     PreparedReflection.actual.runtime.field sliceLayout 0 = .ok CopyCompilerFacts.byteLayout := by
 +  let metadata := PreparedReflection.actual.runtime
 +  have fuel : metadata.source.types.size = 194 := rfl
 +  have node : metadata.node 2 = .ok metadata.source.types[2] := rfl
 +  have shape : metadata.source.types[2].shape = .slice 3 := rfl
 +  have variants : sliceLayout.layout.variants = .Single 0 := by decide +kernel
 +  change RuntimeMetadata.field metadata sliceLayout 0 = _
-@@ -76,5 +72,5 @@
+   unfold RuntimeMetadata.field
 -  rw [slice_layout_shape.1, slice_projection_parents cmp]
 -  simp only [← Array.forIn_toList]
 -  with_unfolding_all rfl
@@ -4048,21 +4061,51 @@
 +  exact CopyCompilerFacts.byte_layout_eq
 +
 +theorem slice_kind : EvalProjectionMachine.dynamicKind ReferenceMetadataFacts.prepared 2 = .ok .slice := by
-@@ -85 +81 @@
+   with_unfolding_all rfl
+
+ theorem world_slice_field (cmp : NullComparator) (world : RuntimeArrayTypes.World)
+     (metadata : world.metadata = PreparedReflection.actual.runtime)
 -    (notConstructed : world.entries.any (·.value.ty == 4) = false) :
 +    (notConstructed : world.entries.any (·.value.ty == 2) = false) :
-@@ -110 +106 @@
+     EvalProjectionMachine.field world sliceLayout 0 = .ok CopyCompilerFacts.byteLayout := by
+   unfold EvalProjectionMachine.field
+   rw [slice_layout_shape.1, notConstructed]
+@@ -107,7 +106,7 @@
+ theorem dynamic_field_at (cmp : NullComparator) (options : EvalPlaceConstruction.Options)
+     (table : RootRawVTable) (choice : Unit) (state : RootState)
+     (metadata : (EvalProjectionMachine.arrays.get state).metadata = PreparedReflection.actual.runtime)
 -    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false) :
 +    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false) :
-@@ -125 +121 @@
+     (EvalPlaceConstruction.dynamic PreparedReflection.actual.compiler options table).field choice
+       sliceLayout 0 state = .ok CopyCompilerFacts.byteLayout state := by
+   unfold EvalPlaceConstruction.dynamic
+@@ -122,7 +121,7 @@
+     (table : VTableHooks Provenance RootState Unit F A) (choice : Unit)
+     (state : RootState) (fuel : Nat) (len : UInt64)
+     (metadata : (EvalProjectionMachine.arrays.get state).metadata = PreparedReflection.actual.runtime)
 -    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
 +    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)
-@@ -153 +149 @@
+     (bounded : len ≤ options.maxSizeOfVal.bytes) :
+     DynamicLayout.sizeAndAlignFromMeta
+       (PlaceDynamic.withVTable (EvalPlaceConstruction.dynamic PreparedReflection.actual.compiler options sourceTable) table)
+@@ -150,7 +149,7 @@
+     (cmp : NullComparator) (choice : Unit) (state : RootState) (fuel : Nat) (len : UInt64)
+     (fuelEq : projection.dynamicFuel = fuel + 1)
+     (metadata : (EvalProjectionMachine.arrays.get state).metadata = PreparedReflection.actual.runtime)
 -    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
 +    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)
-@@ -179 +175 @@
+     (bounded : len ≤ options.maxSizeOfVal.bytes)
+     (place : MPlaceTy Provenance) (layout : place.layout = sliceLayout)
+     (metadataValue : place.mplace.metadata = .metadata (Scalar.fromScalarInt (ScalarInt.ofUInt64 len))) :
+@@ -176,7 +175,7 @@
+     (span : PreparedContracts.FixedSpanQuery) (cmp : NullComparator) (state : RootState)
+     (fuel : Nat) (fuelEq : options.place.dynamicFuel = fuel + 1) (len : UInt64)
+     (metadata : (EvalProjectionMachine.arrays.get state).metadata = PreparedReflection.actual.runtime)
 -    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
 +    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)
+     (bounded : len ≤ 9223372036854775807)
+     (place : MPlaceTy Provenance) (layout : place.layout = sliceLayout)
+     (metadataValue : place.mplace.metadata = .metadata (Scalar.fromScalarInt (ScalarInt.ofUInt64 len))) :
 --- a/examples/duplicate_prefix/RootGuardSwitch.lean
 +++ b/examples/duplicate_prefix/RootGuardSwitch.lean
 @@ -8 +8 @@
