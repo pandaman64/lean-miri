@@ -3490,7 +3490,8 @@ def normalCacheVisitsPre (tree : BorrowTree) (location : LocationTree)
     normalCacheVisitPre tree location kind tags access event
       (normalCacheVisitsPre tree location kind tags access post failure rest) failure current
 
-private def normalPermissionWriteback (location : LocationTree)
+/-- Write the normal visitor’s materialized slots into the sparse location map. -/
+def normalPermissionWriteback (location : LocationTree)
     (access : Tree.NormalAccessResult) : LocationTree := Id.run do
   let mut nextLocation := location
   for position in [:access.tree.locationStates.size] do
@@ -3629,6 +3630,44 @@ private theorem normalCommitPre_iff (tree : BorrowTree) (location : LocationTree
       normalCommitPre tree location kind tags access post failure := by
   exact normalCacheVisitsPre_iff tree location kind tags access post failure access.visited
     (normalPermissionWriteback location access, .ok ())
+
+/-- Visits to present, unexposed nodes leave the cache unchanged. In this
+case a normal access commits exactly its sparse permission writes. -/
+theorem performNormalAccessAt_unexposed (tree : BorrowTree) (location : LocationTree)
+    (start : UniIndex) (kind : AccessKind) (tags : ProtectedTags)
+    (mode : Tree.ChildrenVisitMode)
+    (unexposed : ∀ event ∈ (tree.performNormalAccessAt location start kind tags mode).access.visited,
+      ∃ index node, UniIndex.ofNat? event.node = some index ∧
+        tree.nodeAt index = some node ∧ node.isExposed = false) :
+    let result := tree.performNormalAccessAt location start kind tags mode
+    result.outcome = .ok () ∧ result.location = normalPermissionWriteback location result.access := by
+  dsimp only
+  rw [performNormalAccessAt_eq_commit] at unexposed ⊢
+  generalize (normalProjection tree location tags).performAccess start.toNat kind mode = access at unexposed ⊢
+  change ∀ event ∈ access.visited, _ at unexposed
+  have visits (events : List Tree.TraversalEvent) (current : LocationTree)
+      (valid : ∀ event ∈ events, ∃ index node, UniIndex.ofNat? event.node = some index ∧
+        tree.nodeAt index = some node ∧ node.isExposed = false) :
+      normalCacheVisitsPre tree location kind tags access (· = current) (fun _ _ => False)
+        events current := by
+    induction events with
+    | nil => rfl
+    | cons event rest ih =>
+      obtain ⟨index, node, indexEq, nodeEq, exposed⟩ := valid event (by simp)
+      simp only [normalCacheVisitsPre, normalCacheVisitPre, indexEq, nodeEq,
+        exposed, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+      exact ih (fun event member => valid event (List.mem_cons_of_mem _ member))
+  have committed := (normalCommitPre_iff tree location kind tags access
+    (· = normalPermissionWriteback location access) (fun _ _ => False)).mpr
+    (visits access.visited (normalPermissionWriteback location access) unexposed)
+  cases outcome : (commitNormalAccessAt tree location kind tags access).outcome with
+  | error error => simp only [outcome] at committed
+  | ok done =>
+    cases done
+    refine ⟨rfl, ?_⟩
+    have sameAccess : (commitNormalAccessAt tree location kind tags access).access = access := rfl
+    rw [sameAccess]
+    simpa only [outcome] using committed
 
 /-- Pull one allocation location through the concrete tree's ordered node
 visits and cache commits, then through the other roots in source order. -/
