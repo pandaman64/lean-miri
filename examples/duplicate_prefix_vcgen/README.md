@@ -211,6 +211,8 @@ and pointer premises. `RootTwoPhaseComplete` checks the mutable reference
 assignment at the selected root instruction and its resulting permissions.
 `ProtectedSharedReborrow` derives the coherent readable region from actual
 shared FnEntry retag under its stated initialized-region and pointer premises.
+`RootSharedComplete` checks the current root's shared-slice assignment to its
+actual length-call argument slot, retaining exact heap state and read rights.
 
 After the standalone example script builds `SourceDomain.olean`, the
 optional `ExclusiveCopyStep` target verifies the actual positive copy

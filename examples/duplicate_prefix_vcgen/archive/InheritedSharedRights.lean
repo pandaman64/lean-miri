@@ -9,7 +9,7 @@ open DuplicatePrefix.MutableSliceRights DuplicatePrefix.SourceDomain
 open DuplicatePrefix.RetagLocationFrame DuplicatePrefix.GeneralRangeMapOrigins
 open Miri.Verification.MutableRetagFootprint
 
-private theorem effective_permission
+theorem effective_permission
     (before after : LocationTree) (oldNode newNode : TreeNode) (index : UniIndex)
     (defaultPermission : newNode.defaultInitialPermission = oldNode.defaultInitialPermission)
     (preserved : storedPermission after index = storedPermission before index) :
