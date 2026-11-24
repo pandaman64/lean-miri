@@ -42,6 +42,72 @@ theorem location_iff (state : Tree.LocationState) (kind : AccessKind)
     | .Success next transition => post next transition
     | other => failure other)
 
+/-- Permission check for a visited read. Foreign reads may disable a unique
+location, but a protector only rejects this transition at an accessed location. -/
+def locationReadAllowed (state : Tree.LocationState) (related : AccessRelatedness)
+    (held : Bool) : Prop :=
+  match related, state.permission with
+  | .LocalAccess, .Disabled => False
+  | .ForeignAccess, .ReservedIM => held = false
+  | .ForeignAccess, .Unique => if held then state.accessed = false else True
+  | .ForeignAccess, .Disabled => held = false ∨ state.accessed = false
+  | _, _ => True
+
+/-- Check a visited write on the initial location when the preceding read,
+if visited, succeeds. `read = none` means the traversal omitted this node.
+A foreign read freezes or disables a unique permission and conflicts with a
+protected reservation. A local read materializes the location for the
+protector check of a subsequent foreign write. -/
+def locationWriteAllowedAfterRead (state : Tree.LocationState)
+    (read : Option AccessRelatedness) (write : AccessRelatedness) (held : Bool) : Prop :=
+  match write, state.permission with
+  | .LocalAccess, .Frozen | .LocalAccess, .Disabled => False
+  | .LocalAccess, .Unique => read ≠ some .ForeignAccess
+  | .LocalAccess, .ReservedFrz conflicted =>
+      held = false ∨ (conflicted = false ∧ read ≠ some .ForeignAccess)
+  | .LocalAccess, _ | .ForeignAccess, .Cell => True
+  | .ForeignAccess, .ReservedIM => held = false
+  | .ForeignAccess, _ => held = false ∨ (state.accessed = false ∧ read ≠ some .LocalAccess)
+
+/-- Initial-state condition for successful read and write transitions at one
+location, given the visits selected by the traversal. A missing visit leaves
+the location unchanged. The protector is fixed across both accesses. -/
+def locationReadWritePre (state : Tree.LocationState)
+    (read write : Option AccessRelatedness) (held : Bool) : Prop :=
+  (match read with
+    | none => True
+    | some related => locationReadAllowed state related held) ∧
+  (match write with
+    | none => True
+    | some related => locationWriteAllowedAfterRead state read related held)
+
+/-- The location precondition for a traversal which may omit this node. -/
+def visitedLocationPre (state : Tree.LocationState) (kind : AccessKind)
+    (visit : Option AccessRelatedness) (held : Bool) (post : Tree.LocationState → Prop) : Prop :=
+  match visit with
+  | none => post state
+  | some related => locationPre state kind related held (fun next _ => post next) (fun _ => False)
+
+@[simp] theorem visitedLocationPre_read_write_iff (state : Tree.LocationState)
+    (read write : Option AccessRelatedness) (held : Bool) :
+    visitedLocationPre state .Read read held (fun afterRead =>
+        visitedLocationPre afterRead .Write write held (fun _ => True)) ↔
+      locationReadWritePre state read write held := by
+  rcases state with ⟨permission, accessed, sifa⟩
+  cases permission <;> try (rename_i conflicted; cases conflicted)
+  all_goals
+    rcases read with _ | (_ | _) <;> rcases write with _ | (_ | _) <;>
+      cases accessed <;> cases held <;> cbv <;> decide
+
+/-- Pull back success of two visits to the initial permission, protector and
+accessed bit. The read and write may have different positions in the tree. -/
+@[simp] theorem locationPre_read_write_iff (state : Tree.LocationState)
+    (read write : AccessRelatedness) (held : Bool) :
+    locationPre state .Read read held (fun afterRead _ =>
+      locationPre afterRead .Write write held (fun _ _ => True) (fun _ => False))
+      (fun _ => False) ↔ locationReadWritePre state (some read) (some write) held :=
+  visitedLocationPre_read_write_iff state (some read) (some write) held
+
 /-- Retain the complete trace and updated tree on either access outcome.
 Concrete and wildcard provenance share the same rule. -/
 def accessPre (tree : BorrowTree) (provenance : ProvenanceExtra) (offset length : Size)

@@ -53,6 +53,23 @@ example (post : Tree.LocationState.AccessResult → Prop)
   (location_iff ⟨.Frozen, true, .Read⟩ .Write .ForeignAccess true (fun _ _ => False) post).mpr
     retained
 
+/-- A visited foreign read prevents a later local write at an initially
+unique location, independently of the protector, accessed bit and SIFA. -/
+example (state : Tree.LocationState) (held : Bool) (unique : state.permission = .Unique) :
+    ¬ locationPre state .Read .ForeignAccess held (fun afterRead _ =>
+      locationPre afterRead .Write .LocalAccess held (fun _ _ => True) (fun _ => False))
+      (fun _ => False) := by
+  simp [locationReadWritePre, locationWriteAllowedAfterRead, unique]
+
+/-- At an unconflicted reservation, a visited foreign read followed by a
+local write succeeds exactly when the reservation is unprotected. -/
+example (state : Tree.LocationState) (held : Bool)
+    (reserved : state.permission = .ReservedFrz false) :
+    visitedLocationPre state .Read (some .ForeignAccess) held (fun afterRead =>
+      visitedLocationPre afterRead .Write (some .LocalAccess) held (fun _ => True)) ↔
+    held = false := by
+  simp [locationReadWritePre, locationReadAllowed, locationWriteAllowedAfterRead, reserved]
+
 /-- `vcgen` selects the ordered protector release rule for arbitrary trees. -/
 example (tag : BorTag) (tags : ProtectedTags) (post : Unit → BorrowTree → Prop)
     (failure : BorrowTree.ProtectorReleaseStatus → BorrowTree → Prop) :

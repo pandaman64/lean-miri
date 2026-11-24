@@ -4,6 +4,7 @@ import Miri.Verification.RvalueWP
 import Miri.Verification.TreeBorrowSetupWP
 import Miri.Verification.TreeDiagnosticWP
 import Miri.Verification.TreeEffectsWP
+import Miri.Verification.TreeRangeInitWP
 import Miri.Verification.TypedRetagWP
 
 /-! Import this module to register the exact driver, memory and Tree Borrows

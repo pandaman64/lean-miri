@@ -2563,10 +2563,10 @@ private def freshLocation : LocationTree :=
   ⟨⟨#[some ⟨.Unique,true,.None⟩]⟩,{}⟩
 private def freshNormal (held : Bool) : Tree.NormalTreeState :=
   ⟨⟨#[⟨none,[]⟩]⟩,#[⟨.Disabled,false,.None⟩],if held then [0] else [],#[some ⟨.Unique,true,.None⟩]⟩
-private theorem fresh_normal (held : Bool) :
-    Tree.NormalTreeState.performAccess (freshNormal held) 0 .Write .VisitChildrenOfAccessed =
+private theorem fresh_normal (held : Bool) (kind : AccessKind) (mode : Tree.ChildrenVisitMode) :
+    Tree.NormalTreeState.performAccess (freshNormal held) 0 kind mode =
       ⟨freshNormal held,0,[⟨0,.LocalAccess⟩],.Completed⟩ := by
-  cases held <;> decide
+  cases held <;> cases kind <;> cases mode <;> decide
 
 private theorem fresh_projection (tag : BorTag) (size : Size) (protectedTags : ProtectedTags) :
     normalProjection (BorrowTree.new tag size) freshLocation protectedTags =
@@ -2577,26 +2577,70 @@ private theorem fresh_projection (tag : BorTag) (size : Size) (protectedTags : P
     UniValMap.extendTo,Permission.newDisabled,Permission.newUnique]
   cases held : protectedTags.contains tag <;> simp [List.filterMap,held]
 
-private theorem fresh_normal_at (tag : BorTag) (size : Size) (protectedTags : ProtectedTags) :
-    (BorrowTree.new tag size).performNormalAccessAt freshLocation rootIndex .Write protectedTags .VisitChildrenOfAccessed =
+private theorem fresh_normal_at (tag : BorTag) (size : Size) (kind : AccessKind)
+    (protectedTags : ProtectedTags) (mode : Tree.ChildrenVisitMode) :
+    (BorrowTree.new tag size).performNormalAccessAt freshLocation rootIndex kind protectedTags mode =
       ⟨freshLocation,⟨freshNormal (protectedTags.contains tag),0,[⟨0,.LocalAccess⟩],.Completed⟩,.ok ()⟩ := by
   unfold performNormalAccessAt
   rw [fresh_projection]
   simp only [rootIndex,UniIndex.toNat,UInt32.toNat_zero,fresh_normal]
   simp [freshNormal,freshLocation,BorrowTree.new,rootIndex,nodeAt,UniIndex.ofNat?,UniIndex.toNat,
-    UniValMap.insert,UniValMap.get,UniValMap.extendTo,Id.run,bind,Bind.bind,pure,Pure.pure,
-    ←Array.forIn_toList]
+    UniValMap.insert,UniValMap.get,UniValMap.extendTo,Id.run,bind,Bind.bind,pure,Pure.pure]
 
-private theorem fresh_tree_at (tag : BorTag) (size : Size) (protectedTags : ProtectedTags) (range : ByteRange) :
-    (BorrowTree.new tag size).performTreeAccessAt freshLocation (some rootIndex) .Write protectedTags
-      .VisitChildrenOfAccessed range =
+attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail in
+private theorem fresh_tree_at (tag : BorTag) (size : Size) (kind : AccessKind)
+    (protectedTags : ProtectedTags) (mode : Tree.ChildrenVisitMode) (range : ByteRange) :
+    (BorrowTree.new tag size).performTreeAccessAt freshLocation (some rootIndex) kind protectedTags mode range =
       ⟨freshLocation,some ⟨freshNormal (protectedTags.contains tag),0,[⟨0,.LocalAccess⟩],.Completed⟩,none⟩ := by
   unfold performTreeAccessAt
   dsimp only [Id.run]
   rw [fresh_normal_at]
-  simp [BorrowTree.new,rootIndex,nodeAt,UniIndex.ofNat?,UniIndex.toNat,
-    UniValMap.insert,UniValMap.get,UniValMap.extendTo,Id.run,bind,Bind.bind,pure,Pure.pure,
-    ←Array.forIn_toList]
+  have noExposed : (BorrowTree.new tag size).minExposedChild rootIndex = none := by cbv
+  cases mode <;>
+    simp [BorrowTree.new, rootIndex, UniIndex.ofNat?, UniIndex.toNat, UniValMap.insert,
+      UniValMap.get, UniValMap.extendTo, Id.run, bind, Bind.bind, pure, Pure.pure] at noExposed ⊢
+  simp [noExposed]
+
+/-- The full-range trace through the root of a fresh allocation. An empty range
+has no visits. A nonempty range records one local visit over the entire range. -/
+def freshRootAccessLocations (tag : BorTag) (size : Size) (protectedTags : ProtectedTags) :
+    Array BorrowTreeLocationResult :=
+  if size.bytes = 0 then #[]
+  else #[⟨⟨0, size.bytes⟩,
+    some ⟨freshNormal (protectedTags.contains tag), 0, [⟨0, .LocalAccess⟩], .Completed⟩⟩]
+
+/-- An access through the fresh allocation's root preserves the tree and
+records the same full-range trace for both access kinds and visit modes. -/
+theorem fresh_root_full_access (tag : BorTag) (size : Size) (kind : AccessKind)
+    (protectedTags : ProtectedTags) (mode : Tree.ChildrenVisitMode) :
+    (BorrowTree.new tag size).performBorrowAccessRange (.concrete tag)
+      Size.ZERO size kind protectedTags mode =
+    ⟨BorrowTree.new tag size, freshRootAccessLocations tag size protectedTags, .Completed⟩ := by
+  have source : (BorrowTree.new tag size).indexOfTag tag = some rootIndex := by
+    simp [BorrowTree.indexOfTag,BorrowTree.new,rootIndex,UniKeyMap.get,Id.run,pure,Pure.pure]
+  have locations : (BorrowTree.new tag size).locations = DedupRangeMap.new size freshLocation := rfl
+  unfold performBorrowAccessRange
+  dsimp only [Id.run]
+  rw [source]
+  rw [locations]
+  by_cases zero : size.bytes = 0
+  · simp [freshRootAccessLocations,DedupRangeMap.iterMut,DedupRangeMap.iterMutWithClone,zero,
+      Id.run,bind,Bind.bind,pure,Pure.pure]
+    rfl
+  · rw [DedupRangeMap.iterMut_new_full size freshLocation zero]
+    simp only [bind,Bind.bind,pure,Pure.pure]
+    simp only [Std.Legacy.Range.forIn_eq_forIn_range',Std.Legacy.Range.size,Array.size_singleton,
+      Nat.sub_zero,Nat.add_sub_cancel,Nat.div_one]
+    simp only [List.range',List.forIn_cons,List.forIn_nil,bind,Bind.bind,pure,Pure.pure]
+    simp only [Option.isNone_some,beq_self_eq_true,Bool.false_eq_true,↓reduceIte,Array.getElem?_singleton]
+    rw [fresh_tree_at]
+    have same : (DedupRangeMap.new size freshLocation).setAtPos 0 freshLocation =
+        ⟨DedupRangeMap.new size freshLocation,.ok ()⟩ := by
+      simp only [DedupRangeMap.new,zero,beq_iff_eq,↓reduceIte]
+      rfl
+    rw [same]
+    simp [freshRootAccessLocations, zero]
+    rfl
 
 /-- The actual first full-range write on fresh allocation-owned provenance.
 The existing global protector map is arbitrary. -/
@@ -2604,34 +2648,8 @@ theorem fresh_root_full_write (tag : BorTag) (size : Size) (protectedTags : Prot
     let result := (BorrowTree.new tag size).performBorrowAccessRange (.concrete tag)
       Size.ZERO size .Write protectedTags .VisitChildrenOfAccessed
     result.status = .Completed ∧ result.tree = BorrowTree.new tag size := by
-  have source : (BorrowTree.new tag size).indexOfTag tag = some rootIndex := by
-    simp [BorrowTree.indexOfTag,BorrowTree.new,rootIndex,UniKeyMap.get,Id.run,
-      bind,Bind.bind,pure,Pure.pure]
-  have locations : (BorrowTree.new tag size).locations = DedupRangeMap.new size freshLocation := rfl
-  dsimp only
-  unfold performBorrowAccessRange
-  dsimp only [Id.run]
-  rw [source]
-  rw [locations]
-  by_cases zero : size.bytes = 0
-  · simp [DedupRangeMap.iterMut,DedupRangeMap.iterMutWithClone,zero,
-      Id.run,bind,Bind.bind,pure,Pure.pure]
-    rfl
-  · rw [DedupRangeMap.iterMut_new_full size freshLocation zero]
-    simp only [Id.run,bind,Bind.bind,pure,Pure.pure]
-    simp only [Std.Legacy.Range.forIn_eq_forIn_range',Std.Legacy.Range.size,Array.size_singleton,
-      Nat.sub_zero,Nat.add_sub_cancel,Nat.div_one]
-    simp only [List.range',List.forIn_cons,List.forIn_nil,bind,Bind.bind,pure,Pure.pure]
-    simp only [Option.isNone_some,beq_self_eq_true,Bool.false_eq_true,↓reduceIte,Array.getElem?_singleton]
-    rw [fresh_tree_at]
-    simp only [bind,Bind.bind,pure,Pure.pure]
-    have same : (DedupRangeMap.new size freshLocation).setAtPos 0 freshLocation =
-        ⟨DedupRangeMap.new size freshLocation,.ok ()⟩ := by
-      simp only [DedupRangeMap.new,zero,beq_iff_eq,↓reduceIte]
-      rfl
-    rw [same]
-    simp [locations,Id.run,bind,Bind.bind,pure,Pure.pure]
-    rfl
+  rw [fresh_root_full_access]
+  exact ⟨rfl, rfl⟩
 
 end Miri.TreeBorrows.BorrowTree
 
