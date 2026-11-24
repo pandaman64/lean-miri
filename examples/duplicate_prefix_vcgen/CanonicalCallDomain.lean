@@ -104,11 +104,22 @@ theorem ReleaseRange.noEmptyMaterialization {tree holder start}
     simp only [UInt64.toNat_zero, Nat.add_zero] at upper
     omega
 
+/-- The selected tag can write this byte while the given protection set is
+still installed. Only location rows that cover this byte are relevant. -/
+def ByteWriteGrant (tree : BorrowTree) (point : UInt64) (source : UniIndex)
+    (protections : ProtectedTags) : Prop :=
+  ∀ segment ∈ tree.locations.entries, segment.range.start ≤ point → point < segment.range.stop →
+    ∀ index node, tree.nodeAt index = some node →
+      ∃ current, tree.locationStateAt segment.data index = some current ∧
+        (Ancestor tree index source → localOwns current (protections.contains node.tag)) ∧
+        (¬ Ancestor tree index source → foreignCompatible current (protections.contains node.tag))
+
 /-- Before execution, a physical Boolean return destination resolves to one
 in-bounds byte of live mutable storage. The byte may be uninitialized. Its
-grant is separate from the slice's grant. The caller's return tag must be
-compatible with protectors retained after ending this frame. The release
-traversal itself is an additional effect to prove. -/
+grant is separate from the slice's grant. The call-owned return protector
+has a grant with all current protections installed for its release
+traversal. The saved return pointer's tag has an independent grant with
+the protections retained after ending this frame. -/
 structure PhysicalBoolDestination (before : State) (frame : Frame)
     (pointer : Pointer (Option Provenance)) (length : UInt64) : Prop where
   storage : ∃ (place : MPlaceTy Provenance) (id : AllocId)
@@ -142,6 +153,7 @@ structure PhysicalBoolDestination (before : State) (frame : Frame)
       (∃ node, slot.allocation.extra.nodeAt returnIndex = some node ∧ node.tag = returnTag ∧
         node.parent = some source ∧ node.isExposed = false) ∧
       ReleaseRange slot.allocation.extra returnIndex relative 1 ∧
+      ByteWriteGrant slot.allocation.extra relative.bytes returnIndex tracker.global.protectedTags ∧
       (∃ segment ∈ slot.allocation.extra.locations.entries,
         segment.range.start ≤ relative.bytes ∧ relative.bytes < segment.range.stop ∧
         ∀ index node, slot.allocation.extra.nodeAt index = some node →

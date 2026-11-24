@@ -1190,10 +1190,11 @@ vector-clock backend.
   a physical root destination and for a nested local Boolean destination.
   The emitted VC is also proved for nonempty slices and counts above half
   the length under the nested cached destination and dense tag-table premises.
-  Separate proofs connect exclusive Tree Borrows permissions to reborrow and
-  the positive copy helper's return. The common all-count proof still needs to
-  join the successful copy path and close the zero-length nonzero-count cases
-  and the physical return variants.
+  Integer-address empty slices with no provenance also have a proof for all
+  nonzero counts and a cached local Boolean return. Separate proofs connect
+  exclusive Tree Borrows permissions to reborrow and the positive copy helper's
+  return. The common all-count proof still needs to join the successful copy
+  path and cover backed and wildcard empty slices and the physical returns.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

@@ -253,6 +253,29 @@ length return for a non-null integer-address empty slice. The length is zero.
 The two retags increase the tag counter while leaving memory and the global
 protector ledger intact.
 
+[VerifyEmptyIntegerCanonical.lean](VerifyEmptyIntegerCanonical.lean) closes
+the emitted VC for these empty slices at every nonzero count with a cached
+Boolean caller. The proof uses the canonical preparation and compiler
+profiles. It checks the full path from the root guard through the real length
+call, rejection, and actual false return. The empty argument contributes no
+protector row. A concrete-provenance empty slice and an unresolved wildcard
+use different retag and release paths.
+
+```sh
+out="$PWD/scratch/duplicate-prefix-vcgen"
+archive="$PWD/scratch/duplicate-prefix-empty-integer"
+LEAN_PATH="$out" python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
+  --output "$archive" --target EmptyIntegerPrefix --target RootLocalBoolReturn \
+  --target ArchiveCatalogRoot --target GeneratedSafetyOfTrace \
+  --target InitMaskCopy --target ProvenanceCopy
+export LEAN_PATH="$out:$archive:$PWD/.lake/build/lib/lean"
+source_dir=examples/duplicate_prefix_vcgen
+for module in CanonicalCallDomain CanonicalSourceControl CanonicalEntryFacts; do
+  lean -j1 --root="$source_dir" -o "$out/$module.olean" "$source_dir/$module.lean"
+done
+lean -j1 "$source_dir/VerifyEmptyIntegerCanonical.lean"
+```
+
 The positive-path archive targets `AsMutToCopyCall`, `RootPositiveRootSuffix`,
 and `RootPositiveReleaseAfterCopy` check the actual helper calls, the bounded
 copy, the Boolean result, and the post-copy release from their respective
