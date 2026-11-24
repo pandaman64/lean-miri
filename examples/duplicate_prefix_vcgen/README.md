@@ -7,7 +7,8 @@ separate [runtime harness](runtime.rs) to prepare actual call states with
 Tree Borrows enabled.
 
 With the pinned MIR-enabled sysroot in `MIRI_SYSROOT`, build `native_runner`,
-`Miri.Verification.TreeRangeAccess`, and the Lean libraries. Then run the check.
+`Miri.Verification.TreeRangeAccess`, `Miri.Verification.MutableTypedRetag`,
+and the Lean libraries. Then run the check.
 
 ```sh
 tools/check-duplicate-prefix-vc.sh

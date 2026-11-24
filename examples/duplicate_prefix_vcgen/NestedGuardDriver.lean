@@ -25,7 +25,7 @@ elab "unfold_terminator_control" : tactic => do
   | [name] => evalTactic (← `(tactic| unfold $(mkIdent name)))
   | _ => throwError "expected one terminator counter-update helper"
 
-private def nextTerminatorUser (hooks : TerminatorMachine.Hooks K U Host) (user : U) : U :=
+def nextTerminatorUser (hooks : TerminatorMachine.Hooks K U Host) (user : U) : U :=
   let initial := hooks.getControl user
   let counted := {initial with basicBlockCount := initial.basicBlockCount + 1}
   let aged := {counted with sinceGc := counted.sinceGc + 1}
@@ -102,9 +102,54 @@ theorem stepFixedReturn
   rw [stepFixedTerminator config limits choice before term selected lens fixed unchecked noGc]
   simp only [ControlFlow.evalTerminator, returnCode, Id.run, pure, Pure.pure]
 
+/-- The stock driver executes the call under its actual before-terminator
+control update. A non-tail call which pushed a frame advances the step. -/
+theorem stepFixedCall
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
+    (choice : C) (before after : State) (term : Miri.MIR.Terminator)
+    (item : Miri.MIR.Operand) (args : Array Miri.MIR.SpannedOperand) (destination : Miri.MIR.Place)
+    (target : Option Miri.MIR.BasicBlockId) (unwind : Miri.MIR.UnwindAction)
+    (origin : Miri.MIR.CallSource) (span : Miri.MIR.SpanRef)
+    (shape : term.kind = .Call item args destination target unwind origin span)
+    (selected : Miri.Verification.StepWP.currentTerminator before = some term)
+    (lens : ∀ control user, config.terminators.getControl
+      (config.terminators.setControl control user) = control)
+    (fixed : before.machine.threads.fixedScheduling = true)
+    (unchecked : (config.terminators.getControl before.machine.user).checkedArithmetic = false)
+    (noGc : (config.terminators.getControl before.machine.user).gcInterval = 0)
+    (depth : after.stack.frames.size = before.stack.frames.size + 1) :
+    let user := nextTerminatorUser config.terminators before.machine.user
+    let entered := {before with machine := {before.machine with user}}
+    Call.evalCallTerminator (ExecutionMachine.callHooks (ExecutionMachine.withValidation config limits) limits)
+      choice limits.callDispatch term entered = .ok () after →
+    ExecutionMachine.step config limits choice before = (after, .ok true) := by
+  intro user entered called
+  rw [stepFixedTerminator config limits choice before term selected lens fixed unchecked noGc]
+  have nextDepth : after.stack.frames.size ≠ entered.stack.frames.size := by
+    change after.stack.frames.size ≠ before.stack.frames.size
+    omega
+  have hook :
+      (ExecutionMachine.terminatorHooks config limits).call choice term entered = (after, .ok ()) := by
+    change MachineHooks.run (Call.evalCallTerminator
+      (ExecutionMachine.callHooks (ExecutionMachine.withValidation config limits) limits)
+      choice limits.callDispatch term) entered = _
+    unfold MachineHooks.run Call.run
+    rw [called]
+  have run : ControlFlow.evalTerminator (ExecutionMachine.terminatorHooks config limits)
+      choice term entered = (after, .ok ()) := by
+    generalize (ExecutionMachine.terminatorHooks config limits) = hooks at hook ⊢
+    simp [ControlFlow.evalTerminator, shape, ControlFlow.evalCall, hook, nextDepth]
+  change ((ControlFlow.evalTerminator (ExecutionMachine.terminatorHooks config limits)
+      choice term entered).1, (ControlFlow.evalTerminator (ExecutionMachine.terminatorHooks config limits)
+      choice term entered).2.map (fun _ => true)) = _
+  rw [run]
+  rfl
+
 end DuplicatePrefix.NestedGuardDriver
 
 #print axioms DuplicatePrefix.NestedGuardDriver.beforeTerminatorFixed
 #print axioms DuplicatePrefix.NestedGuardDriver.stepFixedTerminator
 
 #print axioms DuplicatePrefix.NestedGuardDriver.stepFixedReturn
+
+#print axioms DuplicatePrefix.NestedGuardDriver.stepFixedCall

@@ -1185,11 +1185,13 @@ vector-clock backend.
   premises. Its adversarial caller demonstrates that a prepared mutable
   slice frame can still fail a Tree Borrows write with a live incompatible
   protector. The concrete slice domain now states bytewise permissions and
-  topology independently of execution. Separate proofs check the positive
-  copy from a prepared ownership state and the zero return from an owned
-  protector profile. The whole-function proof still needs to derive these
-  states from lawful call entry, connect the intervening steps, and close
-  every return path.
+  topology independently of execution. The exact emitted VC is proved for
+  zero-count calls under the stated Shallow and protector premises, both for
+  a physical root destination and for a nested local Boolean destination.
+  Separate proofs connect exclusive Tree Borrows permissions to reborrow and
+  the positive copy helper's return. The whole-function proof still needs the
+  uniform derivation from lawful call entry, the nonzero path across the
+  remaining calls, and closure of the positive and too-large-count returns.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

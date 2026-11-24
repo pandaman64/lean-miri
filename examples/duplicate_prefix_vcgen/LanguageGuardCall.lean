@@ -163,6 +163,56 @@ theorem pushDoneRuntimeGuard (lifecycle : CallMachine.Lifecycle K U C)
     get, getThe, MonadStateOf.get, EStateM.get, withFrame, Stack.updateCurrentLocation,
     start, set, MonadStateOf.set, EStateM.set, Except.pure, Except.bind, Array.set_push]
 
+private def liveLanguageGuardResult (frame : GuardFrame) : GuardFrame :=
+  {frame with locals := #[⟨.live (.immediate .uninit), none⟩, ⟨.dead, none⟩, ⟨.dead, none⟩]}
+
+/-- The actual storage transition of the zero-input guard initializes only
+its Boolean return local and reaches the first MIR statement. -/
+theorem pushDoneLanguageGuard (lifecycle : CallMachine.Lifecycle K U C)
+    (older : Array GuardFrame) (frame : GuardFrame) (machine : MachineHooks.MachineState K U)
+    (source : GeneratedBodySafety.input.document.bodies[9]?.map (·.mir) = some frame.body)
+    (locals : frame.locals = #[⟨.dead, none⟩, ⟨.dead, none⟩, ⟨.dead, none⟩]) (noClocks : frame.extra.dataRace = none)
+    (trivial : lifecycle.storage.veryTriviallySized 0 = .ok true) :
+    CallMachine.pushDone lifecycle (withFrame older frame machine) =
+      .ok () (withFrame older {liveLanguageGuardResult frame with location := .mir .start} machine) := by
+  have typed : frame.body.locals = #[0,0,5] := by
+    have fact := congrArg (fun code : Option Body => code.map (·.locals)) source
+    exact Option.some.inj fact.symm
+  have storage : MachineHooks.storageLiveDyn lifecycle.storage 0 .none (withFrame older frame machine) =
+      .ok () (withFrame older (liveLanguageGuardResult frame) machine) := by
+    simp [MachineHooks.storageLiveDyn, MachineHooks.currentFrame, MachineHooks.setCurrentFrame,
+      MachineHooks.afterLocalWrite, withFrame, Stack.currentFrame?, Frame.getLocal,
+      Frame.replaceLocalValue, locals, typed, trivial, noClocks, MemPlaceMeta.hasMeta,
+      bind, Bind.bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
+      set, MonadStateOf.set, EStateM.set, pure, Pure.pure, Except.pure, EStateM.pure,
+      liveLanguageGuardResult]
+  have current : MachineHooks.currentFrame (withFrame older (liveLanguageGuardResult frame) machine) =
+      .ok (liveLanguageGuardResult frame) (withFrame older (liveLanguageGuardResult frame) machine) := by
+    simp [MachineHooks.currentFrame, withFrame, Stack.currentFrame?,
+      bind, Bind.bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
+      pure, Pure.pure, EStateM.pure]
+  have always : CallMachine.alwaysLiveVarsAndTemps (liveLanguageGuardResult frame).body = .ok #[] := by
+    have fact := congrArg (fun code : Option Body => code.map CallMachine.alwaysLiveVarsAndTemps) source
+    with_unfolding_all exact Option.some.inj fact.symm
+  have hasBlock : 0 < frame.body.basicBlocks.size := by
+    have fact := congrArg (fun code : Option Body => code.map (·.basicBlocks.size)) source
+    have size : frame.body.basicBlocks.size = 5 := Option.some.inj fact.symm
+    omega
+  have start : (liveLanguageGuardResult frame).setLocation (.mir .start) =
+      .ok {liveLanguageGuardResult frame with location := .mir .start} := by
+    simp [Frame.setLocation, Location.start, liveLanguageGuardResult, hasBlock, pure, Pure.pure, Except.pure]
+  unfold CallMachine.pushDone
+  simp only [bind, EStateM.bind]
+  rw [storage]
+  simp only
+  rw [current]
+  simp only
+  rw [always]
+  simp [← Array.forIn_toList, bind, EStateM.bind, pure, Pure.pure, EStateM.pure,
+    get, getThe, MonadStateOf.get, EStateM.get, withFrame, Stack.updateCurrentLocation,
+    start, set, MonadStateOf.set, EStateM.set, Except.pure, Except.bind, Array.set_push]
+
+
 /-- A zero-argument call executes an empty FnEntry scope. The actual mode
 wrapper restores the old tracking state, including enabled Tree Borrows. -/
 theorem emptyArgumentScope (before : MachineHooks.State K U) :
@@ -232,6 +282,61 @@ theorem pushRawRuntimeGuard
 /-- Compose the initializer's source stack operations on a prepared local
 destination. Compiler return compatibility and local span queries remain
 explicit. The initialized frame and its empty argument scope are derived. -/
+theorem setupCanonicalZeroArgument
+    {O X Host : Type} [DecidableEq K]
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
+    (choice : C) (fnInstance : CallInstance) (code : LoadedBody)
+    (abi : FnAbi TyId) (dest : RuntimeStackPlace Provenance) (cont : ReturnContinuation)
+    (before : MachineHooks.State K U)
+    (older : Array GuardFrame) (frame finalFrame : GuardFrame) (machine : MachineHooks.MachineState K U)
+    (span localSpan : SpanRef) (operand : Immediate Provenance) (layout : LocalLayout)
+    (location : frame.location = .unwinding span)
+    (noCallerLocation : frame.trackCallerArg = none)
+    (ready : CallMachine.pushDone config.lifecycle (withFrame older frame machine) =
+      .ok () (withFrame older finalFrame machine))
+    (args : abi.args.size = 0)
+    (lookedUp : (ExecutionMachine.callHooks config limits).placeToOp choice dest before =
+      .ok ⟨.immediate operand, layout⟩ before)
+    (pushed : (ExecutionMachine.callHooks config limits).pushRaw choice fnInstance code dest cont before =
+      .ok () (withFrame older frame machine))
+    (locationQuery : (ExecutionMachine.callHooks config limits).localSpan code.body 0
+      (withFrame older frame machine) = .ok localSpan (withFrame older frame machine))
+    (returnABI : (ExecutionMachine.callHooks config limits).checkArgumentCompat choice abi.ret abi.ret
+      (withFrame older {frame with location := .unwinding localSpan} machine) =
+      .ok true (withFrame older {frame with location := .unwinding localSpan} machine)) :
+    setupNoArguments (ExecutionMachine.callHooks config limits) choice fnInstance code abi dest cont before =
+      .ok () (withFrame older finalFrame machine) := by
+  let hooks := ExecutionMachine.callHooks config limits
+  have getEq : hooks.getFrame = MachineHooks.currentFrame := rfl
+  have setEq : hooks.setFrame = MachineHooks.setCurrentFrame := rfl
+  have retagEq : hooks.withRetagMode choice .FnEntry
+      (pure (0, 0) : MachineHooks.M K U (Nat × Nat)) =
+      pure (0, 0) := funext emptyArgumentScope
+  have doneEq : hooks.pushDone choice = CallMachine.pushDone config.lifecycle := rfl
+  have afterEq : hooks.afterFrameInit choice = pure () := rfl
+  have retEq : hooks.abiReturn abi = abi.ret := rfl
+  have argsEq : (hooks.abiArgs abi).size = 0 := args
+  have restored : {frame with location := .unwinding span} = frame := by rw [←location]
+  have sameTrack : {frame with trackCallerArg := none} = frame := by rw [←noCallerLocation]
+  change setupNoArguments hooks choice fnInstance code abi dest cont before = _
+  change hooks.placeToOp choice dest before = _ at lookedUp
+  change hooks.pushRaw choice fnInstance code dest cont before = _ at pushed
+  change hooks.localSpan code.body 0 (withFrame older frame machine) = _ at locationQuery
+  change hooks.checkArgumentCompat choice abi.ret abi.ret _ = _ at returnABI
+  generalize hooks = driver at lookedUp pushed locationQuery returnABI getEq setEq retagEq doneEq afterEq retEq argsEq ⊢
+  unfold setupNoArguments
+  simp only [bind, Bind.bind, EStateM.bind, lookedUp, pushed,
+    getEq, setEq, retagEq, retEq, doneEq, afterEq]
+  rcases frame with ⟨body, identity, callee, extra, continuation, returnPlace, localsId,
+    localSlots, vaList, track, pc⟩
+  cases location
+  cases noCallerLocation
+  simp only [withFrame] at locationQuery returnABI ready
+  simp [MachineHooks.currentFrame, MachineHooks.setCurrentFrame, withFrame, Stack.currentFrame?,
+    get, getThe, MonadStateOf.get, EStateM.get, set, MonadStateOf.set, EStateM.set,
+    bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure,
+    locationQuery, returnABI, ready, argsEq, requireGuard]
+
 theorem setupCanonicalRuntimeGuard
     {O X Host : Type} [DecidableEq K]
     (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
@@ -256,38 +361,11 @@ theorem setupCanonicalRuntimeGuard
       (withFrame older {frame with location := .unwinding localSpan} machine) =
       .ok true (withFrame older {frame with location := .unwinding localSpan} machine)) :
     setupNoArguments (ExecutionMachine.callHooks config limits) choice fnInstance code abi dest cont before =
-      .ok () (withFrame older {liveResult frame with location := .mir .start} machine) := by
-  let hooks := ExecutionMachine.callHooks config limits
-  have getEq : hooks.getFrame = MachineHooks.currentFrame := rfl
-  have setEq : hooks.setFrame = MachineHooks.setCurrentFrame := rfl
-  have retagEq : hooks.withRetagMode choice .FnEntry
-      (pure (0, 0) : MachineHooks.M K U (Nat × Nat)) =
-      pure (0, 0) := funext emptyArgumentScope
-  have doneEq : hooks.pushDone choice = CallMachine.pushDone config.lifecycle := rfl
-  have afterEq : hooks.afterFrameInit choice = pure () := rfl
-  have retEq : hooks.abiReturn abi = abi.ret := rfl
-  have argsEq : (hooks.abiArgs abi).size = 0 := args
-  have ready := pushDoneRuntimeGuard config.lifecycle older frame machine source locals noClocks trivial
-  have restored : {frame with location := .unwinding span} = frame := by rw [←location]
-  have sameTrack : {frame with trackCallerArg := none} = frame := by rw [←noCallerLocation]
-  change setupNoArguments hooks choice fnInstance code abi dest cont before = _
-  change hooks.placeToOp choice dest before = _ at lookedUp
-  change hooks.pushRaw choice fnInstance code dest cont before = _ at pushed
-  change hooks.localSpan code.body 0 (withFrame older frame machine) = _ at locationQuery
-  change hooks.checkArgumentCompat choice abi.ret abi.ret _ = _ at returnABI
-  generalize hooks = driver at lookedUp pushed locationQuery returnABI getEq setEq retagEq doneEq afterEq retEq argsEq ⊢
-  unfold setupNoArguments
-  simp only [bind, Bind.bind, EStateM.bind, lookedUp, pushed,
-    getEq, setEq, retagEq, retEq, doneEq, afterEq]
-  rcases frame with ⟨body, identity, callee, extra, continuation, returnPlace, localsId,
-    localSlots, vaList, track, pc⟩
-  cases location
-  cases noCallerLocation
-  simp only [withFrame] at locationQuery returnABI ready
-  simp [MachineHooks.currentFrame, MachineHooks.setCurrentFrame, withFrame, Stack.currentFrame?,
-    get, getThe, MonadStateOf.get, EStateM.get, set, MonadStateOf.set, EStateM.set,
-    bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure,
-    locationQuery, returnABI, ready, argsEq, requireGuard]
+      .ok () (withFrame older {liveResult frame with location := .mir .start} machine) :=
+  setupCanonicalZeroArgument config limits choice fnInstance code abi dest cont before
+    older frame _ machine span localSpan operand layout location noCallerLocation
+    (pushDoneRuntimeGuard config.lifecycle older frame machine source locals noClocks trivial)
+    args lookedUp pushed locationQuery returnABI
 
 /-- Start the current retained guard through the actual call initializer.
 All frame updates are derived from compiler evidence, the already evaluated
@@ -371,6 +449,89 @@ theorem enterCanonicalRuntimeGuard
     preamble localSpan operand layout frameLocals frameClocks rfl rfl source canonicalTrivial
     abiArgs lookedUp canonicalPush spanQuery returnABI
 
+/-- Start the current retained guard through the actual call initializer.
+All frame updates are derived from compiler evidence, the already evaluated
+caller destination, and the machine's readonly control facts. -/
+theorem enterCanonicalLanguageGuard
+    {O X Host : Type} [DecidableEq K]
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
+    (prepared : Miri.Input.CompilerLifecycle.Prepared) (lifecycle : CallMachine.Lifecycle K U C)
+    (life : config.lifecycle = Miri.Input.CompilerLifecycle.hooks prepared lifecycle)
+    (debug : config.compiler.debugAssertions = false)
+    (choice : C) (fnInstance : CallInstance) (code : LoadedBody) (actual : Miri.Input.LoweredBody)
+    (abi : FnAbi TyId) (dest : RuntimeStackPlace Provenance) (target : BasicBlockId)
+    (older : Array GuardFrame) (before fresh : MachineHooks.MachineState K U)
+    (preamble localSpan : SpanRef) (identity : LocalsIdentity) (relevance : UInt8)
+    (thread : Miri.Concurrency.ThreadRecord) (index : Nat) (previous : GuardFrame)
+    (operand : Immediate Provenance) (layout : LocalLayout)
+    (source : GeneratedBodySafety.input.document.bodies[9]?.map (·.mir) = some code.body)
+    (trivial : lifecycle.storage.veryTriviallySized 0 = .ok true)
+    (noClocks : fresh.dataRace = none)
+    (abiArgs : abi.args.size = 0) (variadic : abi.cVariadic = false)
+    (lookedUp : (ExecutionMachine.callHooks config limits).placeToOp choice dest ⟨⟨older⟩, before⟩ =
+      .ok ⟨.immediate operand, layout⟩ ⟨⟨older⟩, before⟩)
+    (freshId : lifecycle.freshLocalsIdentity before = (fresh, identity))
+    (row : prepared.program.bundle.bodies[code.identity.index]? = some actual)
+    (contents : actual.body = code.body)
+    (evidence : prepared.entries[code.identity.index]? = some ⟨.ok preamble, .ok fnInstance⟩)
+    (compilerRelevance : FrameMetadata.userRelevance lifecycle.compiler
+      (Frame.create code fnInstance () (.goto (some target) .Unreachable) dest preamble identity)
+      ⟨⟨older⟩, fresh⟩ = .ok relevance ⟨⟨older⟩, fresh⟩)
+    (active : fresh.threads.activeThread? = some thread) :
+    let cont := ReturnContinuation.goto (some target) .Unreachable
+    let frame := runtimeFrame code fnInstance dest cont preamble identity fresh relevance
+    let machine := FrameRelevance.pushedMachine older frame previous fresh
+    FrameRelevance.top ⟨older.push frame⟩ thread.topUserRelevantFrame = some index →
+    (older.push frame)[index]? = some previous →
+    (ExecutionMachine.callHooks config limits).requiresCallerLocation fnInstance = pure false →
+    (ExecutionMachine.callHooks config limits).fnAbiOfInstance choice fnInstance #[] = pure abi →
+    (ExecutionMachine.callHooks config limits).checkTargetFeatures choice fnInstance = pure () →
+    (ExecutionMachine.callHooks config limits).nonCapturingClosure choice fnInstance abi = pure false →
+    (ExecutionMachine.callHooks config limits).localSpan code.body 0 (withFrame older frame machine) =
+      .ok localSpan (withFrame older frame machine) →
+    (ExecutionMachine.callHooks config limits).checkArgumentCompat choice abi.ret abi.ret
+      (withFrame older {frame with location := .unwinding localSpan} machine) =
+      .ok true (withFrame older {frame with location := .unwinding localSpan} machine) →
+    Call.initStackFrame (ExecutionMachine.callHooks config limits) choice fnInstance code abi #[]
+      false dest cont (⟨⟨older⟩, before⟩ : MachineHooks.State K U) =
+      .ok () (withFrame older {liveLanguageGuardResult frame with location := .mir .start} machine) := by
+  intro cont frame machine cached selected requires abiQuery feature closure spanQuery returnABI
+  have noArgs : code.body.argumentCount = 0 := by
+    have eq := congrArg (fun op : Option Body => op.map (·.argumentCount)) source
+    exact Option.some.inj eq.symm
+  have threeLocals : code.body.locals.size = 3 := by
+    have eq := congrArg (fun op : Option Body => op.map (·.locals.size)) source
+    exact Option.some.inj eq.symm
+  have frameLocals : frame.locals = #[⟨.dead, none⟩, ⟨.dead, none⟩, ⟨.dead, none⟩] := by
+    simp [frame, runtimeFrame, Frame.create, threeLocals] <;> rfl
+  have frameClocks : frame.extra.dataRace = none := by simp [frame, runtimeFrame, Frame.create, noClocks]
+  have pushed := pushRawRuntimeGuard prepared lifecycle code actual fnInstance dest cont preamble identity
+    older before fresh relevance thread index previous freshId row contents evidence
+    compilerRelevance active cached selected
+  have canonicalPush : (ExecutionMachine.callHooks config limits).pushRaw choice fnInstance code dest cont
+        ⟨⟨older⟩, before⟩ = .ok () (withFrame older frame machine) := by
+    change CallMachine.pushRaw config.lifecycle config.compiler.debugAssertions fnInstance code dest cont
+      ⟨⟨older⟩, before⟩ = _
+    rw [life, debug]
+    exact pushed
+  have convention : (ExecutionMachine.callHooks config limits).sameConvention abi abi = true := by
+    change (abi.conv == abi.conv) = true
+    simp
+  rw [initRuntimeGuard _ choice fnInstance code abi dest cont noArgs requires abiQuery feature closure
+    variadic convention abiArgs]
+  have normalized : (if (ExecutionMachine.callHooks config limits).abiCanUnwind abi then cont
+      else match cont with
+        | .stop _ => cont
+        | .goto target _ => .goto target .Unreachable) = cont := by simp [cont]
+  rw [normalized]
+  have canonicalTrivial : config.lifecycle.storage.veryTriviallySized 0 = .ok true := by
+    rw [life]
+    exact trivial
+  exact setupCanonicalZeroArgument config limits choice fnInstance code abi dest cont _ older frame _ machine
+    preamble localSpan operand layout rfl rfl
+    (pushDoneLanguageGuard config.lifecycle older frame machine source frameLocals frameClocks canonicalTrivial)
+    abiArgs lookedUp canonicalPush spanQuery returnABI
+
 /-- A resolved empty-argument Item takes one actual dispatch round.
 The effect retains the selected loaded body and proceeds to the source
 initializer. Panic-abort mismatch normalization is preserved. -/
@@ -408,31 +569,32 @@ theorem runtimeGuardCallCode :
 /-- Connect the exported helper Call to the actual item dispatch. The
 post-dispatch progress check observes the pushed frame rather than assuming
 an accepted terminator. -/
-theorem callRuntimeGuardTerminator
+theorem callZeroArgumentGuardTerminator
     {O X Host : Type} [DecidableEq K]
     (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
     (choice : C) (term : Terminator) (fnInstance : CallInstance) (definition : DefId)
     (callerAbi : X) (abi : FnAbi TyId) (code : LoadedBody) (destination : RuntimeStackPlace Provenance)
-    (budget : Nat) (before after : MachineHooks.State K U)
-    (source : term.kind = .Call runtimeCallOperand #[] runtimeCallDestination (some 1)
-      .Unreachable .Misc ⟨208⟩)
+    (budget : Nat) (before prepared after : MachineHooks.State K U)
+    (item : Miri.MIR.Operand) (place : Place) (origin : CallSource) (span : SpanRef)
+    (source : term.kind = .Call item #[] place (some 1)
+      .Unreachable origin span)
     (notEmpty : 0 < before.stack.frames.size)
     (depth : after.stack.frames.size = before.stack.frames.size + 1)
-    (dest : (ExecutionMachine.callHooks config limits).evalPlace choice runtimeCallDestination false before =
-      .ok destination before)
+    (dest : (ExecutionMachine.callHooks config limits).evalPlace choice place false before =
+      .ok destination prepared)
     (evaluation : Call.evalCalleeAndArgs (ExecutionMachine.callHooks config limits) choice
-        runtimeCallOperand #[] runtimeCallDestination before =
-      .ok ⟨.Instance fnInstance, #[], callerAbi, some abi, false⟩ before)
+        item #[] place prepared =
+      .ok ⟨.Instance fnInstance, #[], callerAbi, some abi, false⟩ prepared)
     (kind : (ExecutionMachine.callHooks config limits).instanceKind fnInstance = pure (.Item definition))
     (resolved : (ExecutionMachine.callHooks config limits).findMirOrEvalFn choice fnInstance abi #[]
-      destination (some 1) .Unreachable before = .ok (some (code, fnInstance)) before)
+      destination (some 1) .Unreachable prepared = .ok (some (code, fnInstance)) prepared)
     (initialized : Call.initStackFrame (ExecutionMachine.callHooks config limits) choice fnInstance
-      code abi #[] false destination (.goto (some 1) .Unreachable) before = .ok () after) :
+      code abi #[] false destination (.goto (some 1) .Unreachable) prepared = .ok () after) :
     Call.evalCallTerminator (ExecutionMachine.callHooks config limits) choice (budget+1) term before =
       .ok () after := by
   let hooks := ExecutionMachine.callHooks config limits
   have dispatched := dispatchRuntimeGuard hooks choice fnInstance definition callerAbi abi destination
-    1 budget before after code kind resolved initialized
+    1 budget prepared after code kind resolved initialized
   have frameIndex : hooks.frameIndex = (do
       match (← get).stack.frameIndex with
       | .ok index => pure index
@@ -455,8 +617,8 @@ theorem callRuntimeGuardTerminator
     | none =>
       simp [Stack.currentFrame?, Array.back?_eq_none_iff, beforeNonempty] at present
   change Call.evalCallTerminator hooks choice (budget+1) term before = _
-  change hooks.evalPlace choice runtimeCallDestination false before = _ at dest
-  change Call.evalCalleeAndArgs hooks choice runtimeCallOperand #[] runtimeCallDestination before = _ at evaluation
+  change hooks.evalPlace choice place false before = _ at dest
+  change Call.evalCalleeAndArgs hooks choice item #[] place prepared = _ at evaluation
   generalize hooks = driver at dispatched frameIndex empty frame dest evaluation ⊢
   simp [Call.evalCallTerminator, source, frameIndex, empty, frame, Stack.frameIndex,
     MachineHooks.currentFrame, callerEq, notEmpty', afterNotEmpty, afterNonempty', distinct,
@@ -464,8 +626,51 @@ theorem callRuntimeGuardTerminator
     bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure,
     Except.pure, Except.bind]
 
+theorem callRuntimeGuardTerminator
+    {O X Host : Type} [DecidableEq K]
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
+    (choice : C) (term : Terminator) (fnInstance : CallInstance) (definition : DefId)
+    (callerAbi : X) (abi : FnAbi TyId) (code : LoadedBody) (destination : RuntimeStackPlace Provenance)
+    (budget : Nat) (before after : MachineHooks.State K U)
+    (source : term.kind = .Call runtimeCallOperand #[] runtimeCallDestination (some 1)
+      .Unreachable .Misc ⟨208⟩)
+    (notEmpty : 0 < before.stack.frames.size)
+    (depth : after.stack.frames.size = before.stack.frames.size + 1)
+    (dest : (ExecutionMachine.callHooks config limits).evalPlace choice runtimeCallDestination false before =
+      .ok destination before)
+    (evaluation : Call.evalCalleeAndArgs (ExecutionMachine.callHooks config limits) choice
+        runtimeCallOperand #[] runtimeCallDestination before =
+      .ok ⟨.Instance fnInstance, #[], callerAbi, some abi, false⟩ before)
+    (kind : (ExecutionMachine.callHooks config limits).instanceKind fnInstance = pure (.Item definition))
+    (resolved : (ExecutionMachine.callHooks config limits).findMirOrEvalFn choice fnInstance abi #[]
+      destination (some 1) .Unreachable before = .ok (some (code, fnInstance)) before)
+    (initialized : Call.initStackFrame (ExecutionMachine.callHooks config limits) choice fnInstance
+      code abi #[] false destination (.goto (some 1) .Unreachable) before = .ok () after) :
+    Call.evalCallTerminator (ExecutionMachine.callHooks config limits) choice (budget+1) term before =
+      .ok () after :=
+  callZeroArgumentGuardTerminator config limits choice term fnInstance definition callerAbi abi code destination
+    budget before before after runtimeCallOperand runtimeCallDestination .Misc ⟨208⟩
+    source notEmpty depth dest evaluation kind resolved initialized
+
 /-- Operand, function-kind, and ABI queries are the only leaves of the
 actual evaluation of the retained zero-argument function item. -/
+theorem evalZeroArgumentGuardCallee
+    (hooks : Hooks) (choice : C) (layout : LocalLayout)
+    (item : Miri.MIR.Operand) (destination : Place) (definition : DefId)
+    (fnInstance : CallInstance) (abi : F) (callerAbi : X)
+    (operand : hooks.evalOperand choice item = pure ⟨.immediate .uninit, layout⟩)
+    (signature : hooks.functionSignature choice layout = pure (0, callerAbi))
+    (kind : hooks.functionKind layout.ty = pure (.FnDef definition #[]))
+    (resolved : hooks.resolve choice definition #[] = pure fnInstance)
+    (instanceKind : hooks.instanceKind fnInstance = pure (.Item definition))
+    (calleeAbi : hooks.fnAbiOfInstance choice fnInstance #[] = pure abi)
+    (track : hooks.requiresCallerLocation fnInstance = pure false) :
+    Call.evalCalleeAndArgs hooks choice item #[] destination =
+      pure ⟨.Instance fnInstance, #[], callerAbi, some abi, false⟩ := by
+  unfold Call.evalCalleeAndArgs
+  unfold_call_helper "require"
+  simp [operand, signature, kind, resolved, instanceKind, calleeAbi, track]
+
 theorem evalRuntimeGuardCallee
     (hooks : Hooks) (choice : C) (layout : LocalLayout)
     (fnInstance : CallInstance) (abi : F) (callerAbi : X)
@@ -477,10 +682,34 @@ theorem evalRuntimeGuardCallee
     (calleeAbi : hooks.fnAbiOfInstance choice fnInstance #[] = pure abi)
     (track : hooks.requiresCallerLocation fnInstance = pure false) :
     Call.evalCalleeAndArgs hooks choice runtimeCallOperand #[] runtimeCallDestination =
-      pure ⟨.Instance fnInstance, #[], callerAbi, some abi, false⟩ := by
-  unfold Call.evalCalleeAndArgs
-  unfold_call_helper "require"
-  simp [operand, signature, kind, resolved, instanceKind, calleeAbi, track]
+      pure ⟨.Instance fnInstance, #[], callerAbi, some abi, false⟩ :=
+  evalZeroArgumentGuardCallee hooks choice layout runtimeCallOperand runtimeCallDestination 43
+    fnInstance abi callerAbi operand signature kind resolved instanceKind calleeAbi track
+
+private def languageCallOperand : Miri.MIR.Operand :=
+  .Constant ⟨⟨95⟩, none, .Val .ZeroSized 83⟩
+
+private def languageCallDestination : Place := ⟨4, #[]⟩
+
+/-- The current pointer-add code calls the compiler's language guard before
+taking the branch on its Boolean result. -/
+theorem languageGuardCallCode :
+    (do
+      let callee ← GeneratedBodySafety.input.document.bodies[4]?
+      let block ← callee.mir.basicBlocks[0]?
+      return block.terminator.kind) =
+    some (.Call languageCallOperand #[] languageCallDestination (some 1)
+      .Unreachable .Normal ⟨86⟩) := by
+  rfl
+
+theorem languageGuardFunctionFacts (prepared : Miri.Input.CompilerFunctionFacts.Prepared)
+    (source : prepared.runtime.source = GeneratedBodySafety.input.document) :
+    Miri.Input.CompilerFunctionFacts.kind prepared 83 = .ok (.FnDef 27 #[]) ∧
+    Miri.Input.CompilerFunctionFacts.signature prepared 83 = .ok (0, .Rust) := by
+  rcases prepared with ⟨⟨document, target⟩, program⟩
+  change document = _ at source
+  subst document
+  exact ⟨rfl, rfl⟩
 
 end DuplicatePrefix.LanguageGuardCall
 
@@ -498,3 +727,9 @@ end DuplicatePrefix.LanguageGuardCall
 
 #print axioms DuplicatePrefix.LanguageGuardCall.runtimeGuardFunctionFacts
 #print axioms DuplicatePrefix.LanguageGuardCall.evalRuntimeGuardCallee
+
+#print axioms DuplicatePrefix.LanguageGuardCall.enterCanonicalLanguageGuard
+
+#print axioms DuplicatePrefix.LanguageGuardCall.languageGuardCallCode
+#print axioms DuplicatePrefix.LanguageGuardCall.languageGuardFunctionFacts
+#print axioms DuplicatePrefix.LanguageGuardCall.callZeroArgumentGuardTerminator

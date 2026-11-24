@@ -26,6 +26,7 @@ lean -j1 --root=examples/duplicate_prefix_vcgen \
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/MutableSliceRetag.olean" examples/duplicate_prefix_vcgen/MutableSliceRetag.lean
 lean -j1 examples/duplicate_prefix_vcgen/SymbolicCopyAccess.lean
+lean -j1 examples/duplicate_prefix_vcgen/RootMutableReborrow.lean
 lean -j1 examples/duplicate_prefix_vcgen/ZeroProtector.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/ZeroTail.olean" examples/duplicate_prefix_vcgen/ZeroTail.lean
@@ -48,11 +49,14 @@ lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardCall.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/LanguageGuardValidity.olean" examples/duplicate_prefix_vcgen/LanguageGuardValidity.lean
 lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardAssignment.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/LanguageGuardPrepare.olean" examples/duplicate_prefix_vcgen/LanguageGuardPrepare.lean
 lean -j1 examples/duplicate_prefix_vcgen/GuardReturnCopy.lean
 lean -j1 examples/duplicate_prefix_vcgen/GuardPointerSwitch.lean
 lean -j1 examples/duplicate_prefix_vcgen/GuardRuntimeReturn.lean
 lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardReturn.lean
-lean -j1 examples/duplicate_prefix_vcgen/NestedGuardDriver.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/NestedGuardDriver.olean" examples/duplicate_prefix_vcgen/NestedGuardDriver.lean
 
 "${BODY_VC_RUNNER:-$PWD/.lake/build/bin/native_runner}" "$out/harness.json" \
   --ui-source "$harness" --ui-flags '["-Zmiri-tree-borrows"]' \
