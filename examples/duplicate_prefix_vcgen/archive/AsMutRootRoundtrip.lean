@@ -77,15 +77,22 @@ theorem completes
       finalMachine.threads.fixedScheduling = true ∧
       (cfg.terminators.getControl finalMachine.user).checkedArithmetic = false ∧
       (cfg.terminators.getControl finalMachine.user).gcInterval = 0 ∧
+      finalMachine.user.payload.payload.user.backend = .none ∧
+      finalMachine.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras ∧
       finalMachine.user.payload.ghost = false ∧ finalMachine.user.payload.validation = .Shallow ∧
       (∃ presentThread, finalMachine.threads.activeThread? = some presentThread) ∧
+      (caller.extra.userRelevance = 255 → thread.topUserRelevantFrame = some older.size →
+        ∃ reported, finalMachine.threads.activeThread? = some reported ∧ reported.topUserRelevantFrame = some older.size) ∧
       ∃ (next : InitializedRegion (Storage.withCurrent older returned finalMachine) length)
         (right : ExclusiveRegion (Storage.withCurrent older returned finalMachine) length next tag),
-        next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧ right.tracker.retagMode = .Default := by
+        next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧ next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
+        next.entry.allocation.extra.roots = #[root] ∧
+        next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
+        right.tracker.retagMode = .Default := by
   intro cfg before cached dest tag ptr child expected pointer cachedValid returned
   obtain ⟨frame,after,step,loc,bodyEq,identityEq,calleeEq,saved,cont,clocks,size,vaList,ledger,retSlot,
-    argSlot,deadSlots,ghostStill,shallowStill,raceStill,addrStill,checkedStill,gcStill,fixedStill,⟨activeThread,threadEq⟩,
-    metadataAfter,alias,next,rights,idEq,offsetEq,modeStill,rootEq,extentEq,⟨node,nodeEq,_,notExposed⟩,materialized,vacant⟩ :=
+    argSlot,deadSlots,ghostStill,shallowStill,raceStill,addrStill,backendStill,extrasStill,checkedStill,gcStill,fixedStill,⟨activeThread,threadEq,prevCache⟩,
+    metadataAfter,alias,next,rights,idEq,offsetEq,modeStill,rootEq,extentEq,⟨node,nodeEq,_,notExposed⟩,materialized,vacant,physicalEntry⟩ :=
     AsMutRootStep.entered options limits remaining fuel sizeFuel span budget sizeBudget debugOff preciseOff implicitOff
       older caller machine length base parentTag positive bounded noRace ghost shallow storage loan root capacity tagRoom
       extent address nonnull metadata noAlias cmp source dispatchBudget dispatchFuel location body identity instanceId valid argument
@@ -128,7 +135,7 @@ theorem completes
     rw [idEq,offsetEq]
     rfl
   rw [sameAddress] at joined
-  obtain ⟨final,trace,finalAddr,finalRace,finalUser,finalFixed,activeFinal,result,finalId,finalOffset,resultRights,finalMode⟩ := joined
+  obtain ⟨final,trace,finalAddr,finalRace,finalUser,finalFixed,activeFinal,retainsRoot,result,finalId,finalOffset,physicalReturn,retainedRoots,retainedExtent,resultRights,finalMode⟩ := joined
   have finalChecked : (cfg.terminators.getControl final.user).checkedArithmetic = false := by
     rw [finalUser]
     unfold AsMutCurrentCall.charged NestedGuardDriver.nextTerminatorUser
@@ -149,10 +156,24 @@ theorem completes
     unfold AsMutCurrentCall.charged NestedGuardDriver.nextTerminatorUser
     rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
     exact shallowStill
+  have finalBackend : final.user.payload.payload.user.backend = .none := by
+    rw [finalUser]
+    unfold AsMutCurrentCall.charged NestedGuardDriver.nextTerminatorUser
+    rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
+    exact backendStill
+  have finalExtras : final.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras := by
+    rw [finalUser]
+    unfold AsMutCurrentCall.charged NestedGuardDriver.nextTerminatorUser
+    rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
+    exact extrasStill
   refine ⟨final, SuccessfulTrace.Trace.next step trace, finalAddr.trans addrStill,
-    finalRace.trans raceStill, finalFixed.trans fixedStill, finalChecked, finalGc, finalGhost, finalShallow,
-    activeFinal, result,resultRights,finalId.trans idEq,finalOffset.trans offsetEq,
+    finalRace.trans raceStill, finalFixed.trans fixedStill, finalChecked, finalGc, finalBackend, finalExtras, finalGhost, finalShallow,
+    activeFinal, ?_, result,resultRights,finalId.trans idEq,finalOffset.trans offsetEq, ?_,retainedRoots.trans rootEq,retainedExtent.trans extentEq,
     finalMode.trans (modeStill.trans defaultMode)⟩
+  · intro rank topRoot
+    exact retainsRoot rank (prevCache topRoot)
+  · rw [physicalReturn, physicalEntry]
+    rfl
 
 end DuplicatePrefix.AsMutRootRoundtrip
 

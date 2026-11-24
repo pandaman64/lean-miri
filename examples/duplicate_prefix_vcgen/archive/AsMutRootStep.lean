@@ -78,10 +78,14 @@ theorem entered
       (∀ localId, 2 ≤ localId → localId < 5 → frame.locals[localId]? = some ⟨.dead, none⟩) ∧
       after.user.payload.ghost = false ∧ after.user.payload.validation = .Shallow ∧ after.dataRace = none ∧
       after.user.addresses = machine.user.addresses ∧
+      after.user.payload.payload.user.backend = .none ∧
+      after.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras ∧
       (cfg.terminators.getControl after.user).checkedArithmetic = false ∧
       (cfg.terminators.getControl after.user).gcInterval = 0 ∧
       after.threads.fixedScheduling = true ∧
-      (∃ presentThread, after.threads.activeThread? = some presentThread) ∧
+      (∃ presentThread, after.threads.activeThread? = some presentThread ∧
+        (thread.topUserRelevantFrame = some older.size → presentThread.topUserRelevantFrame = some older.size ∨
+          presentThread.topUserRelevantFrame = some (older.push cached).size)) ∧
       (EvalProjectionMachine.arrays.get (Storage.withCurrent (older.push cached) frame after)).metadata =
         PreparedReflection.actual.runtime ∧
       (EvalProjectionMachine.arrays.get (Storage.withCurrent (older.push cached) frame after)).entries.any
@@ -95,7 +99,8 @@ theorem entered
         (∃ node, next.entry.allocation.extra.nodeAt right.source = some node ∧ node.tag = tag ∧ node.isExposed = false) ∧
         RetagReleaseFootprint.MaterializedWithin next.entry.allocation.extra right.source
           next.relativeStart.bytes (next.relativeStart.bytes + length) ∧
-        RetagReleaseFootprint.VacantRows next.entry.allocation.extra := by
+        RetagReleaseFootprint.VacantRows next.entry.allocation.extra ∧
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } := by
   intro cfg before cached dest tag ptr child expected
   let charged := AsMutCurrentCall.charged options (remaining+1) span machine
   let cachedState := Storage.withCurrent older cached charged
@@ -162,7 +167,7 @@ theorem entered
     noClocks ghost noRace backend fixed unchecked noGc installation
   obtain ⟨enterLoc, enterBody, enterIdentity, enterCallee, saved, continuation, frameClocks, frameSize,
     varargs, ledger, resultSlot, valueSlot, deadSlots, afterGhost, afterShallow, afterRace, afterAddress,
-    afterHost, afterFixed, afterThread, afterMeta, afterAlias, rights⟩ := rest
+    afterHost, afterBackend, afterExtras, afterFixed, afterThread, afterMeta, afterAlias, rights⟩ := rest
   have controls : cfg.terminators.getControl after.user = cfg.terminators.getControl charged.user := by
     dsimp only [cfg]
     rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
@@ -178,10 +183,24 @@ theorem entered
     unfold charged AsMutCurrentCall.charged NestedGuardDriver.nextTerminatorUser
     rw [CanonicalConfigFacts.actual_term_get_set options () (remaining+1) span]
     exact noGc
+  have chargedBackend : charged.user.payload.payload.user.backend = .none := by
+    unfold charged AsMutCurrentCall.charged NestedGuardDriver.nextTerminatorUser
+    rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
+    exact backend
+  have chargeExtras : charged.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras := by
+    unfold charged AsMutCurrentCall.charged NestedGuardDriver.nextTerminatorUser
+    rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
+    rfl
   refine ⟨frame,after,invoked,enterLoc,enterBody,enterIdentity,enterCallee,saved,continuation,
     frameClocks,frameSize,varargs,ledger,resultSlot,?_,deadSlots,afterGhost,afterShallow,afterRace,
-    afterAddress.trans chargedAddress,checked,gc,afterFixed.trans fixed,afterThread,afterMeta,afterAlias,?_⟩
+    afterAddress.trans chargedAddress,afterBackend.trans chargedBackend,afterExtras.trans chargeExtras,checked,gc,afterFixed.trans fixed,?_,afterMeta,afterAlias,?_⟩
   · simpa only [expected, child, ptr, Pointer.new, initialStorage, initialLoan] using valueSlot
+  · refine ⟨_,afterThread,?_⟩
+    intro rootWasTop
+    unfold PushThread.after
+    split
+    · exact Or.inr rfl
+    · exact Or.inl rootWasTop
   · simpa only [initialStorage,initialLoan] using rights
 
 end DuplicatePrefix.AsMutRootStep

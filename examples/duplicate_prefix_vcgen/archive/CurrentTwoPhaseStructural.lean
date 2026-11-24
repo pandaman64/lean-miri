@@ -94,7 +94,11 @@ theorem retag
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
         next.entry.allocation.extra.roots = #[root] ∧
         next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
-        right.tracker.retagMode = loan.tracker.retagMode := by
+        right.tracker.retagMode = loan.tracker.retagMode ∧
+        loan.tracker.global.newPointerTag = .ok (right.tracker.global, tag) ∧
+        next.entry.allocation.extra = ExclusiveTwoPhaseRetag.reservationTree storage.entry.allocation.extra
+          parentTag tag storage.relativeStart (Size.ofBytes length) loan.tracker.global.protectedTags ∧
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } := by
   intro cfg tag atAddress input output
   have facts := CanonicalConfigFacts.actual_fields options () remaining span
   obtain ⟨pointers, table, discriminant, globals, validity, arithmetic, wiring, ensure, sync⟩ := facts.validitySources
@@ -151,7 +155,7 @@ theorem retag
       (storage.relativeStart.bytes + length) storage.entry.allocation.extra.locations := by
     simpa only [tracker, sameProtectors] using owners
   let location : RetagPipeline.ResolvedLocation := ⟨storage.id, storage.relativeStart, .concrete parentTag⟩
-  obtain ⟨after, tree, child, reborrowed, live, tracked, stack, user, race, threads, sizeEq, coherent, roots, childKey,
+  obtain ⟨after, tree, child, reborrowed, live, tracked, stack, user, race, threads, exactTree, sizeEq, coherent, roots, childKey,
     childNode, childOwners⟩ :=
     ExclusiveTwoPhaseRetag.reborrow_exclusive h options.limits.retag place (Size.ofBytes length) tag parentTag location
       allocatedState allocatedState allocatedState allocatedState tracker storage.entry loan.source root node
@@ -169,16 +173,24 @@ theorem retag
     rwa [sizeEq]
   obtain ⟨next, idEq, offsetEq, allocEq, ⟨rights⟩⟩ := region_from_cached_reborrow before after length storage tree tag child tracker
     live tracked coherent childKey childNode nextExtent childOwners
-  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, threads, next, rights, idEq, offsetEq, ?_, ?_, ?_⟩
+  have sameTracker : rights.tracker = tracker := by
+    have known := rights.tracked
+    change after.machine.borrowTracker = some rights.tracker at known
+    rw [tracked] at known
+    exact (Option.some.inj known).symm
+  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, threads, next, rights,
+    idEq, offsetEq, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [allocEq]
     exact roots
   · rw [allocEq]
     exact sizeEq
-  · have known := rights.tracked
-    change after.machine.borrowTracker = some rights.tracker at known
-    rw [tracked] at known
-    have trackedEq := Option.some.inj known
-    rw [← trackedEq]
+  · rw [sameTracker]
+  · rw [sameTracker]
+    exact allocated
+  · rw [allocEq]
+    simpa only [tracker, sameProtectors, location, Allocation.setExtra, Allocation.mapExtra] using exactTree
+  · rw [allocEq]
+    rfl
 
 end DuplicatePrefix.CurrentTwoPhaseStructural
 

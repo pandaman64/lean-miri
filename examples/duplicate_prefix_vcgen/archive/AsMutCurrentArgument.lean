@@ -78,7 +78,8 @@ theorem install
         (∃ node, next.entry.allocation.extra.nodeAt right.source = some node ∧ node.tag = tag ∧ node.isExposed = false) ∧
         RetagReleaseFootprint.MaterializedWithin next.entry.allocation.extra right.source
           next.relativeStart.bytes (next.relativeStart.bytes + length) ∧
-        RetagReleaseFootprint.VacantRows next.entry.allocation.extra := by
+        RetagReleaseFootprint.VacantRows next.entry.allocation.extra ∧
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } := by
   intro cfg h atAddress oldPointer oldValue tag newValue
   let innerCfg := PreparedContracts.actualConfig options () remaining span
   have target : cfg.access.runtime = innerCfg.access.runtime := by
@@ -101,7 +102,7 @@ theorem install
   have current : active.stack.currentFrame? = some stored := by
     simp [active,pre,Storage.withCurrent,Stack.currentFrame?]
   let tagged := {stored with extra := {stored.extra with borrowTracker := some (ledger.addProtector storage.id tag)}}
-  obtain ⟨effect, retagged, stack, user, race, threads, next, rights, idEq, offsetEq, roots, nextSize, node, materialized, vacant⟩ :=
+  obtain ⟨effect, retagged, stack, user, race, threads, next, rights, idEq, offsetEq, roots, nextSize, node, materialized, vacant, allocationFrame⟩ :=
     CurrentAsMutStrong.retag options remaining span sizeFuel sizeBudget preciseOff implicitOff reference reference_ty
       active length base parentTag activeStorage activeLoan rfl stored ledger current frameLedger callee
       address positive bounded tagRoom noRace root capacity extent cmp metadata noAlias
@@ -161,7 +162,9 @@ theorem install
       cases value with
       | mk addresses payload alignment =>
         cases payload
-        simp_all
+        simp only at off
+        cases off
+        rfl
     exact clear machine.user ghost
   refine ⟨written,finalMachine,scopeAction,rfl,?_,rfl,rfl,rfl,rfl,rfl,rfl,?_,rfl,?_,stableUser,race,threads,?_⟩
   · simp [written, tagged, stored, live, cached,CurrentReferenceLocalWrite.written,AsMutCurrentInstall.cacheFrame,AsMutCurrentInstall.spanFrame,LocalOperands.cachedLayoutFrame]
@@ -171,7 +174,7 @@ theorem install
   let resultStorage : InitializedRegion final length := {next with live := next.live}
   let resultRights : ExclusiveRegion final length resultStorage tag :=
     {rights with tracker := releasedMode, tracked := rfl}
-  exact ⟨resultStorage,resultRights,idEq,offsetEq,rfl,roots,nextSize,node,materialized,vacant⟩
+  exact ⟨resultStorage,resultRights,idEq,offsetEq,rfl,roots,nextSize,node,materialized,vacant,allocationFrame⟩
 
 end DuplicatePrefix.AsMutCurrentArgument
 

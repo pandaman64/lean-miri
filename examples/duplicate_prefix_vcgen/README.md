@@ -253,6 +253,12 @@ length return for a non-null integer-address empty slice. The length is zero.
 The two retags increase the tag counter while leaving memory and the global
 protector ledger intact.
 
+The positive-path archive targets `AsMutToCopyCall`, `RootPositiveRootSuffix`,
+and `RootPositiveReleaseAfterCopy` check the actual helper calls, the bounded
+copy, the Boolean result, and the post-copy release from their respective
+prepared states. `RootPositiveSuccessOfPlan` checks the physical terminal
+Return with the resulting release plan and its stated destination profile.
+
 The optional `RetagFrozenChild` target checks actual child insertion and
 the resulting range and permission frame under its concrete fresh-tag premises.
 The `ConcreteFrozenReborrow` and `ExclusiveTypedRetag` targets connect the

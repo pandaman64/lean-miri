@@ -7274,3 +7274,904 @@
 +  · change ((do return (← get).stack.frames.isEmpty) : MachineHooks.M MiriMemoryKind Machine.RootUser Bool) after = _
 +    simp [after, Storage.withCurrent, Array.isEmpty_push, get, getThe, MonadStateOf.get, EStateM.get,
 +      bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+--- a/examples/duplicate_prefix/GuardCompilerFacts.lean
++++ b/examples/duplicate_prefix/GuardCompilerFacts.lean
+@@ -1,5 +1,6 @@
+ import duplicate_prefix.CopyPreconditions
+ import duplicate_prefix.CallEntryFacts
++import duplicate_prefix.LanguageGuardCurrentABI
+
+ /-! Immutable source-call metadata for the two actual Miri language-UB guard
+ functions. Callers/callees are selected by canonical body/block identities. -/
+@@ -40,47 +41,44 @@
+ def bodyQuery (callee : CallInstance) := CallResolution.loadedBodyOfInstance
+   PreparedReflection.actual.compiler.lifecycle.calls.calls callee
+
++def languageAbi := LanguageGuardCurrentABI.abi
++def runtimeAbi := LanguageGuardCurrentABI.abi
++
++theorem language_abi_eq : abiQuery languageCall.callee = .ok languageAbi :=
++  LanguageGuardCurrentABI.parent_query
++
++theorem runtime_abi_eq : abiQuery runtimeCall.callee = .ok runtimeAbi :=
++  LanguageGuardCurrentABI.leaf_query
++
+ theorem language_abi_supported : (abiQuery languageCall.callee).isOk = true := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
++  rw [language_abi_eq]
++  rfl
++
+ theorem runtime_abi_supported : (abiQuery runtimeCall.callee).isOk = true := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-
+-def languageAbi := checkedOk (PreparedReflection.actual.abiResults[7]'(by decide +kernel)) (by decide +kernel)
+-def runtimeAbi := checkedOk (PreparedReflection.actual.abiResults[7]'(by decide +kernel)) (by decide +kernel)
+-
+-theorem language_abi_eq : abiQuery languageCall.callee = .ok languageAbi := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-theorem runtime_abi_eq : abiQuery runtimeCall.callee = .ok runtimeAbi := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
++  rw [runtime_abi_eq]
++  rfl
++
+ theorem language_body_eq : bodyQuery languageCall.callee = .ok Bodies.checkLanguage.loaded := by with_unfolding_all rfl
+ theorem runtime_body_eq : bodyQuery runtimeCall.callee = .ok Bodies.languageRuntime.loaded := by with_unfolding_all rfl
+
+ theorem language_abi_shape :
+     (languageAbi.args.map (·.layout.ty),languageAbi.ret.layout.ty,languageAbi.fixedCount.toNat,
+-      languageAbi.cVariadic,languageAbi.conv,languageAbi.canUnwind) = ( #[],0,0,false,.Rust,true) := by decide +kernel
++      languageAbi.cVariadic,languageAbi.conv,languageAbi.canUnwind) = ( #[],0,0,false,.Rust,false) := by decide +kernel
+
+ theorem runtime_abi_shape :
+     (runtimeAbi.args.map (·.layout.ty),runtimeAbi.ret.layout.ty,runtimeAbi.fixedCount.toNat,
+-      runtimeAbi.cVariadic,runtimeAbi.conv,runtimeAbi.canUnwind) = ( #[],0,0,false,.Rust,true) := by decide +kernel
++      runtimeAbi.cVariadic,runtimeAbi.conv,runtimeAbi.canUnwind) = ( #[],0,0,false,.Rust,false) := by decide +kernel
+
+ theorem abi_return_layouts : languageAbi.ret.layout = RootCompilerFacts.boolLayout ∧
+     runtimeAbi.ret.layout = RootCompilerFacts.boolLayout := by
+   constructor <;> with_unfolding_all rfl
+
+-theorem call_site_abis : languageCall.abi = .normal 7 ∧ runtimeCall.abi = .normal 7 := by
++theorem call_site_abis : languageCall.abi = .normal ∧ runtimeCall.abi = .normal := by
+   constructor <;> with_unfolding_all rfl
+
+ theorem source_body_shapes :
+     Bodies.checkLanguage.loaded.body.argumentCount = 0 ∧
+-    Bodies.checkLanguage.loaded.body.locals = #[0,0,2] ∧
++    Bodies.checkLanguage.loaded.body.locals = #[0,0,5] ∧
+     Bodies.languageRuntime.loaded.body.argumentCount = 0 ∧
+     Bodies.languageRuntime.loaded.body.locals = #[0] := by exact ⟨rfl,rfl,rfl,rfl⟩
+
+--- a/examples/duplicate_prefix/GuardFunctionConstant.lean
++++ b/examples/duplicate_prefix/GuardFunctionConstant.lean
+@@ -1,5 +1,6 @@
+ import duplicate_prefix.GuardCompilerFacts
+ import duplicate_prefix.RootCompilerFacts
++import duplicate_prefix.LanguageZeroFunctionFacts
+
+ /-! Actual MIR constant for the outer copy-wrapper call to `check_language_ub`.
+ This mirrors the inner runtime-call operand using the production compiler
+@@ -22,12 +23,13 @@
+   | ok value => rfl
+   | error reason => cases supported
+
+-def constant : ConstOperand := ⟨⟨119⟩, none, .Val .ZeroSized 101⟩
+-theorem literal : constant.value = .Val .ZeroSized 101 := by with_unfolding_all rfl
+-def layoutQuery := PreparedReflection.actual.compiler.runtime.lookup 101
+-theorem layout_supported : layoutQuery.isOk = true := by decide +kernel
+-def functionLayout := checkedOk (PreparedReflection.actual.layoutResults[101]'(by decide +kernel)) (by decide +kernel)
+-theorem layout_eq : layoutQuery = .ok functionLayout := by decide +kernel
++def constant : ConstOperand := ⟨⟨129⟩, none, .Val .ZeroSized 83⟩
++theorem literal : constant.value = .Val .ZeroSized 83 := by with_unfolding_all rfl
++def layoutQuery := PreparedReflection.actual.compiler.runtime.lookup 83
++def functionLayout := LanguageZeroFunctionFacts.functionLayout
++theorem layout_eq : layoutQuery = .ok functionLayout :=
++  LanguageZeroFunctionFacts.functionLayout_query
++theorem layout_supported : layoutQuery.isOk = true := by rw [layout_eq]; rfl
+
+ theorem function_eval_at_bound
+     (source : PreparedContracts.SourceComparator)
+@@ -48,7 +50,7 @@
+   rw [literal]
+   simp only [ConstantMachine.evalValueWithLayout, Option.map_none]
+   unfold valueToOpWithLayout
+-  have layout : PreparedReflection.actual.compiler.runtime.lookup 101 = .ok functionLayout := layout_eq
++  have layout : PreparedReflection.actual.compiler.runtime.lookup 83 = .ok functionLayout := layout_eq
+   rw [layout]
+   unfold_internal ".Interpreter.metadata"
+   rfl
+--- a/examples/duplicate_prefix/LanguageZeroFunctionFacts.lean
++++ b/examples/duplicate_prefix/LanguageZeroFunctionFacts.lean
+@@ -1,5 +1,4 @@
+ import duplicate_prefix.GuardCompilerFacts
+-import duplicate_prefix.ProjectionMetadataFacts
+
+ /-! Concrete compiler leaves used to evaluate check_language_ub's zero-argument
+ runtime guard call. -/
+@@ -22,26 +21,54 @@
+ set_option maxHeartbeats 16000000
+
+ noncomputable def functionLayout : LocalLayout :=
+-  ((PreparedReflection.actual.layoutResults[101]'(by decide +kernel))).toOption.getD RootCompilerFacts.boolLayout
++  ((PreparedReflection.actual.layoutResults[83]'(by decide +kernel))).toOption.getD RootCompilerFacts.boolLayout
+
+-theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 101 = .ok functionLayout := by decide +kernel
++private theorem functionLayout_query_option : (PreparedReflection.actual.runtime.lookup 83).toOption =
++    some functionLayout := by
++  have observation : PreparedReflection.actual.runtime.node 83 =
++      .ok PreparedReflection.actual.runtime.source.types[83] := rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[83].sourceLayout.normalizedType = 83 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[83]? =
++      some PreparedReflection.actual.runtime.source.types[83] := rfl
++  obtain ⟨definition,args,signature,bound,shape⟩ : ∃ definition args signature bound,
++      PreparedReflection.actual.runtime.source.types[83].shape = .functionDefinition definition args signature bound :=
++    ⟨_,_,_,_,rfl⟩
++  have ordinary : PreparedReflection.actual.runtime.source.types[83].sourceLayout.specialFloat = none := rfl
++  have notX87 : PreparedReflection.actual.runtime.source.types[83].sourceLayout.isX87F80 = false := rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet, StateT.map,
++    modify, modifyGet, MonadStateOf.modifyGet, Bind.bind, Pure.pure, Except.bind, Except.pure,
++    MonadStateOf.get, getThe, liftM, monadLift, Except.toOption, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary, notX87]
++  rfl
+
+-theorem functionLayout_shape : functionLayout.ty = 101 ∧ functionLayout.layout.isSized = true ∧
++theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 83 = .ok functionLayout := by
++  have h := functionLayout_query_option
++  generalize PreparedReflection.actual.runtime.lookup 83 = result at h ⊢
++  cases result <;> simpa [Except.toOption] using h
++
++
++theorem functionLayout_shape : functionLayout.ty = 83 ∧ functionLayout.layout.isSized = true ∧
+     functionLayout.layout.isZst = true := by
+   decide +kernel
+
+-theorem function_kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 101 =
++theorem function_kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 83 =
+     .ok (.FnDef (PreparedReflection.fixedInstance GuardCompilerFacts.languageCall.callee).instanceKind.defId #[]) := by
+   with_unfolding_all rfl
+
+ def rustExternAbi : ABI.ExternAbi := .Rust
+
+ theorem function_signature_query : CompilerFunctionFacts.signature
+-    PreparedReflection.actual.compiler.functions 101 = .ok (0, rustExternAbi) := by
++    PreparedReflection.actual.compiler.functions 83 = .ok (0, rustExternAbi) := by
+   with_unfolding_all rfl
+
+ theorem language_function_type_id :
+-    GuardCompilerFacts.languageCall.source.functionType = some 101 := by
++    GuardCompilerFacts.languageCall.source.functionType = some 83 := by
+   with_unfolding_all rfl
+
+ theorem function_abi : CompilerInstanceAbi.abiOfInstance
+--- a/examples/duplicate_prefix/LanguageZeroEntryFacts.lean
++++ b/examples/duplicate_prefix/LanguageZeroEntryFacts.lean
+@@ -69,7 +69,7 @@
+     Frame Provenance LocalLayout MachineHooks.FrameExtra :=
+   let frame : Frame Provenance LocalLayout Unit := Frame.create
+     CopyPreconditions.Bodies.checkLanguage.loaded GuardCompilerFacts.languageCall.callee ()
+-    (.goto (some 1) .Continue) destination GuardCompilerFacts.languagePreamble identity
++    (.goto (some 1) .Unreachable) destination GuardCompilerFacts.languagePreamble identity
+   { body := frame.body, bodyIdentity := frame.bodyIdentity, functionInstance := frame.functionInstance
+     extra := {borrowTracker := machine.borrowTracker.map (fun _ => {}), catchUnwind := none, userRelevance := rank crates, dataRace := machine.dataRace.map (fun _ => {})}
+     returnContinuation := frame.returnContinuation, returnPlace := frame.returnPlace
+@@ -82,12 +82,12 @@
+     MachineHooks.initFrame (FrameMetadata.userRelevance
+       (CompilerFrameMetadata.hooks PreparedReflection.actual.compiler.lifecycle.frames crates))
+       (Frame.create CopyPreconditions.Bodies.checkLanguage.loaded GuardCompilerFacts.languageCall.callee ()
+-        (.goto (some 1) .Continue) destination GuardCompilerFacts.languagePreamble identity) state =
++        (.goto (some 1) .Unreachable) destination GuardCompilerFacts.languagePreamble identity) state =
+       .ok (rawFrame crates state.machine destination identity) state := by
+   unfold MachineHooks.initFrame
+   have relevance := language_user_relevance crates
+     (Frame.create CopyPreconditions.Bodies.checkLanguage.loaded GuardCompilerFacts.languageCall.callee ()
+-      (.goto (some 1) .Continue) destination GuardCompilerFacts.languagePreamble identity :
++      (.goto (some 1) .Unreachable) destination GuardCompilerFacts.languagePreamble identity :
+       Frame Provenance LocalLayout Unit) state rfl
+   simp only [bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
+     pure, EStateM.pure] at relevance ⊢
+@@ -133,7 +133,7 @@
+     (present : (pushed options.userRelevantCrates state destination).stack.frames[index]? = some current) :
+     CallMachine.pushRaw (PreparedContracts.actualConfig options () remaining span).lifecycle false
+       GuardCompilerFacts.languageCall.callee CopyPreconditions.Bodies.checkLanguage.loaded
+-      destination (.goto (some 1) .Continue) state =
++      destination (.goto (some 1) .Unreachable) state =
+       .ok () (completed options.userRelevantCrates state destination current) := by
+   unfold CallMachine.pushRaw
+   have fields := CanonicalConfigFacts.actual_fields options () remaining span
+--- a/examples/duplicate_prefix/LanguageZeroCallCore.lean
++++ b/examples/duplicate_prefix/LanguageZeroCallCore.lean
+@@ -28,7 +28,7 @@
+     | .indirect place => some (MPlaceTy.mk place destinationOp.layout)
+     | .immediate _ => none
+   h.pushRaw () GuardCompilerFacts.languageCall.callee CopyPreconditions.Bodies.checkLanguage.loaded
+-    destination (.goto (some 1) .Continue)
++    destination (.goto (some 1) .Unreachable)
+   let frame ← h.getFrame
+   let preamble ← match frame.location with
+     | .unwinding span => pure span
+@@ -51,7 +51,7 @@
+     Call.initStackFrame
+       (ExecutionMachine.callHooks (PreparedContracts.actualConfig options () remaining span) limits) ()
+       GuardCompilerFacts.languageCall.callee CopyPreconditions.Bodies.checkLanguage.loaded
+-      GuardCompilerFacts.languageAbi #[] false destination (.goto (some 1) .Continue) =
++      GuardCompilerFacts.languageAbi #[] false destination (.goto (some 1) .Unreachable) =
+       core (ExecutionMachine.callHooks (PreparedContracts.actualConfig options () remaining span) limits)
+         destination := by
+   let h := ExecutionMachine.callHooks (PreparedContracts.actualConfig options () remaining span) limits
+@@ -96,8 +96,8 @@
+   have calleeVariadic : h.abiVariadic GuardCompilerFacts.languageAbi = false := by
+     change GuardCompilerFacts.languageAbi.cVariadic = false
+     decide +kernel
+-  have canUnwind : h.abiCanUnwind GuardCompilerFacts.languageAbi = true := by
+-    change GuardCompilerFacts.languageAbi.canUnwind = true
++  have canUnwind : h.abiCanUnwind GuardCompilerFacts.languageAbi = false := by
++    change GuardCompilerFacts.languageAbi.canUnwind = false
+     decide +kernel
+   have conv : h.sameConvention GuardCompilerFacts.languageAbi GuardCompilerFacts.languageAbi = true := by
+     change (GuardCompilerFacts.languageAbi.conv == GuardCompilerFacts.languageAbi.conv) = true
+--- a/examples/duplicate_prefix/LanguageZeroTail.lean
++++ b/examples/duplicate_prefix/LanguageZeroTail.lean
+@@ -45,7 +45,7 @@
+     LanguageZeroCallCore.core h destination = (do
+       let destinationOp ← h.placeToOp () destination
+       h.pushRaw () GuardCompilerFacts.languageCall.callee CopyPreconditions.Bodies.checkLanguage.loaded
+-        destination (.goto (some 1) .Continue)
++        destination (.goto (some 1) .Unreachable)
+       action h destinationOp) := by
+   unfold LanguageZeroCallCore.core action
+   simp only [bind_assoc]
+--- a/examples/duplicate_prefix/LanguageZeroSpans.lean
++++ b/examples/duplicate_prefix/LanguageZeroSpans.lean
+@@ -1,5 +1,5 @@
+ import duplicate_prefix.LanguageZeroEntryFacts
+-import duplicate_prefix.MetadataSpans
++import duplicate_prefix.AddSpans
+
+ /-! The runtime guard's return-place span is queried from the retained compiler
+     body and span table, then fed to the production localSpan hook. -/
+@@ -52,7 +52,7 @@
+   let decl := inputBody.input.localSources[0]'valid
+   have present : inputBody.input.localSources[0]? = some decl := by simp [decl, valid]
+   have sourceBody := body_of_frame frame body identity callee
+-  exact MetadataSpans.local_span_from_metadata _ _ _ _ _ 0 inputBody decl spanIndex
++  exact AddSpans.local_span_from_metadata _ _ _ _ _ 0 inputBody decl spanIndex
+     body.symm sourceBody present (by with_unfolding_all rfl) (by decide +kernel)
+
+ theorem actual_local_span (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
+--- a/examples/duplicate_prefix/LanguageZeroEntry.lean
++++ b/examples/duplicate_prefix/LanguageZeroEntry.lean
+@@ -50,7 +50,7 @@
+     Call.initStackFrame
+       (ExecutionMachine.callHooks (PreparedContracts.actualConfig options () (remaining+1) span) limits) ()
+       GuardCompilerFacts.languageCall.callee CopyPreconditions.Bodies.checkLanguage.loaded
+-      GuardCompilerFacts.languageAbi #[] false (destination frames caller) (.goto (some 1) .Continue)
++      GuardCompilerFacts.languageAbi #[] false (destination frames caller) (.goto (some 1) .Unreachable)
+       (Storage.withCurrent frames caller machine) =
+     .ok () (Storage.withCurrent (frames.push caller)
+       (LanguageZeroDone.doneFrame (rawFrame options (Storage.withCurrent frames caller machine)
+@@ -67,17 +67,17 @@
+   have pushed := LanguageZeroEntryFacts.actual_push_raw options limits (remaining+1) span debugOff
+     state dest thread index current active top present
+   have pushRaw : h.pushRaw () GuardCompilerFacts.languageCall.callee
+-      CopyPreconditions.Bodies.checkLanguage.loaded dest (.goto (some 1) .Continue) state =
++      CopyPreconditions.Bodies.checkLanguage.loaded dest (.goto (some 1) .Unreachable) state =
+       .ok () (LanguageZeroEntryFacts.completed options.userRelevantCrates state dest current) := by
+     change CallMachine.pushRaw (PreparedContracts.actualConfig options () (remaining+1) span).lifecycle
+       (PreparedContracts.actualConfig options () (remaining+1) span).compiler.debugAssertions
+       GuardCompilerFacts.languageCall.callee CopyPreconditions.Bodies.checkLanguage.loaded dest
+-      (.goto (some 1) .Continue) state = _
++      (.goto (some 1) .Unreachable) state = _
+     rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).debug, debugOff]
+     exact pushed
+   have pushRawDest : h.pushRaw () GuardCompilerFacts.languageCall.callee
+       CopyPreconditions.Bodies.checkLanguage.loaded (destination frames caller)
+-      (.goto (some 1) .Continue) state =
++      (.goto (some 1) .Unreachable) state =
+       .ok () (LanguageZeroEntryFacts.completed options.userRelevantCrates state
+         (destination frames caller) current) := by simpa [dest] using pushRaw
+   have rawBody : raw.body = CopyPreconditions.Bodies.checkLanguage.loaded.body := rfl
+--- a/examples/duplicate_prefix/LanguageZeroInstalled.lean
++++ b/examples/duplicate_prefix/LanguageZeroInstalled.lean
+@@ -26,7 +26,7 @@
+     (frame options state dest).functionInstance = CopyPreconditions.Bodies.checkLanguage.fnInstance ∧
+     (frame options state dest).location = .mir ⟨0,0⟩ ∧
+     (frame options state dest).trackCallerArg = none ∧
+-    (frame options state dest).returnContinuation = .goto (some 1) .Continue ∧
++    (frame options state dest).returnContinuation = .goto (some 1) .Unreachable ∧
+     (frame options state dest).vaList = #[] := by
+   with_unfolding_all exact ⟨rfl,rfl,rfl,rfl,rfl,rfl,rfl⟩
+ end DuplicatePrefix.LanguageZeroInstalled
+--- a/examples/duplicate_prefix/LanguageZeroCallStep.lean
++++ b/examples/duplicate_prefix/LanguageZeroCallStep.lean
+@@ -29,7 +29,6 @@
+     (remaining budget : Nat) (dispatchFuel : limits.callDispatch = budget + 1)
+     (span : PreparedContracts.FixedSpanQuery)
+     (source : PreparedContracts.SourceComparator)
+-    (cmp : ProjectionMetadataFacts.NullComparator)
+     (debugOff : options.place.debugAssertions = false)
+     (frames : Array (Frame Provenance LocalLayout MachineHooks.FrameExtra))
+     (caller : CompilerFrameContext.ActualFrame)
+@@ -75,7 +74,7 @@
+   let terminator := block.terminator
+   have fields := CanonicalConfigFacts.actual_fields options () (remaining + 1) span
+   have termKind : terminator.kind =
+-      .Call function #[] ⟨5,#[]⟩ (some 1) .Continue .Normal ⟨95⟩ := by
++      .Call function #[] ⟨5,#[]⟩ (some 1) .Unreachable .Normal ⟨116⟩ := by
+     with_unfolding_all rfl
+   have blockAt : caller.body.basicBlocks[0]? = some block := by
+     rw [body]
+@@ -98,7 +97,7 @@
+     simp only [bind,Except.bind,pure,Except.pure]
+     with_unfolding_all rfl
+   have kind : h.functionKind LanguageZeroFunctionFacts.functionLayout.ty =
+-      pure (.FnDef 31 #[]) := by
++      pure (.FnDef 27 #[]) := by
+     change config.calls.compiler.functionKind _ = _
+     rw [fields.callCompiler]
+     with_unfolding_all change (match CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions
+@@ -108,11 +107,11 @@
+         MachineHooks.M MiriMemoryKind Machine.RootUser CallFunctionKind) = _
+     rw [LanguageZeroFunctionFacts.functionLayout_shape.1,LanguageZeroFunctionFacts.function_kind]
+     with_unfolding_all rfl
+-  have resolve : h.resolve () 31 #[] state = .ok GuardCompilerFacts.languageCall.callee state := by
+-    change config.calls.compiler.resolve () 31 #[] state = _
++  have resolve : h.resolve () 27 #[] state = .ok GuardCompilerFacts.languageCall.callee state := by
++    change config.calls.compiler.resolve () 27 #[] state = _
+     rw [fields.callCompiler]
+     exact LanguageZeroFunctionFacts.resolve_current frames caller machine body identity callee location
+-  have itemKind : h.instanceKind GuardCompilerFacts.languageCall.callee = pure (.Item 31) := by
++  have itemKind : h.instanceKind GuardCompilerFacts.languageCall.callee = pure (.Item 27) := by
+     change config.calls.compiler.instanceKind _ = _
+     rw [fields.callCompiler]
+     dsimp only [CompilerCallConstruction.compiler,CompilerExecutionCallLeaves.make]
+@@ -125,8 +124,8 @@
+     funext st
+     exact GuardCompilerFacts.actual_language_caller_location options () (remaining+1) span limits st
+   have calleeEval := GenericCallStages.eval_callee_zero h () function ⟨5,#[]⟩
+-    ⟨.immediate .uninit,LanguageZeroFunctionFacts.functionLayout⟩ state state .Rust 31 #[]
+-    GuardCompilerFacts.languageCall.callee 31 GuardCompilerFacts.languageAbi false
++    ⟨.immediate .uninit,LanguageZeroFunctionFacts.functionLayout⟩ state state .Rust 27 #[]
++    GuardCompilerFacts.languageCall.callee 27 GuardCompilerFacts.languageAbi false
+     functionEval signature kind resolve itemKind fnAbi callerLocation
+   have destinationEval := CallEntryLocals.destination_cached options limits (remaining+1) span debugOff
+     frames caller machine 5 RootCompilerFacts.boolLayout callerSize callerCached (by decide +kernel)
+@@ -142,11 +141,11 @@
+     (LanguageZeroEntry.pushedMachine options state (LanguageZeroEntry.destination frames caller) current)
+   let request : CallRequest Provenance Unit ABI.ExternAbi (FnAbi TyId) :=
+     ⟨.Instance GuardCompilerFacts.languageCall.callee,.Rust,some GuardCompilerFacts.languageAbi,#[],false,
+-      LanguageZeroEntry.destination frames caller,some 1,.Continue⟩
++      LanguageZeroEntry.destination frames caller,some 1,.Unreachable⟩
+   have find := LanguageZeroDispatch.find_mir options limits (remaining+1) span state #[]
+-    (LanguageZeroEntry.destination frames caller) (some 1) .Continue backend noRace
+-  have canUnwind : h.abiCanUnwind GuardCompilerFacts.languageAbi = true := by
+-    change GuardCompilerFacts.languageAbi.canUnwind = true
++    (LanguageZeroEntry.destination frames caller) (some 1) .Unreachable backend noRace
++  have canUnwind : h.abiCanUnwind GuardCompilerFacts.languageAbi = false := by
++    change GuardCompilerFacts.languageAbi.canUnwind = false
+     exact congrArg (fun x => x.2.2.2.2.2) GuardCompilerFacts.language_abi_shape
+   have abiEq : GuardCompilerFacts.languageAbi = GuardCompilerFacts.languageAbi := by rfl
+   have rustCall : h.isRustCall ABI.ExternAbi.Rust = false := by
+@@ -154,20 +153,20 @@
+     rw [fields.callCompiler]
+     rfl
+   have dispatchStep : Call.initFnCallStep h () request state = .ok none after := by
+-    have item := CallItemDispatch.item_step h GuardCompilerFacts.languageCall.callee 31 GuardCompilerFacts.languageAbi
+-      #[] false (LanguageZeroEntry.destination frames caller) (some 1) .Continue .Rust itemKind canUnwind rustCall
++    have item := CallItemDispatch.item_step_nounwind (unwind := .Unreachable) h GuardCompilerFacts.languageCall.callee 27 GuardCompilerFacts.languageAbi
++      #[] false (LanguageZeroEntry.destination frames caller) (some 1) .Rust itemKind canUnwind rustCall
+     rw [item]
+     simp only [CallItemDispatch.itemStage, bind, EStateM.bind]
+     have find' := find
+     change h.findMirOrEvalFn () GuardCompilerFacts.languageCall.callee GuardCompilerFacts.languageAbi #[]
+-      (LanguageZeroEntry.destination frames caller) (some 1) .Continue state = _ at find'
++      (LanguageZeroEntry.destination frames caller) (some 1) .Unreachable state = _ at find'
+     rw [find']
+     simp only [bind, EStateM.bind, pure, EStateM.pure]
+     have enter := LanguageZeroEntry.actual_entry options limits remaining span debugOff frames caller machine
+       callerSize callerLive callerCached callerNoClocks noRace ghost tracker tracked thread threadIndex current active top present
+     have enter' : Call.initStackFrame h () GuardCompilerFacts.languageCall.callee
+         CopyPreconditions.Bodies.checkLanguage.loaded GuardCompilerFacts.languageAbi #[] false
+-        (LanguageZeroEntry.destination frames caller) (.goto (some 1) .Continue)
++        (LanguageZeroEntry.destination frames caller) (.goto (some 1) .Unreachable)
+         (Storage.withCurrent frames caller machine) = .ok ()
+         (Storage.withCurrent (frames.push caller)
+           (LanguageZeroDone.doneFrame (LanguageZeroEntry.rawFrame options
+@@ -183,8 +182,8 @@
+   have init' : Call.initFnCall h () limits.callDispatch
+       ⟨call.callee,call.callerAbi,call.fnAbi,call.args,call.withCallerLocation,
+         LanguageZeroEntry.destination frames caller,some 1,
+-        if call.fnAbi.any h.abiCanUnwind then .Continue else .Unreachable⟩ state = .ok () after := by
+-    simpa [request,call,canUnwind,Option.any] using init
++        if call.fnAbi.any h.abiCanUnwind then .Unreachable else .Unreachable⟩ state = .ok () after := by
++    simpa [request,call] using init
+   have getFrame : h.getFrame state = .ok caller state := by
+     exact CallEntryLocals.get_frame options limits (remaining+1) span frames caller machine
+   have oldIndex : h.frameIndex state = .ok frames.size state := by
+@@ -200,10 +199,13 @@
+     simp [after,Storage.withCurrent,Stack.frameIndex,Array.isEmpty_push,bind,EStateM.bind,
+       get,getThe,MonadStateOf.get,EStateM.get,pure,Pure.pure,EStateM.pure,Except.pure]
+   have progress : frames.size + 1 ≠ frames.size := by omega
+-  exact GenericCallStages.call_terminator h () limits.callDispatch block.terminator function #[] ⟨5,#[]⟩
+-    1 .Continue .Normal ⟨95⟩ state state state after caller frames.size (frames.size+1)
++  apply GenericCallStages.call_terminator h () limits.callDispatch block.terminator function #[] ⟨5,#[]⟩
++    1 .Unreachable .Normal ⟨116⟩ state state state after caller frames.size (frames.size+1)
+     (LanguageZeroEntry.destination frames caller) call termKind getFrame oldIndex
+-    (by simpa [destEq] using destinationEval') calleeEval' init' newIndex progress
++    (by simpa [destEq] using destinationEval') calleeEval' init' ?_ newIndex progress
++  change (return (← get).stack.frames.isEmpty : MachineHooks.M MiriMemoryKind Machine.RootUser Bool) after = _
++  simp [after,Storage.withCurrent,Array.isEmpty_push,bind,EStateM.bind,get,getThe,
++    MonadStateOf.get,EStateM.get,pure,EStateM.pure]
+
+
+ end
+--- a/examples/duplicate_prefix/LanguageZeroUncached.lean
++++ b/examples/duplicate_prefix/LanguageZeroUncached.lean
+@@ -23,12 +23,11 @@
+   simp only [MachineHooks.currentFrame,Storage.withCurrent,Stack.currentFrame?,Array.back?_push,
+     bind,EStateM.bind,get,getThe,MonadStateOf.get,EStateM.get,pure,EStateM.pure]
+   rw [normalized]
+-  with_unfolding_all change (match PreparedReflection.actual.runtime.lookup 0 with
+-    | .ok value => EStateM.Result.ok value (Storage.withCurrent frames caller machine)
+-    | .error error => EStateM.Result.error (StepError.unsupported s!"compiler frame query: {toString error}")
+-        (Storage.withCurrent frames caller machine)) = _
+-  rw [RootCompilerFacts.bool_layout_eq]
+-  rfl
++  unfold_frame_query_lift
++  simp only [pure,EStateM.pure]
++  have lookup : PreparedReflection.actual.compiler.runtime.lookup 0 = .ok RootCompilerFacts.boolLayout :=
++    RootCompilerFacts.bool_layout_eq
++  simp [lookup,Except.mapError,EStateM.pure]
+
+ theorem call_uncached
+     [DecidableEq MiriMemoryKind] [PointerProvenance Provenance]
+@@ -36,7 +35,6 @@
+     (remaining budget : Nat) (dispatchFuel : limits.callDispatch = budget + 1)
+     (span : PreparedContracts.FixedSpanQuery)
+     (source : PreparedContracts.SourceComparator)
+-    (cmp : ProjectionMetadataFacts.NullComparator)
+     (debugOff : options.place.debugAssertions = false)
+     (frames : Array (Frame Provenance LocalLayout MachineHooks.FrameExtra))
+     (original : CompilerFrameContext.ActualFrame)
+@@ -90,7 +88,7 @@
+   let terminator := block.terminator
+   have fields := CanonicalConfigFacts.actual_fields options () (remaining + 1) span
+   have termKind : terminator.kind =
+-      .Call function #[] ⟨5,#[]⟩ (some 1) .Continue .Normal ⟨95⟩ := by
++      .Call function #[] ⟨5,#[]⟩ (some 1) .Unreachable .Normal ⟨116⟩ := by
+     with_unfolding_all rfl
+   have blockAt : caller.body.basicBlocks[0]? = some block := by
+     rw [body]
+@@ -113,7 +111,7 @@
+     simp only [bind,Except.bind,pure,Except.pure]
+     with_unfolding_all rfl
+   have kind : h.functionKind LanguageZeroFunctionFacts.functionLayout.ty =
+-      pure (.FnDef 31 #[]) := by
++      pure (.FnDef 27 #[]) := by
+     change config.calls.compiler.functionKind _ = _
+     rw [fields.callCompiler]
+     with_unfolding_all change (match CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions
+@@ -123,11 +121,11 @@
+         MachineHooks.M MiriMemoryKind Machine.RootUser CallFunctionKind) = _
+     rw [LanguageZeroFunctionFacts.functionLayout_shape.1,LanguageZeroFunctionFacts.function_kind]
+     with_unfolding_all rfl
+-  have resolve : h.resolve () 31 #[] state = .ok GuardCompilerFacts.languageCall.callee state := by
+-    change config.calls.compiler.resolve () 31 #[] state = _
++  have resolve : h.resolve () 27 #[] state = .ok GuardCompilerFacts.languageCall.callee state := by
++    change config.calls.compiler.resolve () 27 #[] state = _
+     rw [fields.callCompiler]
+     exact LanguageZeroFunctionFacts.resolve_current frames caller machine body identity callee location
+-  have itemKind : h.instanceKind GuardCompilerFacts.languageCall.callee = pure (.Item 31) := by
++  have itemKind : h.instanceKind GuardCompilerFacts.languageCall.callee = pure (.Item 27) := by
+     change config.calls.compiler.instanceKind _ = _
+     rw [fields.callCompiler]
+     dsimp only [CompilerCallConstruction.compiler,CompilerExecutionCallLeaves.make]
+@@ -140,8 +138,8 @@
+     funext st
+     exact GuardCompilerFacts.actual_language_caller_location options () (remaining+1) span limits st
+   have calleeEval := GenericCallStages.eval_callee_zero h () function ⟨5,#[]⟩
+-    ⟨.immediate .uninit,LanguageZeroFunctionFacts.functionLayout⟩ state state .Rust 31 #[]
+-    GuardCompilerFacts.languageCall.callee 31 GuardCompilerFacts.languageAbi false
++    ⟨.immediate .uninit,LanguageZeroFunctionFacts.functionLayout⟩ state state .Rust 27 #[]
++    GuardCompilerFacts.languageCall.callee 27 GuardCompilerFacts.languageAbi false
+     functionEval signature kind resolve itemKind fnAbi callerLocation
+   have destinationEval := CallUncachedLocal.uncached options limits (remaining+1) span debugOff
+     frames original machine 5 RootCompilerFacts.boolLayout originalSize originalUncached (by decide +kernel)
+@@ -158,11 +156,11 @@
+     (LanguageZeroEntry.pushedMachine options state (LanguageZeroEntry.destination frames caller) current)
+   let request : CallRequest Provenance Unit ABI.ExternAbi (FnAbi TyId) :=
+     ⟨.Instance GuardCompilerFacts.languageCall.callee,.Rust,some GuardCompilerFacts.languageAbi,#[],false,
+-      LanguageZeroEntry.destination frames caller,some 1,.Continue⟩
++      LanguageZeroEntry.destination frames caller,some 1,.Unreachable⟩
+   have find := LanguageZeroDispatch.find_mir options limits (remaining+1) span state #[]
+-    (LanguageZeroEntry.destination frames caller) (some 1) .Continue backend noRace
+-  have canUnwind : h.abiCanUnwind GuardCompilerFacts.languageAbi = true := by
+-    change GuardCompilerFacts.languageAbi.canUnwind = true
++    (LanguageZeroEntry.destination frames caller) (some 1) .Unreachable backend noRace
++  have canUnwind : h.abiCanUnwind GuardCompilerFacts.languageAbi = false := by
++    change GuardCompilerFacts.languageAbi.canUnwind = false
+     exact congrArg (fun x => x.2.2.2.2.2) GuardCompilerFacts.language_abi_shape
+   have abiEq : GuardCompilerFacts.languageAbi = GuardCompilerFacts.languageAbi := by rfl
+   have rustCall : h.isRustCall ABI.ExternAbi.Rust = false := by
+@@ -170,20 +168,20 @@
+     rw [fields.callCompiler]
+     rfl
+   have dispatchStep : Call.initFnCallStep h () request state = .ok none after := by
+-    have item := CallItemDispatch.item_step h GuardCompilerFacts.languageCall.callee 31 GuardCompilerFacts.languageAbi
+-      #[] false (LanguageZeroEntry.destination frames caller) (some 1) .Continue .Rust itemKind canUnwind rustCall
++    have item := CallItemDispatch.item_step_nounwind (unwind := .Unreachable) h GuardCompilerFacts.languageCall.callee 27 GuardCompilerFacts.languageAbi
++      #[] false (LanguageZeroEntry.destination frames caller) (some 1) .Rust itemKind canUnwind rustCall
+     rw [item]
+     simp only [CallItemDispatch.itemStage, bind, EStateM.bind]
+     have find' := find
+     change h.findMirOrEvalFn () GuardCompilerFacts.languageCall.callee GuardCompilerFacts.languageAbi #[]
+-      (LanguageZeroEntry.destination frames caller) (some 1) .Continue state = _ at find'
++      (LanguageZeroEntry.destination frames caller) (some 1) .Unreachable state = _ at find'
+     rw [find']
+     simp only [bind, EStateM.bind, pure, EStateM.pure]
+     have enter := LanguageZeroEntry.actual_entry options limits remaining span debugOff frames caller machine
+       callerSize callerLive callerCached callerNoClocks noRace ghost tracker tracked thread threadIndex current active top present
+     have enter' : Call.initStackFrame h () GuardCompilerFacts.languageCall.callee
+         CopyPreconditions.Bodies.checkLanguage.loaded GuardCompilerFacts.languageAbi #[] false
+-        (LanguageZeroEntry.destination frames caller) (.goto (some 1) .Continue)
++        (LanguageZeroEntry.destination frames caller) (.goto (some 1) .Unreachable)
+         (Storage.withCurrent frames caller machine) = .ok ()
+         (Storage.withCurrent (frames.push caller)
+           (LanguageZeroDone.doneFrame (LanguageZeroEntry.rawFrame options
+@@ -199,8 +197,8 @@
+   have init' : Call.initFnCall h () limits.callDispatch
+       ⟨call.callee,call.callerAbi,call.fnAbi,call.args,call.withCallerLocation,
+         LanguageZeroEntry.destination frames caller,some 1,
+-        if call.fnAbi.any h.abiCanUnwind then .Continue else .Unreachable⟩ state = .ok () after := by
+-    simpa [request,call,canUnwind,Option.any] using init
++        if call.fnAbi.any h.abiCanUnwind then .Unreachable else .Unreachable⟩ state = .ok () after := by
++    simpa [request,call] using init
+   have getFrame : h.getFrame originalState = .ok original originalState := by
+     exact CallEntryLocals.get_frame options limits (remaining+1) span frames original machine
+   have oldIndex : h.frameIndex originalState = .ok frames.size originalState := by
+@@ -216,10 +214,13 @@
+     simp [after,Storage.withCurrent,Stack.frameIndex,Array.isEmpty_push,bind,EStateM.bind,
+       get,getThe,MonadStateOf.get,EStateM.get,pure,Pure.pure,EStateM.pure,Except.pure]
+   have progress : frames.size + 1 ≠ frames.size := by omega
+-  exact GenericCallStages.call_terminator h () limits.callDispatch block.terminator function #[] ⟨5,#[]⟩
+-    1 .Continue .Normal ⟨95⟩ originalState state state after original frames.size (frames.size+1)
++  apply GenericCallStages.call_terminator h () limits.callDispatch block.terminator function #[] ⟨5,#[]⟩
++    1 .Unreachable .Normal ⟨116⟩ originalState state state after original frames.size (frames.size+1)
+     (LanguageZeroEntry.destination frames caller) call termKind getFrame oldIndex
+-    (by simpa [destEq] using destinationEval') calleeEval' init' newIndex progress
++    (by simpa [destEq] using destinationEval') calleeEval' init' ?_ newIndex progress
++  change (return (← get).stack.frames.isEmpty : MachineHooks.M MiriMemoryKind Machine.RootUser Bool) after = _
++  simp [after,Storage.withCurrent,Array.isEmpty_push,bind,EStateM.bind,get,getThe,
++    MonadStateOf.get,EStateM.get,pure,EStateM.pure]
+
+
+ end DuplicatePrefix.LanguageZeroUncached
+--- a/examples/duplicate_prefix/LanguageZeroStep.lean
++++ b/examples/duplicate_prefix/LanguageZeroStep.lean
+@@ -1,5 +1,5 @@
+ import duplicate_prefix.LanguageZeroUncached
+-import duplicate_prefix.PtrMetadataReturn
++import duplicate_prefix.PointerAddCurrentReturn
+ namespace DuplicatePrefix.LanguageZeroStep
+ open Miri Miri.Input Miri.ABI Miri.MIR Miri.Interpreter Miri.Memory Miri.TreeBorrows
+ open DuplicatePrefix LanguageZeroUncached
+@@ -7,14 +7,13 @@
+ set_option maxHeartbeats 16000000
+ set_option backward.isDefEq.respectTransparency false
+ set_option backward.dsimp.instances true
+-noncomputable def accountedMachine := PtrMetadataReturn.accountedMachine
++noncomputable def accountedMachine := PointerAddCurrentReturn.accountedMachine
+ theorem step
+     [DecidableEq MiriMemoryKind] [PointerProvenance Provenance]
+     (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
+     (remaining budget : Nat) (dispatchFuel : limits.callDispatch = budget + 1)
+     (span : PreparedContracts.FixedSpanQuery)
+     (source : PreparedContracts.SourceComparator)
+-    (cmp : ProjectionMetadataFacts.NullComparator)
+     (debugOff : options.place.debugAssertions = false)
+     (frames : Array (Frame Provenance LocalLayout MachineHooks.FrameExtra))
+     (original : CompilerFrameContext.ActualFrame)
+@@ -57,14 +56,14 @@
+   have nextRace : next.dataRace = none := noRace
+   have nextActive : next.threads.activeThread? = some thread := active
+   have nextBackend : next.user.payload.payload.user.backend = .none := by
+-    change (PtrMetadataReturn.accountedMachine options remaining span machine).user.payload.payload.user.backend = _
+-    unfold PtrMetadataReturn.accountedMachine SourceControl.accounted
++    change (PointerAddCurrentReturn.accountedMachine options remaining span machine).user.payload.payload.user.backend = _
++    unfold PointerAddCurrentReturn.accountedMachine SourceControl.accounted
+     rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
+     exact backend
+   have nextGhost : next.user.payload.ghost = false := by
+-    change (PtrMetadataReturn.accountedMachine options remaining span machine).user.payload.ghost = false
+-    rw [PtrMetadataReturn.accounted_ghost]; exact ghost
+-  have effect := LanguageZeroUncached.call_uncached options limits remaining budget dispatchFuel span source cmp debugOff frames original next
++    change (PointerAddCurrentReturn.accountedMachine options remaining span machine).user.payload.ghost = false
++    rw [PointerAddCurrentReturn.accounted_ghost]; exact ghost
++  have effect := LanguageZeroUncached.call_uncached options limits remaining budget dispatchFuel span source debugOff frames original next
+     body identity callee location originalSize originalLive originalUncached originalNoClocks nextRace nextBackend nextGhost
+     tracker nextTracked thread threadIndex current nextActive top present
+   have accounting := SourceControl.before_terminator cfg limits () before
+@@ -74,10 +73,10 @@
+   let block := CopyPreconditions.Bodies.copyWrapper.loaded.body.basicBlocks[0]'(by with_unfolding_all decide +kernel)
+   have blockAt : original.body.basicBlocks[0]? = some block := by rw [body]; simp [block]
+   have noStatement : block.statements[2]? = none := by with_unfolding_all rfl
+-  have sourceCall : block.terminator.kind = .Call LanguageZeroCallStep.function #[] ⟨5,#[]⟩ (some 1) .Continue .Normal ⟨95⟩ := by
++  have sourceCall : block.terminator.kind = .Call LanguageZeroCallStep.function #[] ⟨5,#[]⟩ (some 1) .Unreachable .Normal ⟨116⟩ := by
+     with_unfolding_all rfl
+   apply GenericCallStages.source_step cfg limits () before nextState _ original ⟨0,2⟩ block
+-    LanguageZeroCallStep.function #[] ⟨5,#[]⟩ (some 1) .Continue .Normal ⟨95⟩
++    LanguageZeroCallStep.function #[] ⟨5,#[]⟩ (some 1) .Unreachable .Normal ⟨116⟩
+     (by simp [before,Storage.withCurrent,Stack.currentFrame?]) location blockAt noStatement sourceCall accounting' effect
+   simp [Storage.withCurrent,nextState]
+ end DuplicatePrefix.LanguageZeroStep
+--- a/examples/duplicate_prefix/RuntimeCallQueries.lean
++++ b/examples/duplicate_prefix/RuntimeCallQueries.lean
+@@ -1,5 +1,4 @@
+ import duplicate_prefix.GuardCompilerFacts
+-import duplicate_prefix.ProjectionMetadataFacts
+
+ /-! Concrete compiler leaves used to evaluate check_language_ub's zero-argument
+ runtime guard call. -/
+@@ -22,26 +21,54 @@
+ set_option maxHeartbeats 16000000
+
+ noncomputable def functionLayout : LocalLayout :=
+-  ((PreparedReflection.actual.layoutResults[127]'(by decide +kernel))).toOption.getD RootCompilerFacts.boolLayout
++  ((PreparedReflection.actual.layoutResults[111]'(by decide +kernel))).toOption.getD RootCompilerFacts.boolLayout
+
+-theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 127 = .ok functionLayout := by decide +kernel
++private theorem functionLayout_query_option : (PreparedReflection.actual.runtime.lookup 111).toOption =
++    some functionLayout := by
++  have observation : PreparedReflection.actual.runtime.node 111 =
++      .ok PreparedReflection.actual.runtime.source.types[111] := rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[111].sourceLayout.normalizedType = 111 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[111]? =
++      some PreparedReflection.actual.runtime.source.types[111] := rfl
++  obtain ⟨definition,args,signature,bound,shape⟩ : ∃ definition args signature bound,
++      PreparedReflection.actual.runtime.source.types[111].shape = .functionDefinition definition args signature bound :=
++    ⟨_,_,_,_,rfl⟩
++  have ordinary : PreparedReflection.actual.runtime.source.types[111].sourceLayout.specialFloat = none := rfl
++  have notX87 : PreparedReflection.actual.runtime.source.types[111].sourceLayout.isX87F80 = false := rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet, StateT.map,
++    modify, modifyGet, MonadStateOf.modifyGet, Bind.bind, Pure.pure, Except.bind, Except.pure,
++    MonadStateOf.get, getThe, liftM, monadLift, Except.toOption, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary, notX87]
++  rfl
+
+-theorem functionLayout_shape : functionLayout.ty = 127 ∧ functionLayout.layout.isSized = true ∧
++theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 111 = .ok functionLayout := by
++  have h := functionLayout_query_option
++  generalize PreparedReflection.actual.runtime.lookup 111 = result at h ⊢
++  cases result <;> simpa [Except.toOption] using h
++
++
++theorem functionLayout_shape : functionLayout.ty = 111 ∧ functionLayout.layout.isSized = true ∧
+     functionLayout.layout.isZst = true := by
+   decide +kernel
+
+-theorem function_kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 127 =
++theorem function_kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 111 =
+     .ok (.FnDef (PreparedReflection.fixedInstance GuardCompilerFacts.runtimeCall.callee).instanceKind.defId #[]) := by
+   with_unfolding_all rfl
+
+ def rustExternAbi : ABI.ExternAbi := .Rust
+
+ theorem function_signature_query : CompilerFunctionFacts.signature
+-    PreparedReflection.actual.compiler.functions 127 = .ok (0, rustExternAbi) := by
++    PreparedReflection.actual.compiler.functions 111 = .ok (0, rustExternAbi) := by
+   with_unfolding_all rfl
+
+ theorem runtime_function_type_id :
+-    GuardCompilerFacts.runtimeCall.source.functionType = some 127 := by
++    GuardCompilerFacts.runtimeCall.source.functionType = some 111 := by
+   with_unfolding_all rfl
+
+ theorem function_abi : CompilerInstanceAbi.abiOfInstance
+--- a/examples/duplicate_prefix/RuntimeFunctionConstant.lean
++++ b/examples/duplicate_prefix/RuntimeFunctionConstant.lean
+@@ -11,9 +11,9 @@
+ set_option backward.isDefEq.respectTransparency false
+ set_option backward.dsimp.instances true
+
+-def constant : ConstOperand := ⟨⟨191⟩, none, .Val .ZeroSized 127⟩
++def constant : ConstOperand := ⟨⟨209⟩, none, .Val .ZeroSized 111⟩
+
+-theorem literal : constant.value = .Val .ZeroSized 127 := by with_unfolding_all rfl
++theorem literal : constant.value = .Val .ZeroSized 111 := by with_unfolding_all rfl
+ theorem function_eval_at_bound
+     (source : PreparedContracts.SourceComparator)
+     (functions : FunctionPointers.Hooks MiriMemoryKind Machine.RootUser Unit)
+@@ -33,7 +33,7 @@
+   rw [literal]
+   simp only [ConstantMachine.evalValueWithLayout, Option.map_none]
+   unfold valueToOpWithLayout
+-  have layout : PreparedReflection.actual.compiler.runtime.lookup 127 = .ok RuntimeCallQueries.functionLayout := RuntimeCallQueries.functionLayout_query
++  have layout : PreparedReflection.actual.compiler.runtime.lookup 111 = .ok RuntimeCallQueries.functionLayout := RuntimeCallQueries.functionLayout_query
+   rw [layout]
+   unfold_internal ".Interpreter.metadata"
+   rfl
+--- a/examples/duplicate_prefix/RuntimeZeroEntryFacts.lean
++++ b/examples/duplicate_prefix/RuntimeZeroEntryFacts.lean
+@@ -69,7 +69,7 @@
+     Frame Provenance LocalLayout MachineHooks.FrameExtra :=
+   let frame : Frame Provenance LocalLayout Unit := Frame.create
+     CopyPreconditions.Bodies.languageRuntime.loaded GuardCompilerFacts.runtimeCall.callee ()
+-    (.goto (some 1) .Continue) destination GuardCompilerFacts.runtimePreamble identity
++    (.goto (some 1) .Unreachable) destination GuardCompilerFacts.runtimePreamble identity
+   { body := frame.body, bodyIdentity := frame.bodyIdentity, functionInstance := frame.functionInstance
+     extra := {borrowTracker := machine.borrowTracker.map (fun _ => {}), catchUnwind := none, userRelevance := rank crates, dataRace := machine.dataRace.map (fun _ => {})}
+     returnContinuation := frame.returnContinuation, returnPlace := frame.returnPlace
+@@ -82,12 +82,12 @@
+     MachineHooks.initFrame (FrameMetadata.userRelevance
+       (CompilerFrameMetadata.hooks PreparedReflection.actual.compiler.lifecycle.frames crates))
+       (Frame.create CopyPreconditions.Bodies.languageRuntime.loaded GuardCompilerFacts.runtimeCall.callee ()
+-        (.goto (some 1) .Continue) destination GuardCompilerFacts.runtimePreamble identity) state =
++        (.goto (some 1) .Unreachable) destination GuardCompilerFacts.runtimePreamble identity) state =
+       .ok (rawFrame crates state.machine destination identity) state := by
+   unfold MachineHooks.initFrame
+   have relevance := runtime_user_relevance crates
+     (Frame.create CopyPreconditions.Bodies.languageRuntime.loaded GuardCompilerFacts.runtimeCall.callee ()
+-      (.goto (some 1) .Continue) destination GuardCompilerFacts.runtimePreamble identity :
++      (.goto (some 1) .Unreachable) destination GuardCompilerFacts.runtimePreamble identity :
+       Frame Provenance LocalLayout Unit) state rfl
+   simp only [bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
+     pure, EStateM.pure] at relevance ⊢
+@@ -133,7 +133,7 @@
+     (present : (pushed options.userRelevantCrates state destination).stack.frames[index]? = some current) :
+     CallMachine.pushRaw (PreparedContracts.actualConfig options () remaining span).lifecycle false
+       GuardCompilerFacts.runtimeCall.callee CopyPreconditions.Bodies.languageRuntime.loaded
+-      destination (.goto (some 1) .Continue) state =
++      destination (.goto (some 1) .Unreachable) state =
+       .ok () (completed options.userRelevantCrates state destination current) := by
+   unfold CallMachine.pushRaw
+   have fields := CanonicalConfigFacts.actual_fields options () remaining span
+--- a/examples/duplicate_prefix/RuntimeZeroCallCore.lean
++++ b/examples/duplicate_prefix/RuntimeZeroCallCore.lean
+@@ -28,7 +28,7 @@
+     | .indirect place => some (MPlaceTy.mk place destinationOp.layout)
+     | .immediate _ => none
+   h.pushRaw () GuardCompilerFacts.runtimeCall.callee CopyPreconditions.Bodies.languageRuntime.loaded
+-    destination (.goto (some 1) .Continue)
++    destination (.goto (some 1) .Unreachable)
+   let frame ← h.getFrame
+   let preamble ← match frame.location with
+     | .unwinding span => pure span
+@@ -51,7 +51,7 @@
+     Call.initStackFrame
+       (ExecutionMachine.callHooks (PreparedContracts.actualConfig options () remaining span) limits) ()
+       GuardCompilerFacts.runtimeCall.callee CopyPreconditions.Bodies.languageRuntime.loaded
+-      GuardCompilerFacts.languageAbi #[] false destination (.goto (some 1) .Continue) =
++      GuardCompilerFacts.languageAbi #[] false destination (.goto (some 1) .Unreachable) =
+       core (ExecutionMachine.callHooks (PreparedContracts.actualConfig options () remaining span) limits)
+         destination := by
+   let h := ExecutionMachine.callHooks (PreparedContracts.actualConfig options () remaining span) limits
+@@ -97,8 +97,8 @@
+   have calleeVariadic : h.abiVariadic GuardCompilerFacts.runtimeAbi = false := by
+     change GuardCompilerFacts.runtimeAbi.cVariadic = false
+     decide +kernel
+-  have canUnwind : h.abiCanUnwind GuardCompilerFacts.runtimeAbi = true := by
+-    change GuardCompilerFacts.runtimeAbi.canUnwind = true
++  have canUnwind : h.abiCanUnwind GuardCompilerFacts.runtimeAbi = false := by
++    change GuardCompilerFacts.runtimeAbi.canUnwind = false
+     decide +kernel
+   have conv : h.sameConvention GuardCompilerFacts.languageAbi GuardCompilerFacts.runtimeAbi = true := by
+     change (GuardCompilerFacts.languageAbi.conv == GuardCompilerFacts.runtimeAbi.conv) = true
+--- a/examples/duplicate_prefix/RuntimeZeroEntry.lean
++++ b/examples/duplicate_prefix/RuntimeZeroEntry.lean
+@@ -50,7 +50,7 @@
+     Call.initStackFrame
+       (ExecutionMachine.callHooks (PreparedContracts.actualConfig options () (remaining+1) span) limits) ()
+       GuardCompilerFacts.runtimeCall.callee CopyPreconditions.Bodies.languageRuntime.loaded
+-      GuardCompilerFacts.languageAbi #[] false (destination frames caller) (.goto (some 1) .Continue)
++      GuardCompilerFacts.languageAbi #[] false (destination frames caller) (.goto (some 1) .Unreachable)
+       (Storage.withCurrent frames caller machine) =
+     .ok () (Storage.withCurrent (frames.push caller)
+       (RuntimeZeroDone.doneFrame (rawFrame options (Storage.withCurrent frames caller machine)
+@@ -67,17 +67,17 @@
+   have pushed := RuntimeZeroEntryFacts.actual_push_raw options limits (remaining+1) span debugOff
+     state dest thread index current active top present
+   have pushRaw : h.pushRaw () GuardCompilerFacts.runtimeCall.callee
+-      CopyPreconditions.Bodies.languageRuntime.loaded dest (.goto (some 1) .Continue) state =
++      CopyPreconditions.Bodies.languageRuntime.loaded dest (.goto (some 1) .Unreachable) state =
+       .ok () (RuntimeZeroEntryFacts.completed options.userRelevantCrates state dest current) := by
+     change CallMachine.pushRaw (PreparedContracts.actualConfig options () (remaining+1) span).lifecycle
+       (PreparedContracts.actualConfig options () (remaining+1) span).compiler.debugAssertions
+       GuardCompilerFacts.runtimeCall.callee CopyPreconditions.Bodies.languageRuntime.loaded dest
+-      (.goto (some 1) .Continue) state = _
++      (.goto (some 1) .Unreachable) state = _
+     rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).debug, debugOff]
+     exact pushed
+   have pushRawDest : h.pushRaw () GuardCompilerFacts.runtimeCall.callee
+       CopyPreconditions.Bodies.languageRuntime.loaded (destination frames caller)
+-      (.goto (some 1) .Continue) state =
++      (.goto (some 1) .Unreachable) state =
+       .ok () (RuntimeZeroEntryFacts.completed options.userRelevantCrates state
+         (destination frames caller) current) := by simpa [dest] using pushRaw
+   have rawBody : raw.body = CopyPreconditions.Bodies.languageRuntime.loaded.body := rfl
+--- a/examples/duplicate_prefix/RuntimeZeroSpans.lean
++++ b/examples/duplicate_prefix/RuntimeZeroSpans.lean
+@@ -1,5 +1,5 @@
+ import duplicate_prefix.RuntimeZeroEntryFacts
+-import duplicate_prefix.MetadataSpans
++import duplicate_prefix.AddSpans
+
+ /-! The runtime guard's return-place span is queried from the retained compiler
+     body and span table, then fed to the production localSpan hook. -/
+@@ -52,7 +52,7 @@
+   let decl := inputBody.input.localSources[0]'valid
+   have present : inputBody.input.localSources[0]? = some decl := by simp [decl, valid]
+   have sourceBody := body_of_frame frame body identity callee
+-  exact MetadataSpans.local_span_from_metadata _ _ _ _ _ 0 inputBody decl spanIndex
++  exact AddSpans.local_span_from_metadata _ _ _ _ _ 0 inputBody decl spanIndex
+     body.symm sourceBody present (by with_unfolding_all rfl) (by decide +kernel)
+
+ theorem actual_local_span (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
+--- a/examples/duplicate_prefix/RuntimeZeroTail.lean
++++ b/examples/duplicate_prefix/RuntimeZeroTail.lean
+@@ -45,7 +45,7 @@
+     RuntimeZeroCallCore.core h destination = (do
+       let destinationOp ← h.placeToOp () destination
+       h.pushRaw () GuardCompilerFacts.runtimeCall.callee CopyPreconditions.Bodies.languageRuntime.loaded
+-        destination (.goto (some 1) .Continue)
++        destination (.goto (some 1) .Unreachable)
+       action h destinationOp) := by
+   unfold RuntimeZeroCallCore.core action
+   simp only [bind_assoc]
+--- a/examples/duplicate_prefix/CopyRootGuardEntry.lean
++++ b/examples/duplicate_prefix/CopyRootGuardEntry.lean
+@@ -52,14 +52,14 @@
+   have locals := CopyEntryShape.locals
+     (Storage.withCurrent frames root (CopyCallStep.accountedMachine options remaining span machine))
+     (LocalPlaces.localRuntimePlace frames.size root 18 CopyHelperUnit.layout).stackView
+-    (.goto (some 9) .Continue) input.noRace sourcePointer destinationPointer n
++    (.goto (some 9) .Unreachable) input.noRace sourcePointer destinationPointer n
+   change frame.locals = _ at locals
+   have size : frame.locals.size = 17 := copy_size _ _ _ _ _ _ _ _ _ _ input
+   have v4 : (4 : MIR.LocalId) < frame.locals.size := by rw [size];decide
+   have v5 : (5 : MIR.LocalId) < frame.locals.size := by rw [size];decide
+   have clocks : frame.extra.dataRace = none := CopyEntryShape.no_clocks _ _ _ input.noRace _ _ _
+   let first := SourceSteps.liveFrame frame ⟨0,0⟩ 4 v4
+-  have firstStep := CopyHelperSteps.storage_live options limits (remaining+1) span before frame next ⟨0,0⟩ 4 2
++  have firstStep := CopyHelperSteps.storage_live options limits (remaining+1) span before frame next ⟨0,0⟩ 4 5
+     rfl rfl (by decide +kernel) (by decide +kernel) RootCompilerFacts.root_storage_trivial_type2 v4
+     (by simp [locals]) clocks
+   have v5First : (5 : MIR.LocalId) < first.locals.size := by simpa [first,SourceSteps.liveFrame] using v5
+@@ -98,7 +98,7 @@
+     rw [CopyPushPreserves.control]
+     exact input.noGc
+   have fields := CopyPushPreserves.fields options remaining span machine
+-  have call := LanguageZeroStep.step options limits remaining input.budget input.budgetEq span input.source input.cmp input.debug
++  have call := LanguageZeroStep.step options limits remaining input.budget input.budgetEq span input.source input.debug
+     before ready next rfl rfl rfl rfl readySize readyLive readyUncached clocks
+     (fields.2.2.2.1.trans input.noRace) (fields.2.2.2.2.2.2.2.1.trans input.backend)
+     (fields.2.2.2.2.2.1.trans input.ghost) input.tracker (fields.2.1.trans input.tracked)
+--- a/examples/duplicate_prefix/CopyRootGuardState.lean
++++ b/examples/duplicate_prefix/CopyRootGuardState.lean
+@@ -63,7 +63,7 @@
+     next.user.payload.payload.user.backend = machine.user.payload.payload.user.backend ∧
+     next.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras ∧
+     next.user.payload.payload.user.types = machine.user.payload.payload.user.types := by
+-  unfold LanguageZeroStep.accountedMachine PtrMetadataReturn.accountedMachine SourceControl.accounted
++  unfold LanguageZeroStep.accountedMachine PointerAddCurrentReturn.accountedMachine SourceControl.accounted
+   rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
+   repeat' constructor
+ #print axioms language_push_control

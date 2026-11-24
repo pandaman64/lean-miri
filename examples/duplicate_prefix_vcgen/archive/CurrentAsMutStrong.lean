@@ -56,7 +56,8 @@ theorem retag
         (∃ node, next.entry.allocation.extra.nodeAt region.source = some node ∧ node.tag = tag ∧ node.isExposed = false) ∧
         RetagReleaseFootprint.MaterializedWithin next.entry.allocation.extra region.source
           next.relativeStart.bytes (next.relativeStart.bytes + length) ∧
-        RetagReleaseFootprint.VacantRows next.entry.allocation.extra := by
+        RetagReleaseFootprint.VacantRows next.entry.allocation.extra ∧
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } := by
   intro cfg tag atAddress input output
   have facts := CanonicalConfigFacts.actual_fields options () remaining span
   obtain ⟨pointers, table, discriminant, globals, validity, arithmetic, wiring, ensure, sync⟩ := facts.validitySources
@@ -136,7 +137,7 @@ theorem retag
     rw [allocEq] at key
     change tree.indexOfTag tag = some rights.source at key
     exact Option.some.inj (key.symm.trans childKey)
-  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, threads, next, rights, idEq, offsetEq, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, threads, next, rights, idEq, offsetEq, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [allocEq]
     exact roots
   · rw [allocEq]
@@ -147,6 +148,8 @@ theorem retag
     exact scope
   · rw [allocEq]
     exact emptyRows
+  · rw [allocEq]
+    rfl
 
 end DuplicatePrefix.CurrentAsMutStrong
 

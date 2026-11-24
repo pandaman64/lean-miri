@@ -1,3 +1,4 @@
+import duplicate_prefix.FrameRootRelevance
 import duplicate_prefix.AsMutPtrBody
 import duplicate_prefix.AsMutReturnStep
 
@@ -74,8 +75,14 @@ theorem helper
       popped.user = (AsMutCurrentCall.charged options (remaining+1) span machine).user ∧
       popped.threads.fixedScheduling = machine.threads.fixedScheduling ∧
       (∃ presentThread, popped.threads.activeThread? = some presentThread) ∧
+      (caller.extra.userRelevance = 255 →
+        (thread.topUserRelevantFrame = some frames.size ∨ thread.topUserRelevantFrame = some (frames.push caller).size) →
+        ∃ reported, popped.threads.activeThread? = some reported ∧ reported.topUserRelevantFrame = some frames.size) ∧
       ∃ next : InitializedRegion (Storage.withCurrent frames returned popped) length,
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
+        next.entry.allocation.extra.roots = storage.entry.allocation.extra.roots ∧
+        next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
         ∃ right : ExclusiveRegion (Storage.withCurrent frames returned popped) length next tag,
           right.tracker.retagMode = region.tracker.retagMode := by
   intro cfg before pointer value returned argument
@@ -138,14 +145,21 @@ theorem helper
   have cachedTop : FrameRelevance.top ⟨(frames.push caller).push done⟩ thread.topUserRelevantFrame = some relevance := by
     unfold FrameRelevance.top at cached ⊢
     simpa only [Array.isEmpty_push, Array.size_push] using cached
-  obtain ⟨popped,ret,unchanged,race,finalUser,fixedStill,activeThread,next,idEq,offsetEq,resultRights,modeStill⟩ :=
+  obtain ⟨popped,ret,unchanged,race,finalUser,fixedStill,activeThread,exactThreads,next,idEq,offsetEq,physical,rootsStill,extentStill,resultRights,modeStill⟩ :=
     AsMutReturnStep.returns options limits remaining span fuel debugOff validationFuel frames caller done machine length base tag
       stored rights (doneBody.trans body) atReturn valid0 (by rw [resultSlot]) (by rw [resultSlot])
       (by rw [doneExtra]; exact noClocks) callerId callerValid destCached destLive callerClocks
       (by rw [doneReturn]; exact destination) (by rw [doneContinuation]; exact continuation) direct (by rw [doneVarargs]; exact noVarargs)
       owned (by rw [doneExtra]; exact ledger) one root roots node nodeFound unexposed materialized vacant fits
       thread relevance current cachedTop ghost shallow fixed unchecked noGc
-  exact ⟨popped,SuccessfulTrace.append trace (.next ret (.refl _)),unchanged,race,finalUser,fixedStill,activeThread,next,idEq,offsetEq,resultRights,modeStill⟩
+  refine ⟨popped,SuccessfulTrace.append trace (.next ret (.refl _)),unchanged,race,finalUser,fixedStill,activeThread,?_,next,idEq,offsetEq,physical,rootsStill,extentStill,resultRights,modeStill⟩
+  intro callerRank priorCache
+  have index : relevance = thread.topUserRelevantFrame.getD (frames.push caller).size := by
+    rcases priorCache with top | top
+    · simpa [FrameRelevance.top, top, eq_comm] using cachedTop
+    · simpa [FrameRelevance.top, top, eq_comm] using cachedTop
+  rw [exactThreads,index]
+  exact FrameRootRelevance.restoredAfterHelper frames caller done machine thread current callerRank priorCache
 
 end DuplicatePrefix.AsMutRoundtrip
 
