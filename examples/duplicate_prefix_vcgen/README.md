@@ -148,6 +148,9 @@ the resulting range and permission frame under its concrete fresh-tag premises.
 After the standalone example script builds `SourceDomain.olean`, the
 optional `ExclusiveCopyStep` target verifies the actual positive copy
 instruction and its byte update from the prepared tree permissions.
+`--target CopyHelperCurrentCall` checks the current positive copy-helper
+path from basic block 7 through the actual return to the caller, with
+the stated machine, frame and Tree Borrows premises.
 
 ```sh
 LEAN_PATH="$PWD/scratch/duplicate-prefix-vcgen" \

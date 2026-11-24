@@ -2366,3 +2366,835 @@
 @@ -88 +88 @@
 -  simp only [evaluation]
 +  simp only [ControlFlow.evalSwitchInt, ControlFlow.selectSwitchTarget, evaluation]
+--- a/examples/duplicate_prefix/HelperCompilerFacts.lean
++++ b/examples/duplicate_prefix/HelperCompilerFacts.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.LocationPointeeLayout
+@@ -1,0 +3,2 @@
++import duplicate_prefix.CopyCompilerFacts
++import duplicate_prefix.HelperAbiLayouts
+@@ -45,17 +47,0 @@
+-theorem len_abi_supported : (abiQuery lenCall.callee).isOk = true := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-theorem as_mut_ptr_abi_supported : (abiQuery asMutPtrCall.callee).isOk = true := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-theorem add_abi_supported : (abiQuery addCall.callee).isOk = true := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-theorem copy_abi_supported : (abiQuery copyCall.callee).isOk = true := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-
+@@ -67,4 +53,4 @@
+-noncomputable def lenAbi := checkedOk (PreparedReflection.actual.abiResults[0]'(by decide +kernel)) (by decide +kernel)
+-noncomputable def asMutPtrAbi := checkedOk (PreparedReflection.actual.abiResults[1]'(by decide +kernel)) (by decide +kernel)
+-noncomputable def addAbi := checkedOk (PreparedReflection.actual.abiResults[2]'(by decide +kernel)) (by decide +kernel)
+-noncomputable def copyAbi := checkedOk (PreparedReflection.actual.abiResults[3]'(by decide +kernel)) (by decide +kernel)
++noncomputable def lenAbi := checkedOk (PreparedReflection.actual.abiResults[1]'(by decide +kernel)) (by decide +kernel)
++noncomputable def asMutPtrAbi := checkedOk (PreparedReflection.actual.abiResults[3]'(by decide +kernel)) (by decide +kernel)
++noncomputable def addAbi := checkedOk (PreparedReflection.actual.abiResults[4]'(by decide +kernel)) (by decide +kernel)
++noncomputable def copyAbi := checkedOk (PreparedReflection.actual.abiResults[5]'(by decide +kernel)) (by decide +kernel)
+@@ -75,0 +62,128 @@
++
++private def context : CompilerFacts.Context :=
++  ⟨PreparedReflection.actual.runtime, PreparedReflection.actual.compiler.lifecycle.instances.program, none⟩
++
++private def policy : SourceAbiPolicy :=
++  ⟨"x86_64", false, false, true, false, 536870912, true, false, false, false, true⟩
++
++private def lenDefinition : SourceAbiDefinition :=
++  ⟨1, ⟨#[7], 4, .Safe, .Rust, false, none⟩, none, false, true, false, false, false, false⟩
++
++private theorem len_dispatch :
++    abiQuery lenCall.callee = SourceAbi.compute policy context.runtime.target
++      (SourceAbiRuntime.queries context policy) lenDefinition.signature #[] (some lenDefinition) true := by
++  have instanceEq : lenCall.callee = 1 := by decide +kernel
++  rw [instanceEq]
++  unfold abiQuery CompilerInstanceAbi.abiOfInstance SourceAbiRuntime.ofInstance
++  rfl
++
++private def asMutPtrDefinition : SourceAbiDefinition :=
++  ⟨3, ⟨#[1], 8, .Safe, .Rust, false, none⟩, none, false, true, false, false, false, true⟩
++
++private theorem as_mut_ptr_dispatch :
++    abiQuery asMutPtrCall.callee = SourceAbi.compute policy context.runtime.target
++      (SourceAbiRuntime.queries context policy) asMutPtrDefinition.signature #[] (some asMutPtrDefinition) true := by
++  have instanceEq : asMutPtrCall.callee = 3 := by decide +kernel
++  rw [instanceEq]
++  unfold abiQuery CompilerInstanceAbi.abiOfInstance SourceAbiRuntime.ofInstance
++  rfl
++
++private def addDefinition : SourceAbiDefinition :=
++  ⟨4, ⟨#[8, 4], 8, .Unsafe, .Rust, false, none⟩, (some 35), false, true, false, false, false, false⟩
++
++private theorem add_dispatch :
++    abiQuery addCall.callee = SourceAbi.compute policy context.runtime.target
++      (SourceAbiRuntime.queries context policy) addDefinition.signature #[] (some addDefinition) true := by
++  have instanceEq : addCall.callee = 4 := by decide +kernel
++  rw [instanceEq]
++  unfold abiQuery CompilerInstanceAbi.abiOfInstance SourceAbiRuntime.ofInstance
++  rfl
++
++private def copyDefinition : SourceAbiDefinition :=
++  ⟨5, ⟨#[9, 8, 4], 5, .Unsafe, .Rust, false, none⟩, (some 35), false, true, false, false, false, false⟩
++
++private theorem copy_dispatch :
++    abiQuery copyCall.callee = SourceAbi.compute policy context.runtime.target
++      (SourceAbiRuntime.queries context policy) copyDefinition.signature #[] (some copyDefinition) true := by
++  have instanceEq : copyCall.callee = 5 := by decide +kernel
++  rw [instanceEq]
++  unfold abiQuery CompilerInstanceAbi.abiOfInstance SourceAbiRuntime.ofInstance
++  rfl
++
++
++open RootCompilerFacts CopyCompilerFacts HelperAbiLayouts
++
++private theorem queriesSharedSlice :
++    (SourceAbiRuntime.queries context policy).lookup 7 = .ok sharedSliceLayout := by
++  change (PreparedReflection.actual.runtime.lookup 7).mapError toString = _
++  rw [shared_slice_layout_eq]
++  rfl
++
++private theorem queriesUsize :
++    (SourceAbiRuntime.queries context policy).lookup 4 = .ok usizeLayout := by
++  change (PreparedReflection.actual.runtime.lookup 4).mapError toString = _
++  rw [usize_layout_eq]
++  rfl
++
++private theorem queriesMutSlice :
++    (SourceAbiRuntime.queries context policy).lookup 1 = .ok sliceLayout := by
++  change (PreparedReflection.actual.runtime.lookup 1).mapError toString = _
++  rw [slice_layout_eq]
++  rfl
++
++private theorem queriesDest :
++    (SourceAbiRuntime.queries context policy).lookup 8 = .ok destPointerLayout := by
++  change (PreparedReflection.actual.runtime.lookup 8).mapError toString = _
++  rw [dest_pointer_layout_eq]
++  rfl
++
++private theorem sharedSlicePointee :
++    (SourceAbiRuntime.queries context policy).pointeeInfo sharedSliceLayout Size.ZERO =
++      .ok (some ⟨Size.ZERO, Align.ONE, some (.shared false)⟩) := by
++  change SourceAbiRuntime.pointeeInfo context policy sharedSliceLayout Size.ZERO = _
++  unfold SourceAbiRuntime.pointeeInfo
++  rw [SourceAbiRuntime.pointeeInfo.go]
++  have node : context.runtime.node sharedSliceLayout.ty = .ok context.runtime.source.types[7] := rfl
++  have shape : context.runtime.source.types[7].shape = .reference 2 .Not .Erased := rfl
++  have lookup : context.runtime.lookup 2 = .ok pointeeLayout := pointee_layout_eq
++  have bytes : Size.ZERO.bytes = 0 := rfl
++  have noOptimize : policy.optimize = false := rfl
++  simp only [node,shape,lookup,bytes,noOptimize,bind,Bind.bind,Except.bind,pure,Pure.pure,
++    Except.pure,Except.mapError,beq_self_eq_true,↓reduceIte,Bool.false_eq_true]
++  rfl
++
++private theorem mutableSlicePointee :
++    (SourceAbiRuntime.queries context policy).pointeeInfo sliceLayout Size.ZERO =
++      .ok (some ⟨Size.ZERO, Align.ONE, some (.mutable false)⟩) := by
++  change SourceAbiRuntime.pointeeInfo context policy sliceLayout Size.ZERO = _
++  unfold SourceAbiRuntime.pointeeInfo
++  rw [SourceAbiRuntime.pointeeInfo.go]
++  have node : context.runtime.node sliceLayout.ty = .ok context.runtime.source.types[1] := rfl
++  have shape : context.runtime.source.types[1].shape = .reference 2 .Mut .Erased := rfl
++  have lookup : context.runtime.lookup 2 = .ok pointeeLayout := pointee_layout_eq
++  have bytes : Size.ZERO.bytes = 0 := rfl
++  have noOptimize : policy.optimize = false := rfl
++  simp only [node,shape,lookup,bytes,noOptimize,bind,Bind.bind,Except.bind,pure,Pure.pure,
++    Except.pure,Except.mapError,beq_self_eq_true,↓reduceIte,Bool.false_eq_true]
++  rfl
++
++private theorem destPointee :
++    (SourceAbiRuntime.queries context policy).pointeeInfo destPointerLayout Size.ZERO =
++      .ok (some ⟨Size.ZERO, Align.ONE, none⟩) := by rfl
++
++private theorem sharedSliceBackend : sharedSliceLayout.layout.backendRepr =
++  .ScalarPair (a := .Initialized (value := .Pointer AddressSpace.ZERO) (validRange := ⟨1, 18446744073709551615⟩))
++    (b := .Initialized (value := .Int .I64 false) (validRange := ⟨0, 18446744073709551615⟩))
++    (bOffset := Size.ofBytes 8) := by rfl
++
++private theorem mutableSliceBackend : sliceLayout.layout.backendRepr =
++  .ScalarPair (a := .Initialized (value := .Pointer AddressSpace.ZERO) (validRange := ⟨1, 18446744073709551615⟩))
++    (b := .Initialized (value := .Int .I64 false) (validRange := ⟨0, 18446744073709551615⟩))
++    (bOffset := Size.ofBytes 8) := by rfl
++
++private theorem destBackend : destPointerLayout.layout.backendRepr =
++    .Scalar (.Initialized (value := .Pointer AddressSpace.ZERO) (validRange := ⟨0, 18446744073709551615⟩)) := rfl
++
++private theorem usizeBackend : usizeLayout.layout.backendRepr =
++    .Scalar (.Initialized (value := .Int .I64 false) (validRange := ⟨0, 18446744073709551615⟩)) := rfl
++
+@@ -77,3 +191,15 @@
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
++  rw [len_dispatch]
++  have architecture : (policy.architecture == "x86_64") = true := rfl
++  have notRustCall : ((ExternAbi.Rust : ExternAbi) == .RustCall) = false := rfl
++  have indices : List.range' 0 1 = [0] := rfl
++  simp [SourceAbi.compute,lenDefinition,architecture,notRustCall,indices,
++    SourceAbi.canonicalConvention,SourceAbi.canUnwind, bind, Bind.bind, Except.bind,
++    pure, Pure.pure, Except.pure,queriesSharedSlice,queriesUsize,CanonAbi.isRusticAbi]
++  have sliceNZ : sharedSliceLayout.layout.isZst = false := rfl
++  have usizeNZ : usizeLayout.layout.isZst = false := rfl
++  simp [SourceAbi.argument,SourceAbi.scalarAttributes, sharedSliceBackend,usizeBackend,
++    sliceNZ,usizeNZ,sharedSlicePointee,bind,Bind.bind,Except.bind,pure,Pure.pure,Except.pure]
++  have panicAbort : policy.panicUnwinds = false := rfl
++  simp [Scalar.isUninitValid,Align.ONE,WrappingRange.contains,ArgAttributes.new,panicAbort]
++  try rfl
++
+@@ -81,11 +207,163 @@
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-theorem add_abi_eq : abiQuery addCall.callee = .ok addAbi := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-theorem copy_abi_eq : abiQuery copyCall.callee = .ok copyAbi := by
+-  unfold abiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
++  rw [as_mut_ptr_dispatch]
++  have architecture : (policy.architecture == "x86_64") = true := rfl
++  have notRustCall : ((ExternAbi.Rust : ExternAbi) == .RustCall) = false := rfl
++  have indices : List.range' 0 1 = [0] := rfl
++  simp [SourceAbi.compute,asMutPtrDefinition,architecture,notRustCall,indices,
++    SourceAbi.canonicalConvention,SourceAbi.canUnwind, bind, Bind.bind, Except.bind,
++    pure, Pure.pure, Except.pure,queriesMutSlice,queriesDest,CanonAbi.isRusticAbi]
++  have sliceNZ : sliceLayout.layout.isZst = false := rfl
++  have destNZ : destPointerLayout.layout.isZst = false := rfl
++  simp [SourceAbi.argument,SourceAbi.scalarAttributes,mutableSliceBackend,destBackend,
++    sliceNZ,destNZ,mutableSlicePointee,destPointee,bind,Bind.bind,Except.bind,pure,Pure.pure,Except.pure]
++  have panicAbort : policy.panicUnwinds = false := rfl
++  simp [Scalar.isUninitValid,Align.ONE,WrappingRange.contains,ArgAttributes.new,panicAbort]
++  try rfl
++
++
++private theorem queriesSource :
++    (SourceAbiRuntime.queries context policy).lookup 9 = .ok sourcePointerLayout := by
++  change (PreparedReflection.actual.runtime.lookup 9).mapError toString = _
++  rw [source_pointer_layout_eq]
++  rfl
++
++private theorem queriesUnit :
++    (SourceAbiRuntime.queries context policy).lookup 5 = .ok unitLayout := by
++  change (PreparedReflection.actual.runtime.lookup 5).mapError toString = _
++  rw [unit_layout_eq]
++  rfl
++
++private theorem queriesCaller :
++    (SourceAbiRuntime.queries context policy).lookup 35 = .ok callerLocationLayout := by
++  change (PreparedReflection.actual.runtime.lookup 35).mapError toString = _
++  rw [caller_location_layout_alias]
++  rfl
++
++private theorem sourcePointee :
++    (SourceAbiRuntime.queries context policy).pointeeInfo sourcePointerLayout Size.ZERO =
++      .ok (some ⟨Size.ZERO, Align.ONE, none⟩) := by rfl
++
++private theorem sourceBackend : sourcePointerLayout.layout.backendRepr =
++    .Scalar (.Initialized (value := .Pointer AddressSpace.ZERO) (validRange := ⟨0, 18446744073709551615⟩)) := rfl
++
++private theorem callerBackend : callerLocationLayout.layout.backendRepr =
++    .Scalar (.Initialized (value := .Pointer AddressSpace.ZERO) (validRange := ⟨1, 18446744073709551615⟩)) := rfl
++
++private theorem add_abi_of_pointee
++    (callerPointee :
++      (SourceAbiRuntime.queries context policy).pointeeInfo callerLocationLayout Size.ZERO =
++        .ok (some ⟨Size.ZERO, ⟨3⟩, some (.shared false)⟩)) :
++    abiQuery addCall.callee = .ok addAbi := by
++  rw [add_dispatch]
++  have architecture : (policy.architecture == "x86_64") = true := rfl
++  have notRustCall : ((ExternAbi.Rust : ExternAbi) == .RustCall) = false := rfl
++  have indices : List.range' 0 3 = [0,1,2] := rfl
++  simp [SourceAbi.compute,addDefinition,architecture,notRustCall,indices,
++    SourceAbi.canonicalConvention,SourceAbi.canUnwind, bind, Bind.bind, Except.bind,
++    pure, Pure.pure, Except.pure,queriesDest,queriesUsize,queriesCaller,CanonAbi.isRusticAbi]
++  have callerNZ : callerLocationLayout.layout.isZst = false := rfl
++  have usizeNZ : usizeLayout.layout.isZst = false := rfl
++  have destNZ : destPointerLayout.layout.isZst = false := rfl
++
++
++  simp [SourceAbi.argument,SourceAbi.scalarAttributes, callerBackend,usizeBackend,destBackend,
++    callerNZ,usizeNZ,destNZ,callerPointee,destPointee,bind,Bind.bind,Except.bind,pure,Pure.pure,Except.pure]
++  have panicAbort : policy.panicUnwinds = false := rfl
++  simp [Scalar.isUninitValid,Align.ONE,WrappingRange.contains,ArgAttributes.new,panicAbort]
++  try rfl
++
++private theorem copy_abi_of_pointee
++    (callerPointee :
++      (SourceAbiRuntime.queries context policy).pointeeInfo callerLocationLayout Size.ZERO =
++        .ok (some ⟨Size.ZERO, ⟨3⟩, some (.shared false)⟩)) :
++    abiQuery copyCall.callee = .ok copyAbi := by
++  rw [copy_dispatch]
++  have architecture : (policy.architecture == "x86_64") = true := rfl
++  have notRustCall : ((ExternAbi.Rust : ExternAbi) == .RustCall) = false := rfl
++  have indices : List.range' 0 4 = [0,1,2,3] := rfl
++  simp [SourceAbi.compute,copyDefinition,architecture,notRustCall,indices,
++    SourceAbi.canonicalConvention,SourceAbi.canUnwind, bind, Bind.bind, Except.bind,
++    pure, Pure.pure, Except.pure,queriesSource,queriesDest,queriesUsize,queriesCaller,queriesUnit,CanonAbi.isRusticAbi]
++  have callerNZ : callerLocationLayout.layout.isZst = false := rfl
++  have usizeNZ : usizeLayout.layout.isZst = false := rfl
++  have destNZ : destPointerLayout.layout.isZst = false := rfl
++  have sourceNZ : sourcePointerLayout.layout.isZst = false := rfl
++  have unitZ : unitLayout.layout.isZst = true := rfl
++  simp [SourceAbi.argument,SourceAbi.scalarAttributes, callerBackend,usizeBackend,destBackend,
++    callerNZ,usizeNZ,destNZ,callerPointee,destPointee,sourceBackend,sourceNZ,sourcePointee,unitZ,bind,Bind.bind,Except.bind,pure,Pure.pure,Except.pure]
++  have panicAbort : policy.panicUnwinds = false := rfl
++  simp [Scalar.isUninitValid,Align.ONE,WrappingRange.contains,ArgAttributes.new,panicAbort]
++  try rfl
++
++theorem copy_body_reflected : copyBody = RootBody.reflected.copyHelper := by rfl
++
++#print axioms copy_body_reflected
++
++private theorem caller_location_pointee :
++    (SourceAbiRuntime.queries context policy).pointeeInfo callerLocationLayout Size.ZERO =
++      .ok (some ⟨Size.ZERO, ⟨3⟩, some (.shared false)⟩) := by
++  change SourceAbiRuntime.pointeeInfo context policy callerLocationLayout Size.ZERO = _
++  unfold SourceAbiRuntime.pointeeInfo
++  rw [SourceAbiRuntime.pointeeInfo.go]
++  have node : context.runtime.node callerLocationLayout.ty = .ok context.runtime.source.types[36] := rfl
++  have shape : context.runtime.source.types[36].shape = .reference 37 .Not .Erased := rfl
++  have lookup : context.runtime.lookup 37 = .ok LocationPointeeLayout.locationLayout := LocationPointeeLayout.location_layout_eq
++  have bytes : Size.ZERO.bytes = 0 := rfl
++  have noOptimize : policy.optimize = false := rfl
++  simp only [node,shape,lookup,bytes,noOptimize,bind,Bind.bind,Except.bind,pure,Pure.pure,
++    Except.pure,Except.mapError,beq_self_eq_true,↓reduceIte,Bool.false_eq_true]
++  rfl
++
++theorem add_abi_eq : abiQuery addCall.callee = .ok addAbi :=
++  add_abi_of_pointee caller_location_pointee
++
++theorem copy_abi_eq : abiQuery copyCall.callee = .ok copyAbi :=
++  copy_abi_of_pointee caller_location_pointee
++
++theorem len_abi_supported : (abiQuery lenCall.callee).isOk = true := by
++  rw [len_abi_eq]
++  rfl
++
++theorem as_mut_ptr_abi_supported : (abiQuery asMutPtrCall.callee).isOk = true := by
++  rw [as_mut_ptr_abi_eq]
++  rfl
++
++theorem add_abi_supported : (abiQuery addCall.callee).isOk = true := by
++  rw [add_abi_eq]
++  rfl
++
++theorem copy_abi_supported : (abiQuery copyCall.callee).isOk = true := by
++  rw [copy_abi_eq]
++  rfl
++
++theorem len_shape :
++    (lenAbi.args.map (·.layout.ty), lenAbi.ret.layout.ty, lenBody.body.argumentCount,
++      lenBody.body.locals.size, lenBody.body.basicBlocks.size) = (#[7], 4, 1, 3, 2) := by decide +kernel
++
++theorem as_mut_ptr_shape :
++    (asMutPtrAbi.args.map (·.layout.ty), asMutPtrAbi.ret.layout.ty, asMutPtrBody.body.argumentCount,
++      asMutPtrBody.body.locals.size, asMutPtrBody.body.basicBlocks.size) = (#[1], 8, 1, 5, 1) := by decide +kernel
++
++theorem add_shape :
++    (addAbi.args.map (·.layout.ty), addAbi.ret.layout.ty, addBody.body.argumentCount,
++      addBody.body.locals.size, addBody.body.basicBlocks.size) = (#[8, 4, 36], 8, 2, 12, 7) := by decide +kernel
++
++theorem copy_shape :
++    (copyAbi.args.map (·.layout.ty), copyAbi.ret.layout.ty, copyBody.body.argumentCount,
++      copyBody.body.locals.size, copyBody.body.basicBlocks.size) = (#[9, 8, 4, 36], 5, 3, 17, 8) := by decide +kernel
++
++theorem len_caller_location :
++    CompilerRuntimeQueries.requiresCallerLocation PreparedReflection.actual.compiler.lifecycle.calls.runtime
++      lenCall.callee = .ok false := by with_unfolding_all rfl
++
++theorem as_mut_ptr_caller_location :
++    CompilerRuntimeQueries.requiresCallerLocation PreparedReflection.actual.compiler.lifecycle.calls.runtime
++      asMutPtrCall.callee = .ok false := by with_unfolding_all rfl
++
++theorem add_caller_location :
++    CompilerRuntimeQueries.requiresCallerLocation PreparedReflection.actual.compiler.lifecycle.calls.runtime
++      addCall.callee = .ok true := by with_unfolding_all rfl
++
++theorem copy_caller_location :
++    CompilerRuntimeQueries.requiresCallerLocation PreparedReflection.actual.compiler.lifecycle.calls.runtime
++      copyCall.callee = .ok true := by with_unfolding_all rfl
++
+@@ -96,32 +373,0 @@
+-
+-theorem len_shape :
+-    (lenAbi.args.map (·.layout.ty), lenAbi.ret.layout.ty, lenBody.body.argumentCount,
+-      lenBody.body.locals.size, lenBody.body.basicBlocks.size) = (#[7], 5, 1, 3, 2) := by decide +kernel
+-
+-theorem as_mut_ptr_shape :
+-    (asMutPtrAbi.args.map (·.layout.ty), asMutPtrAbi.ret.layout.ty, asMutPtrBody.body.argumentCount,
+-      asMutPtrBody.body.locals.size, asMutPtrBody.body.basicBlocks.size) = (#[3], 8, 1, 5, 1) := by decide +kernel
+-
+-theorem add_shape :
+-    (addAbi.args.map (·.layout.ty), addAbi.ret.layout.ty, addBody.body.argumentCount,
+-      addBody.body.locals.size, addBody.body.basicBlocks.size) = (#[8, 5, 26], 8, 2, 5, 1) := by decide +kernel
+-
+-theorem copy_shape :
+-    (copyAbi.args.map (·.layout.ty), copyAbi.ret.layout.ty, copyBody.body.argumentCount,
+-      copyBody.body.locals.size, copyBody.body.basicBlocks.size) = (#[9, 8, 5, 26], 2, 3, 17, 8) := by decide +kernel
+-
+-theorem len_caller_location :
+-    CompilerRuntimeQueries.requiresCallerLocation PreparedReflection.actual.compiler.lifecycle.calls.runtime
+-      lenCall.callee = .ok false := by with_unfolding_all rfl
+-
+-theorem as_mut_ptr_caller_location :
+-    CompilerRuntimeQueries.requiresCallerLocation PreparedReflection.actual.compiler.lifecycle.calls.runtime
+-      asMutPtrCall.callee = .ok false := by with_unfolding_all rfl
+-
+-theorem add_caller_location :
+-    CompilerRuntimeQueries.requiresCallerLocation PreparedReflection.actual.compiler.lifecycle.calls.runtime
+-      addCall.callee = .ok true := by with_unfolding_all rfl
+-
+-theorem copy_caller_location :
+-    CompilerRuntimeQueries.requiresCallerLocation PreparedReflection.actual.compiler.lifecycle.calls.runtime
+-      copyCall.callee = .ok true := by with_unfolding_all rfl
+--- a/examples/duplicate_prefix/RootRawPointerValidity.lean
++++ b/examples/duplicate_prefix/RootRawPointerValidity.lean
+@@ -102 +102 @@
+-    1 "*mut u8"
++    3 "*mut u8"
+@@ -128 +128 @@
+-    1 "*const u8"
++    3 "*const u8"
+--- a/examples/duplicate_prefix/ActualLocalPlace.lean
++++ b/examples/duplicate_prefix/ActualLocalPlace.lean
+@@ -2 +2 @@
+-import duplicate_prefix.RootLocalStages
++import duplicate_prefix.RootLocalChecks
+--- a/examples/duplicate_prefix/CopyHelperCleanup.lean
++++ b/examples/duplicate_prefix/CopyHelperCleanup.lean
+@@ -45 +45 @@
+-    (location : frame.location = .mir ⟨7,9⟩)
++    (location : frame.location = .mir ⟨7,10⟩)
+@@ -61 +61 @@
+-      done.location = .mir ⟨7,12⟩ ∧ done.locals[0]? = frame.locals[0]? ∧ AllImmediate done := by
++      done.location = .mir ⟨7,13⟩ ∧ done.locals[0]? = frame.locals[0]? ∧ AllImmediate done := by
+@@ -66 +66 @@
+-  let f1 := SourceSteps.deadFrame frame ⟨7,9⟩ 16 v16
++  let f1 := SourceSteps.deadFrame frame ⟨7,10⟩ 16 v16
+@@ -68 +68 @@
+-  let f2 := SourceSteps.deadFrame f1 ⟨7,10⟩ 15 v15f1
++  let f2 := SourceSteps.deadFrame f1 ⟨7,11⟩ 15 v15f1
+@@ -70 +70 @@
+-  let done := SourceSteps.deadFrame f2 ⟨7,11⟩ 14 v14f2
++  let done := SourceSteps.deadFrame f2 ⟨7,12⟩ 14 v14f2
+@@ -72 +72 @@
+-    ⟨7,9⟩ 16 (.scalar (.fromScalarInt (.ofUInt64 n))) sourceBody location (by decide +kernel) (by decide) v16 live16
++    ⟨7,10⟩ 16 (.scalar (.fromScalarInt (.ofUInt64 n))) sourceBody location (by decide +kernel) (by decide) v16 live16
+@@ -74 +74 @@
+-    ⟨7,10⟩ 15 (.scalar dest) sourceBody rfl (by decide +kernel) (by decide) v15f1
++    ⟨7,11⟩ 15 (.scalar dest) sourceBody rfl (by decide +kernel) (by decide) v15f1
+@@ -77 +77 @@
+-    ⟨7,11⟩ 14 (.scalar source) sourceBody rfl (by decide +kernel) (by decide) v14f2
++    ⟨7,12⟩ 14 (.scalar source) sourceBody rfl (by decide +kernel) (by decide) v14f2
+--- a/examples/duplicate_prefix/CopyHelperConstant.lean
++++ b/examples/duplicate_prefix/CopyHelperConstant.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.CopyPreconditions
+@@ -2 +2,0 @@
+-import duplicate_prefix.CopyLanguageGuard
+@@ -13,2 +13,2 @@
+-def constant : ConstOperand := (CopyPreconditions.Bodies.useConstantAt HelperCompilerFacts.copyBody 6 0).get (by decide +kernel)
+-theorem literal : constant.value = .Val .ZeroSized 2 := by with_unfolding_all rfl
++noncomputable def constant : ConstOperand := (CopyPreconditions.Bodies.useConstantAt HelperCompilerFacts.copyBody 6 0).get (by decide +kernel)
++theorem literal : constant.value = .Val .ZeroSized 5 := by with_unfolding_all rfl
+@@ -34 +34 @@
+-theorem unit_operand
++private theorem unit_operand_of_literal
+@@ -38 +38 @@
+-    (source : PreparedContracts.SourceComparator)
++    (constant : ConstOperand) (literal : constant.value = .Val .ZeroSized 5)
+@@ -42,4 +42 @@
+-    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+-    (bodyIndex : frame.bodyIdentity.index = HelperCompilerFacts.copyBody.identity.index)
+-    (location : frame.location = .mir ⟨6,0⟩)
+-    (fnInstance : frame.functionInstance = HelperCompilerFacts.copyCall.callee) :
++    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser) :
+@@ -59,2 +56,23 @@
+-  exact unit_eval_at_bound source config.functions config.arithmetic externStatic
+-    framesBefore frame machine bodyIndex location fnInstance
++  simp only [ConstantMachine.evalOperandWithLayout, literal, ConstantMachine.evalValueWithLayout,
++    Option.map_none, valueToOpWithLayout] <;> rfl
++
++theorem unit_operand
++    [DecidableEq MiriMemoryKind]
++    (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
++    (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
++    (source : PreparedContracts.SourceComparator)
++    (debugOff : options.place.debugAssertions = false)
++    (framesBefore : Array (Frame Provenance LocalLayout MachineHooks.FrameExtra))
++    (frame : Frame Provenance LocalLayout MachineHooks.FrameExtra)
++    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
++    (bodyIndex : frame.bodyIdentity.index = HelperCompilerFacts.copyBody.identity.index)
++    (location : frame.location = .mir ⟨6,0⟩)
++    (fnInstance : frame.functionInstance = HelperCompilerFacts.copyCall.callee) :
++    OperandMachine.evalOperand
++      (ExecutionMachine.operandHooks (ExecutionMachine.withValidation
++        (PreparedContracts.actualConfig options () remaining span) limits))
++      ()  (.Constant constant)
++      (some CopyHelperUnit.layout) (Storage.withCurrent framesBefore frame machine) =
++    .ok ⟨.immediate .uninit,CopyHelperUnit.layout⟩
++      (Storage.withCurrent framesBefore frame machine) :=
++  unit_operand_of_literal options limits remaining span constant literal debugOff framesBefore frame machine
+@@ -109,4 +127,4 @@
+-theorem assign_unit_uncached
+-    (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
+-    (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
+-    (source : PreparedContracts.SourceComparator)
++theorem assign_unit_literal_uncached
++    (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
++    (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
++    (constant : ConstOperand) (literal : constant.value = .Val .ZeroSized 5)
+@@ -123,3 +140,0 @@
+-    (bodyIndex : frame.bodyIdentity.index = HelperCompilerFacts.copyBody.identity.index)
+-    (location : frame.location = .mir ⟨6,0⟩)
+-    (fnInstance : frame.functionInstance = HelperCompilerFacts.copyCall.callee)
+@@ -151,2 +166 @@
+-  have operand := unit_operand options limits (remaining+1) span source debugOff framesBefore cached machine
+-    bodyIndex location fnInstance
++  have operand := unit_operand_of_literal options limits (remaining+1) span constant literal debugOff framesBefore cached machine
+@@ -164,0 +179,30 @@
++theorem assign_unit_uncached
++    (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
++    (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
++    (source : PreparedContracts.SourceComparator)
++    (debugOff : options.place.debugAssertions = false) (fuel : Nat)
++    (validationFuel : options.limits.validation = fuel + 1)
++    (framesBefore : Array CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame)
++    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
++    (localId : MIR.LocalId) (old : Immediate Provenance)
++    (valid : localId < frame.locals.size)
++    (live : frame.locals[localId].value = .live (.immediate old))
++    (uncached : frame.locals[localId].layout = none)
++    (query : CompilerFrameContext.computeLocalLayout PreparedReflection.actual.compiler localId
++      (Storage.withCurrent framesBefore frame machine) = .ok CopyHelperUnit.layout (Storage.withCurrent framesBefore frame machine))
++    (bodyIndex : frame.bodyIdentity.index = HelperCompilerFacts.copyBody.identity.index)
++    (location : frame.location = .mir ⟨6,0⟩)
++    (fnInstance : frame.functionInstance = HelperCompilerFacts.copyCall.callee)
++    (noClocks : frame.extra.dataRace = none)
++    (tracker : MachineHooks.BorrowState) (tracked : machine.borrowTracker = some tracker)
++    (defaultMode : tracker.retagMode = .Default)
++    (ghostFalse : machine.user.payload.ghost = false)
++    (shallow : machine.user.payload.validation = .Shallow) :
++    evalRvalueIntoPlace (ExecutionMachine.rvalueHooks
++      (PreparedContracts.actualConfig options () (remaining+1) span) limits) ()
++      (.Use (.Constant constant) .Yes) ⟨localId,#[]⟩ (Storage.withCurrent framesBefore frame machine) =
++      .ok () (Storage.withCurrent framesBefore
++        (ActualLocalCopy.written frame localId CopyHelperUnit.layout valid .uninit) machine) :=
++  assign_unit_literal_uncached options limits remaining span constant literal debugOff fuel validationFuel
++    framesBefore frame machine localId old valid live uncached query noClocks tracker tracked defaultMode ghostFalse shallow
++
+@@ -168 +212 @@
+-  for declaration in [``assign_unit_cached, ``assign_unit_uncached] do
++  for declaration in [``assign_unit_cached, ``assign_unit_uncached, ``assign_unit_literal_uncached] do
+--- a/examples/duplicate_prefix/CopyHelperFacts.lean
++++ b/examples/duplicate_prefix/CopyHelperFacts.lean
+@@ -1 +1,2 @@
+-import duplicate_prefix.PointerAddFacts
++import duplicate_prefix.CompilerFrameLayout
++import duplicate_prefix.HelperCompilerFacts
+@@ -13 +14 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 0 = .ok 2 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 0 = .ok 5 := by
+@@ -22 +23 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 4 = .ok 2 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 4 = .ok 5 := by
+@@ -58 +59 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 16 = .ok 5 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 16 = .ok 4 := by
+@@ -72 +73 @@
+-  PointerAddFacts.compute_local framesBefore frame machine 4 2 CopyHelperUnit.layout
++  PointerAddFacts.compute_local framesBefore frame machine 4 5 CopyHelperUnit.layout
+--- a/examples/duplicate_prefix/CopyHelperPreparation.lean
++++ b/examples/duplicate_prefix/CopyHelperPreparation.lean
+@@ -150 +150 @@
+-    exact CopyHelperSteps.storage_live options limits (remaining+1) span frames f6 machine ⟨7,6⟩ 16 5
++    exact CopyHelperSteps.storage_live options limits (remaining+1) span frames f6 machine ⟨7,6⟩ 16 4
+--- a/examples/duplicate_prefix/CopyHelperReturn.lean
++++ b/examples/duplicate_prefix/CopyHelperReturn.lean
+@@ -76 +76 @@
+-  have query := PointerAddFacts.compute_local frames frame machine 0 2 CopyHelperUnit.layout
++  have query := PointerAddFacts.compute_local frames frame machine 0 5 CopyHelperUnit.layout
+--- a/examples/duplicate_prefix/CopyHelperReturnDriver.lean
++++ b/examples/duplicate_prefix/CopyHelperReturnDriver.lean
+@@ -3,2 +3 @@
+-import duplicate_prefix.PtrMetadataExecution
+-import duplicate_prefix.PtrMetadataReturn
++import duplicate_prefix.PointerAddCurrentReturn
+@@ -23 +22 @@
+-    (location : frame.location = .mir ⟨7,12⟩)
++    (location : frame.location = .mir ⟨7,13⟩)
+@@ -26 +25 @@
+-    (uncached0 : frame.locals[0].layout = none)
++    (cached0 : frame.locals[0].layout = some CopyHelperUnit.layout)
+@@ -36 +35 @@
+-    (immediateLocals : ∀ slot ∈ (LocalOperands.cachedLayoutFrame frame 0 CopyHelperUnit.layout valid0).locals,
++    (immediateLocals : ∀ slot ∈ frame.locals,
+@@ -48 +47 @@
+-    let cached := LocalOperands.cachedLayoutFrame frame 0 CopyHelperUnit.layout valid0
++    let cached := frame
+@@ -55 +54 @@
+-        {PtrMetadataExecution.writeFrame caller callerId .uninit callerValid with location := .mir ⟨target,0⟩}
++        {PointerAddCurrentReturn.writeFrame caller callerId .uninit callerValid with location := .mir ⟨target,0⟩}
+@@ -59 +58 @@
+-  let cached := LocalOperands.cachedLayoutFrame frame 0 CopyHelperUnit.layout valid0
++  let cached := frame
+@@ -66 +65 @@
+-  let written := PtrMetadataExecution.writeFrame caller callerId .uninit callerValid
++  let written := PointerAddCurrentReturn.writeFrame caller callerId .uninit callerValid
+@@ -73,2 +72,2 @@
+-    CopyHelperReturn.read_unit_return_uncached options limits (remaining+1) span (frames.push caller)
+-      frame machine sourceBody identity callee valid0 live0 uncached0 noClocks ghost
++    PrimitiveCallReturn.read_current_return options limits (remaining+1) span (frames.push caller)
++      frame machine CopyHelperUnit.layout .uninit valid0 live0 cached0 CopyHelperUnit.layout_shape.2.1 noClocks ghost
+@@ -88 +87 @@
+-    ⟨7,12⟩ block result target unwindAction
++    ⟨7,13⟩ block result target unwindAction
+@@ -104 +103 @@
+-    (location : frame.location = .mir ⟨7,12⟩)
++    (location : frame.location = .mir ⟨7,13⟩)
+@@ -107 +106 @@
+-    (uncached0 : frame.locals[0].layout = none)
++    (cached0 : frame.locals[0].layout = some CopyHelperUnit.layout)
+@@ -117 +116 @@
+-    (immediateLocals : ∀ slot ∈ (LocalOperands.cachedLayoutFrame frame 0 CopyHelperUnit.layout valid0).locals,
++    (immediateLocals : ∀ slot ∈ frame.locals,
+@@ -132 +131 @@
+-    let cached := LocalOperands.cachedLayoutFrame frame 0 CopyHelperUnit.layout valid0
++    let cached := frame
+@@ -134 +133 @@
+-      (ActualPopPlan.released (PtrMetadataReturn.accountedMachine options remaining span machine) finalMemory tracker borrowFrame)
++      (ActualPopPlan.released (PointerAddCurrentReturn.accountedMachine options remaining span machine) finalMemory tracker borrowFrame)
+@@ -138 +137 @@
+-        {PtrMetadataExecution.writeFrame caller callerId .uninit callerValid with location := .mir ⟨target,0⟩}
++        {PointerAddCurrentReturn.writeFrame caller callerId .uninit callerValid with location := .mir ⟨target,0⟩}
+@@ -142 +141 @@
+-  let next := PtrMetadataReturn.accountedMachine options remaining span machine
++  let next := PointerAddCurrentReturn.accountedMachine options remaining span machine
+@@ -144,2 +143,2 @@
+-  have nextGhost : next.user.payload.ghost = false := by rw [PtrMetadataReturn.accounted_ghost];exact ghost
+-  have nextShallow : next.user.payload.validation = .Shallow := by rw [PtrMetadataReturn.accounted_validation];exact shallow
++  have nextGhost : next.user.payload.ghost = false := by rw [PointerAddCurrentReturn.accounted_ghost];exact ghost
++  have nextShallow : next.user.payload.validation = .Shallow := by rw [PointerAddCurrentReturn.accounted_validation];exact shallow
+@@ -147 +146 @@
+-    sourceBody identity callee location valid0 live0 uncached0 noClocks callerId callerValid callerOld
++    sourceBody identity callee location valid0 live0 cached0 noClocks callerId callerValid callerOld
+@@ -156 +155 @@
+-  have noStatement : block.statements[12]? = none := by decide +kernel
++  have noStatement : block.statements[13]? = none := by decide +kernel
+@@ -158 +157 @@
+-  exact GenericCallReturn.return_step_exact config limits () before nextState _ frame ⟨7,12⟩ block
++  exact GenericCallReturn.return_step_exact config limits () before nextState _ frame ⟨7,13⟩ block
+--- a/examples/duplicate_prefix/CopyHelperStages.lean
++++ b/examples/duplicate_prefix/CopyHelperStages.lean
+@@ -104 +104 @@
+-  have query := PointerAddFacts.compute_local framesBefore frame machine 16 5 RootCompilerFacts.usizeLayout
++  have query := PointerAddFacts.compute_local framesBefore frame machine 16 4 RootCompilerFacts.usizeLayout
+--- a/examples/duplicate_prefix/GeneralBorrowScopedCopyHelperBody.lean
++++ b/examples/duplicate_prefix/GeneralBorrowScopedCopyHelperBody.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.CopyHelperResult
+@@ -24,0 +26 @@
++    (returnSlot : frame.locals[0]? = some ⟨.live (.immediate .uninit),none⟩)
+@@ -44 +46 @@
+-    (live : machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -89 +91,2 @@
+-      done.location = .mir ⟨7,12⟩ ∧ done.locals[0]? = frame.locals[0]? ∧ CopyHelperCleanup.AllImmediate done ∧
++      done.location = .mir ⟨7,13⟩ ∧
++      done.locals[0]? = some ⟨.live (.immediate .uninit),some CopyHelperUnit.layout⟩ ∧ CopyHelperCleanup.AllImmediate done ∧
+@@ -114 +117,2 @@
+-      (body8.trans sourceBody) location8 tracker id tag base offset sliceLen n kind allocation positive sliceBounds copyBounds
++      (body8.trans (sourceBody.trans (congrArg LoadedBody.body HelperCompilerFacts.copy_body_reflected)))
++      location8 tracker id tag base offset sliceLen n kind allocation positive sliceBounds copyBounds
+@@ -133,0 +138,17 @@
++  have validReturn : (0 : MIR.LocalId) < afterFrame.locals.size := by rw [show afterFrame.locals.size = 17 from size8]; decide
++  have returnUnchanged : afterFrame.locals[0]? = some ⟨.live (.immediate .uninit),none⟩ :=
++    zero8.trans returnSlot
++  have returnBefore := (Array.getElem?_eq_some_iff.mp returnUnchanged).2
++  let returnFrame := CopyHelperSteps.advance
++    (ActualLocalCopy.written afterFrame 0 CopyHelperUnit.layout validReturn .uninit) ⟨7,9⟩
++  have stepUnit := CopyHelperResult.step options limits remaining span debugOff fuel validationFuel
++    frames afterFrame afterMachine .uninit validReturn (by rw [returnBefore]) (by rw [returnBefore])
++    (body8.trans sourceBody) (identity8.trans identity) rfl (callee8.trans callee)
++    (extra8 ▸ localClocks) tracker tracked defaultMode ghost shallow
++  have returnSize : returnFrame.locals.size = 17 := by
++    simp [returnFrame,CopyHelperSteps.advance,ActualLocalCopy.written,LocalPlaces.cachePlaceLayout,afterFrame,size8]
++  have returnReady : returnFrame.locals[0]? =
++      some ⟨.live (.immediate .uninit),some CopyHelperUnit.layout⟩ := by
++    simp [returnFrame,CopyHelperSteps.advance,ActualLocalCopy.written,LocalPlaces.cachePlaceLayout]
++  have returnImmediate : CopyHelperCleanup.AllImmediate returnFrame :=
++    CopyHelperCleanup.all_immediate_written afterFrame 0 CopyHelperUnit.layout .uninit validReturn all8
+@@ -136,3 +157,6 @@
+-      CopyHelperCleanup.actual_three_dead options limits (remaining+1) span frames afterFrame afterMachine source dest n
+-        size8 (body8.trans sourceBody) rfl (congrArg LocalState.value source8') (congrArg LocalState.value dest8')
+-        (congrArg LocalState.value count8') all8
++      CopyHelperCleanup.actual_three_dead options limits (remaining+1) span frames returnFrame afterMachine source dest n
++        returnSize (body8.trans sourceBody) rfl
++        (by simpa [returnFrame,CopyHelperSteps.advance,ActualLocalCopy.written,LocalPlaces.cachePlaceLayout,afterFrame,Array.getElem_set] using congrArg LocalState.value source8')
++        (by simpa [returnFrame,CopyHelperSteps.advance,ActualLocalCopy.written,LocalPlaces.cachePlaceLayout,afterFrame,Array.getElem_set] using congrArg LocalState.value dest8')
++        (by simpa [returnFrame,CopyHelperSteps.advance,ActualLocalCopy.written,LocalPlaces.cachePlaceLayout,afterFrame,Array.getElem_set] using congrArg LocalState.value count8')
++        returnImmediate
+@@ -141 +165 @@
+-    localsIdDone.trans localsId8,sizeDone,locationDone,zeroDone.trans zero8,allDone,resultSize,resultLen,resultTree,resultBytes⟩
++    localsIdDone.trans localsId8,sizeDone,locationDone,zeroDone.trans returnReady,allDone,resultSize,resultLen,resultTree,resultBytes⟩
+@@ -143 +167 @@
+-    (.next memoryStep (.next step9 (.next step10 (.next step11 (.refl _))))))))))))
++    (.next memoryStep (.next stepUnit (.next step9 (.next step10 (.next step11 (.refl _)))))))))))))
+--- a/examples/duplicate_prefix/PrimitiveCallReturn.lean
++++ b/examples/duplicate_prefix/PrimitiveCallReturn.lean
+@@ -4 +4 @@
+-import duplicate_prefix.RootPointerCopy
++import duplicate_prefix.RootThinPointerCopy
+--- a/examples/duplicate_prefix/ScalarLocalCopy.lean
++++ b/examples/duplicate_prefix/ScalarLocalCopy.lean
+@@ -2 +2 @@
+-import duplicate_prefix.RootPointerCopy
++import duplicate_prefix.RootThinPointerCopy
+--- a/examples/duplicate_prefix/CopyHelperUnit.lean
++++ b/examples/duplicate_prefix/CopyHelperUnit.lean
+@@ -1,0 +2 @@
++import duplicate_prefix.HelperAbiLayouts
+@@ -10,5 +11,6 @@
+-noncomputable def layout : LocalLayout := ((PreparedReflection.actual.layoutResults[2]'(by decide +kernel))).toOption.getD CopyCompilerFacts.byteLayout
+-
+-theorem layout_query : PreparedReflection.actual.runtime.lookup 2 = .ok layout := by decide +kernel
+-
+-theorem layout_shape : layout.ty = 2 ∧ layout.layout.isSized = true ∧
++noncomputable def layout : LocalLayout := HelperAbiLayouts.unitLayout
++
++theorem layout_query : PreparedReflection.actual.runtime.lookup 5 = .ok layout :=
++  HelperAbiLayouts.unit_layout_eq
++
++theorem layout_shape : layout.ty = 5 ∧ layout.layout.isSized = true ∧
+@@ -35,2 +37,2 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 2 = .ok (.aggregate false false false) := by
+-  unfold CompilerFactAdapters.validityKind CompilerFacts.boolean
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 5 = .ok (.aggregate false false false) := by
++  unfold CompilerFactAdapters.validityKind CompilerFacts.boolean ConcreteTypeQueries.boolean
+@@ -40,3 +42,3 @@
+-  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 2 =
+-      PreparedReflection.actual.runtime.node 2 :=
+-    RootMetadataQueries.context_node 2
++  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 5 =
++      PreparedReflection.actual.runtime.node 5 :=
++    RootMetadataQueries.context_node 5
+@@ -47,2 +49,2 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 2 "opsem_inhabited" = .ok true := by
+-  unfold CompilerFacts.boolean
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 5 "opsem_inhabited" = .ok true := by
++  unfold CompilerFacts.boolean ConcreteTypeQueries.boolean
+@@ -50,3 +52,3 @@
+-  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 2 =
+-      PreparedReflection.actual.runtime.node 2 :=
+-    RootMetadataQueries.context_node 2
++  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 5 =
++      PreparedReflection.actual.runtime.node 5 :=
++    RootMetadataQueries.context_node 5
+@@ -124 +126 @@
+-      choice 2 = pure (.aggregate false false false) := by
++      choice 5 = pure (.aggregate false false false) := by
+@@ -132 +134 @@
+-      choice 2 = pure "()" := by
++      choice 5 = pure "()" := by
+@@ -136,3 +138,3 @@
+-  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 2 =
+-      PreparedReflection.actual.runtime.node 2 :=
+-    RootMetadataQueries.context_node 2
++  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 5 =
++      PreparedReflection.actual.runtime.node 5 :=
++    RootMetadataQueries.context_node 5
+@@ -176 +178 @@
+-  have typeEq : layout.ty = 2 := by decide +kernel
++  have typeEq : layout.ty = 5 := by decide +kernel
+@@ -188 +190 @@
+-    change (CompilerFactAdapters.validityHooks PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts base).opsemInhabited () 2 active = _
++    change (CompilerFactAdapters.validityHooks PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts base).opsemInhabited () 5 active = _
+--- a/examples/duplicate_prefix/StackPopRelease.lean
++++ b/examples/duplicate_prefix/StackPopRelease.lean
+@@ -2 +1,0 @@
+-import duplicate_prefix.ProtectedRelease
+@@ -33 +32 @@
+-    let entry ← match machine.memory.live.find? fun entry => entry.1 == allocId with
++    let entry ← match machine.memory.live[allocId]? with
+@@ -35 +34 @@
+-      | some entry => pure entry.2
++      | some entry => pure entry
+@@ -84 +83 @@
+-/-- The exact filter/push performed by `MemoryState.setLiveAllocation`. -/
++/-- The keyed insertion performed by `MemoryState.setLiveAllocation`. -/
+@@ -87 +86 @@
+-  {memory with live := (memory.live.filter fun row => row.1 != id).push (id, {entry with allocation := entry.allocation.setExtra tree})}
++  {memory with live := (memory.live.insert id {entry with allocation := entry.allocation.setExtra tree})}
+@@ -107 +106 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -137 +136 @@
+-      (present : memory.live.find? (fun row => row.1 == id) = some (id, entry))
++      (present : memory.live[id]? = some entry)
+@@ -184 +183 @@
+-      have presentState : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry) := by
++      have presentState : state.machine.memory.live[id]? = some entry := by
+@@ -220,2 +219,2 @@
+-    (commitTree memory id entry tree).live.find? (fun row => row.1 == id) =
+-      some (id, {entry with allocation := entry.allocation.setExtra tree}) := by
++    (commitTree memory id entry tree).live[id]? =
++      some {entry with allocation := entry.allocation.setExtra tree} := by
+@@ -228,14 +227,3 @@
+-    (present : memory.live.find? (fun row => row.1 == other) = some (other, otherEntry)) :
+-    (commitTree memory id entry tree).live.find? (fun row => row.1 == other) = some (other, otherEntry) := by
+-  have filtered : (memory.live.filter (fun row => row.1 != id)).find? (fun row => row.1 == other) =
+-      memory.live.find? (fun row => row.1 == other) := by
+-    rw [Array.find?_filter]
+-    congr 1
+-    funext row
+-    by_cases eqOther : (row.1 == other) = true
+-    · have equality : row.1 = other := beq_iff_eq.mp eqOther
+-      have neId : row.1 ≠ id := fun h => distinct (equality.symm.trans h)
+-      have keep : (row.1 != id) = true := by simpa using neId
+-      simp [eqOther, keep]
+-    · simp [eqOther]
+-  simp [commitTree, Array.find?_push, Ne.symm distinct, filtered, present]
++    (present : memory.live[other]? = some otherEntry) :
++    (commitTree memory id entry tree).live[other]? = some otherEntry := by
++  simpa [commitTree, Std.ExtTreeMap.getElem?_insert, Ne.symm distinct] using present
+@@ -247,14 +235,2 @@
+-  have filtered : (memory.live.filter (fun row => row.1 != id)).find? (fun row => row.1 == other) =
+-      memory.live.find? (fun row => row.1 == other) := by
+-    rw [Array.find?_filter]
+-    congr 1
+-    funext row
+-    by_cases eqOther : (row.1 == other) = true
+-    · have equality : row.1 = other := beq_iff_eq.mp eqOther
+-      have neId : row.1 ≠ id := fun h => distinct (equality.symm.trans h)
+-      have keep : (row.1 != id) = true := by simpa using neId
+-      simp [eqOther,keep]
+-    · simp [eqOther]
+-  have liveEq : (commitTree memory id entry tree).live.find? (fun row => row.1 == other) =
+-      memory.live.find? (fun row => row.1 == other) := by
+-    simp [commitTree,Array.find?_push,Ne.symm distinct,filtered]
++  have liveEq : (commitTree memory id entry tree).live[other]? = memory.live[other]? := by
++    simp [commitTree, Std.ExtTreeMap.getElem?_insert, Ne.symm distinct]
+@@ -277 +253 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -299 +275 @@
+-    (present1 : state.machine.memory.live.find? (fun row => row.1 == id1) = some (id1, entry1))
++    (present1 : state.machine.memory.live[id1]? = some entry1)
+@@ -301 +277 @@
+-    (present2 : (commitTree state.machine.memory id1 entry1 tree1).live.find? (fun row => row.1 == id2) = some (id2, entry2))
++    (present2 : (commitTree state.machine.memory id1 entry1 tree1).live[id2]? = some entry2)
+@@ -324 +300 @@
+-    (present1 : state.machine.memory.live.find? (fun row => row.1 == id1) = some (id1, entry1))
++    (present1 : state.machine.memory.live[id1]? = some entry1)
+@@ -326 +302 @@
+-    (present2 : state.machine.memory.live.find? (fun row => row.1 == id2) = some (id2, entry2))
++    (present2 : state.machine.memory.live[id2]? = some entry2)

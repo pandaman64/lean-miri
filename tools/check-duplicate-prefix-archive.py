@@ -28,6 +28,15 @@ LOCAL = {
     "ArchiveForestProjection", "ExclusiveConcreteRange", "ExclusiveCopyRanges", "ExclusiveCopyStep",
     "ArchiveTraceToVC", "RootLocalChecks", "HelperAbiLayouts", "RetagRangeFrame", "RetagLocationFrame", "RetagFrozenChild",
     "ZeroImmediateFacts",
+    "CompilerFrameLayout",
+    "CopyHelperCurrentCall",
+    "CopyHelperCurrentExit",
+    "CopyHelperResult",
+    "LocationPointeeLayout",
+    "PointerAddCurrentFacts",
+    "PointerAddCurrentReturn",
+    "RootThinPointerCopy",
+    "RootThinPointerWrite",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 ALLOWED = {"propext", "Quot.sound", "Classical.choice"}
