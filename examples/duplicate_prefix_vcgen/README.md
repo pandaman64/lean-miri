@@ -108,6 +108,16 @@ from the actual Tree Borrows insertion.
 proved scoped error safety and successful root preparation to the generated
 VC at the entry state.
 
+[CanonicalCallDomain.lean](CanonicalCallDomain.lean) specifies the prepared
+frame, caller storage, and Tree Borrows rights for the all-count theorem.
+[CanonicalSourceControl.lean](CanonicalSourceControl.lean) adds the pinned
+compiler's relevance and local layout cache conditions.
+[CanonicalCallRelease.lean](CanonicalCallRelease.lean) derives the release
+plan for an empty argument's dormant protector, and
+[GeneralPhysicalRelease.lean](GeneralPhysicalRelease.lean) derives the
+physical return-slot release from bytewise ownership. These release lemmas
+supply individual cases of the all-count argument.
+
 ### Recheck migrated archive components
 
 The archive overlay imports the current standalone MIR and rebuilds its proof
