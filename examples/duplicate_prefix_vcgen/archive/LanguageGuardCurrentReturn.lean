@@ -13,18 +13,20 @@ set_option backward.dsimp.instances true
 
 inductive Site where
   | languageGuard
+  | copyLanguageGuard
   | runtimeGuard
 
 noncomputable def bodyAt : Site → Miri.MIR.Body
-  | .languageGuard => LanguageGuardCurrentFacts.parentBody.body
+  | .languageGuard | .copyLanguageGuard => LanguageGuardCurrentFacts.parentBody.body
   | .runtimeGuard => LanguageGuardCurrentFacts.leafBody.body
 
 def returnBlock : Site → BasicBlockId
-  | .languageGuard => 4
+  | .languageGuard | .copyLanguageGuard => 4
   | .runtimeGuard => 0
 
 def callerSlot : Site → MIR.LocalId
   | .languageGuard => 4
+  | .copyLanguageGuard => 5
   | .runtimeGuard => 1
 
 def returnedCallerFrame (caller : Frame Provenance LocalLayout MachineHooks.FrameExtra)

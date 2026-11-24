@@ -230,7 +230,10 @@ guard suffix. These targets use the standalone example's prebuilt local imports.
 `--target PointerAddCurrentComplete` verifies the retained pointer-add helper
 from its prepared basic block 6 through the exact caller return and pointer
 result. `PointerAddGuardBoundary` connects a separately established guard
-prefix to that proof.
+prefix to that proof. `RootCurrentCopyPreparation` and `CopyRootEntry`
+check the root around pointer addition and entry into the copy helper;
+`RootPositiveSuccessComplete` checks the positive root suffix from its
+prepared return state with a physical Boolean destination.
 
 ```sh
 LEAN_PATH="$PWD/scratch/duplicate-prefix-vcgen" \
