@@ -254,6 +254,13 @@ LOCAL = {
     "S04ReturnResolvedWindowPointer",
     "S04ReturnWindowScalar",
     "S04SingleByteInit",
+    "RootNonzeroSharedHeap",
+    "RootPhysicalCarrierTransport",
+    "RootPositiveFromBacking",
+    "RootPositivePhysicalPop",
+    "RootPositiveToPhysicalWindow",
+    "RootPositiveWindowCarrier",
+    "RootPositiveWindowReturn",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 CLIENT_IMPORTS = re.compile(rb"^import ([A-Za-z][A-Za-z0-9_]*)(?:\.([A-Za-z0-9_]+))?\s*$", re.MULTILINE)

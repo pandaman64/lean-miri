@@ -10,9 +10,10 @@ open ArchiveForestProjection SourceDomain GeneralRangeMapOrigins RetagSharedChil
 holder's write grant and materialized scope in the resulting heap. -/
 theorem Footprint.retainsHolder
     (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    {originalMemory : MemoryState Provenance BorrowTree MiriMemoryKind}
     (entry : LocalAllocation Provenance BorrowTree MiriMemoryKind) (id : AllocId)
     (parentTag tag : BorTag) (parent root : UniIndex) (offset len : UInt64) (tags : ProtectedTags)
-    (footprint : Footprint machine entry id parentTag tag parent offset len tags)
+    (footprint : Footprint machine (originalMemory := originalMemory) entry id parentTag tag parent offset len tags)
     (node : TreeNode) (present : entry.allocation.extra.nodeAt parent = some node)
     (indexed : entry.allocation.extra.indexOfTag parentTag = some parent)
     (coherent : CoherentForest entry.allocation.extra) (roots : entry.allocation.extra.roots = #[root])
@@ -34,7 +35,7 @@ theorem Footprint.retainsHolder
       MaterializedWithin after parent offset (offset+len) ∧ VacantRows after ∧
       ∃ child, after.indexOfTag tag = some child ∧ SharedChildFrame original read.tree after parent child tag start length inside := by
   intro start length original read inside after
-  obtain ⟨memory, child, selected, framed⟩ := footprint
+  obtain ⟨memory, child, selected, framed, _⟩ := footprint
   have readable : OwnedOn (fun row => LocationAccessRights original row tags parent .Read)
       offset (offset+len) original.locations := by
     intro i valid overlap left right

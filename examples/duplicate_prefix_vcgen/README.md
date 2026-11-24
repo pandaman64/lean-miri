@@ -118,6 +118,22 @@ plan for an empty argument's dormant protector, and
 physical return-slot release from bytewise ownership. These release lemmas
 supply individual cases of the all-count argument.
 
+### Safety for both prepared return destinations
+
+[VerifyCanonicalSafety.lean](VerifyCanonicalSafety.lean) proves
+`DuplicatePrefix.CanonicalCallDomain.safetyForPreparedCall` for all `UInt64`
+counts and either admitted Boolean return destination. For a nonempty
+initialized slice it uses `CopySourceResources` for the source allocation.
+For a nonzero count on an empty slice it covers a non-null integer-address
+pointer without provenance. The proof uses the pinned compiler profile,
+resource budgets, and Shallow fixed-scheduling configuration in the
+theorem statement. It proves the exact generated obligation without
+requiring a trace or execution result.
+
+Use `--client VerifyCanonicalSafety` in the checker command below to
+rebuild this proof. The unresolved wildcard and backed empty cases with
+nonzero counts have separate proof obligations.
+
 ### Zero count with either return destination
 
 [VerifyZeroPhysicalCanonical.lean](VerifyZeroPhysicalCanonical.lean) proves

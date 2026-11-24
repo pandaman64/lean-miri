@@ -83,7 +83,7 @@ theorem stepDetailed
           location := .mir ⟨2,12⟩
           locals := frame.locals.set 12 ⟨.live (.immediate freshRef), some RootSharedStep.sharedLayout⟩ capacity} ∧
         resultMachine = {machine with memory := resultMachine.memory, borrowTracker := resultMachine.borrowTracker} ∧
-        CurrentSharedRetag.Footprint resultMachine entry id parentTag old.global.nextPointerTag parent
+        CurrentSharedRetag.Footprint resultMachine (originalMemory := machine.memory) entry id parentTag old.global.nextPointerTag parent
           offset len old.global.protectedTags ∧
         old.global.newPointerTag = .ok (tracker.global, old.global.nextPointerTag) := by
   intro config initialPtr initialRef freshPtr freshRef sourceLive

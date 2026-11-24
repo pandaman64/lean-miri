@@ -134,6 +134,7 @@ def ReadGrant (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUs
 /-- The exact unprotected reborrow tree, including the read and fresh child
 needed to transport the original mutable holder's authority. -/
 def Footprint (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    {originalMemory : MemoryState Provenance BorrowTree MiriMemoryKind}
     (entry : LocalAllocation Provenance BorrowTree MiriMemoryKind) (id : AllocId)
     (parentTag tag : BorTag) (parent : UniIndex) (offset len : UInt64) (protectors : ProtectedTags) : Prop :=
   let start := Size.ofBytes offset
@@ -142,9 +143,11 @@ def Footprint (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUs
   let read := original.performNormalAccessRange parentTag start length .Read protectors .VisitChildrenOfAccessed
   let inside := DedupRangeMap.new length sharedState
   let attached := read.tree.newChild start (.concrete parentTag) tag inside .Frozen false
-  machine.memory.live[id]? = some {entry with allocation := entry.allocation.setExtra attached.tree} ∧
+  let updated := {entry with allocation := entry.allocation.setExtra attached.tree}
+  machine.memory.live[id]? = some updated ∧
     ∃ child, attached.tree.indexOfTag tag = some child ∧
-      SharedChildFrame original read.tree attached.tree parent child tag start length inside
+      SharedChildFrame original read.tree attached.tree parent child tag start length inside ∧
+      machine.memory = {originalMemory with live := originalMemory.live.insert id updated}
 
 private theorem uniform_partition (offset length capacity : Size)
     (bounds : offset.bytes.toNat + length.bytes.toNat ≤ capacity.bytes.toNat) :
@@ -216,7 +219,7 @@ theorem runDetailed
         newTracker.global.protectedTags = borrow.global.protectedTags ∧
         ReadGrant after entry id tag root offset len borrow.global.protectedTags ∧
         after = {machine with memory := after.memory, borrowTracker := after.borrowTracker} ∧
-        Footprint after entry id parentTag tag parent offset len borrow.global.protectedTags ∧
+        Footprint after (originalMemory := machine.memory) entry id parentTag tag parent offset len borrow.global.protectedTags ∧
         borrow.global.newPointerTag = .ok (newTracker.global, tag) := by
   intro cfg parentPtr childPtr input output
   let initial := Storage.withCurrent frames frame machine
@@ -325,8 +328,15 @@ theorem runDetailed
     simp only [child, read, info, nextTracker, protections, expected, normal, BorrowTree.performNormalAccessRange]
   have present : after.memory.live[id]? = some {entry with allocation := entry.allocation.setExtra expected.tree} := by
     rwa [exactTree] at afterLive
-  have details : Footprint after entry id parentTag tag parent offset len borrow.global.protectedTags :=
-    ⟨present, childIndex, key, footprint⟩
+  let installed := {entry with allocation := entry.allocation.setExtra expected.tree}
+  have updatedMemory : after.memory = {machine.memory with live := machine.memory.live.insert id installed} := by
+    dsimp only [installed]
+    rw [← exactTree]
+    exact MemoryCopyBridge.live_update_twice machine.memory id
+      {entry with allocation := entry.allocation.setExtra read.tree}
+      {entry with allocation := entry.allocation.setExtra child.tree}
+  have details : Footprint after (originalMemory := machine.memory) entry id parentTag tag parent offset len borrow.global.protectedTags :=
+    ⟨present, childIndex, key, footprint, updatedMemory⟩
   refine ⟨after, by rw [callback]; exact whole, rfl, nextTracker, rfl, mode, protections, ?_, rfl, details, allocated⟩
   refine ⟨expected.tree, childIndex, present, rooted, sameRoots, sizeEq, key, ?_, preserves⟩
   obtain ⟨found, live, value, _, perm⟩ := node
@@ -451,9 +461,24 @@ theorem run
       parentFound depth rank tagFresh room aligned reuse clean bounds owners
   exact ⟨after, executed, preserved, newTracker, installed, modeAfter⟩
 
+/-- The actual first shared retag updates just its receiver's live key. -/
+theorem Footprint.untouchedAllocation
+    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    {originalMemory : MemoryState Provenance BorrowTree MiriMemoryKind}
+    (entry : LocalAllocation Provenance BorrowTree MiriMemoryKind) (id : AllocId)
+    (parentTag tag : BorTag) (parent : UniIndex) (offset len : UInt64) (protectors : ProtectedTags)
+    (footprint : Footprint machine (originalMemory := originalMemory) entry id parentTag tag parent offset len protectors)
+    (query : AllocId) (different : query ≠ id) :
+    machine.memory.live[query]? = originalMemory.live[query]? := by
+  obtain ⟨_, _, _, _, exactHeap⟩ := footprint
+  rw [exactHeap]
+  simp [Std.ExtTreeMap.getElem?_insert, Ne.symm different]
+
 end DuplicatePrefix.CurrentSharedRetag
 
 #print axioms DuplicatePrefix.CurrentSharedRetag.completedPointer
 #print axioms DuplicatePrefix.CurrentSharedRetag.runDetailed
 #print axioms DuplicatePrefix.CurrentSharedRetag.runWithRights
 #print axioms DuplicatePrefix.CurrentSharedRetag.run
+
+#print axioms DuplicatePrefix.CurrentSharedRetag.Footprint.untouchedAllocation
