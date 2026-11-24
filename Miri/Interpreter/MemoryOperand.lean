@@ -905,6 +905,50 @@ def scalarReadAfterAccess [DecidableEq P] [PointerProvenance P]
         (fun scalar => ⟨.scalar scalar, layout⟩)
   ⟨access.memory, access.hooks, access.touched, result⟩
 
+/-- A selected scalar load uses the actual access snapshot. Both a value
+and an allocation error retain its memory, hook state, and touched allocation. -/
+theorem scalarReadAfterAccess_of_read [DecidableEq P] [PointerProvenance P]
+    (layout : MemoryOperandLayout) (primitive : BackendPrimitive) (runtime : RuntimeTargetDataLayout)
+    (access : MemoryOperandResult P E K H (Option (AllocationAccessRef P E)))
+    (reference : AllocationAccessRef P E) (range : AllocRange) (result : Except AllocError (Scalar P))
+    (selected : access.outcome = .ok (some reference))
+    (component : reference.range.subrange (allocRange Size.ZERO layout.size) = .ok range)
+    (load : reference.allocation.readScalar runtime.base range
+      (match primitive with | .Pointer _ => true | _ => false) = result) :
+    scalarReadAfterAccess layout primitive runtime access =
+      ⟨access.memory, access.hooks, access.touched,
+        ((result.mapError MemoryOperandError.allocation).map fun value => ⟨.scalar value, layout⟩)⟩ := by
+  unfold scalarReadAfterAccess readScalarAt componentRange
+  simp only [selected, component, Except.mapError, bind, Except.bind]
+  cases primitive <;> simp only [scalarReadProvenance] <;> rw [load]
+
+/-- A selected scalar store commits the allocation left by its mutation,
+including a partial update on error. The touched allocation also reflects
+that committed snapshot. -/
+theorem scalarWriteAfterAccess_of_mutation [DecidableEq P] [PointerProvenance P]
+    (layout : MemoryOperandLayout) (runtime : RuntimeTargetDataLayout)
+    (later : MemoryOperandLayout → Bool)
+    (access : MemoryOperandResult P E K H (Option (AllocationAccessRef P E)))
+    (reference : AllocationAccessRef P E) (range : AllocRange) (value : Scalar P)
+    (updated : Allocation P E) (memory : MemoryState P E K) (mutation : Except AllocError Unit)
+    (selected : access.outcome = .ok (some reference))
+    (component : reference.range.subrange (allocRange Size.ZERO value.size) = .ok range)
+    (store : Allocation.writeScalar runtime.base range value reference.allocation =
+      match mutation with | .ok () => .ok () updated | .error error => .error error updated)
+    (committed : access.memory.setLiveAllocation reference.allocId updated = .ok memory) :
+    writeImmediateAfterAccess (.scalar value) layout runtime later access =
+      ⟨memory, access.hooks, some {reference with allocation := updated},
+        mutation.mapError MemoryOperandError.allocation⟩ := by
+  unfold writeImmediateAfterAccess writeScalarAt writeRange
+  simp only [selected, component, Except.mapError, bind, Bind.bind, pure, Pure.pure, Id.run]
+  erw [store]
+  unfold commitAllocationMutation
+  cases mutation with
+  | error error => simp [committed, bind, Bind.bind, pure, Pure.pure, Id.run]
+  | ok payload =>
+    cases payload
+    simp [committed, bind, Bind.bind, pure, Pure.pure, Id.run]
+
 theorem scalarRead_eq_afterAccess [DecidableEq P] [PointerProvenance P]
     (memory : MemoryState P E K) (hooks : H) (place : MemoryOperandPlace P)
     (runtime : RuntimeTargetDataLayout) (ghost : Bool) (kind : Option K)
