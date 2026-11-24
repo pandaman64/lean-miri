@@ -109,7 +109,7 @@ proved scoped error safety and successful root preparation to the generated
 VC at the entry state.
 
 [CanonicalCallDomain.lean](CanonicalCallDomain.lean) specifies the prepared
-frame, caller storage, and Tree Borrows rights for the all-count theorem.
+frame, caller storage, and Tree Borrows rights for the stated all-count goal.
 [CanonicalSourceControl.lean](CanonicalSourceControl.lean) adds the pinned
 compiler's relevance and local layout cache conditions.
 [CanonicalCallRelease.lean](CanonicalCallRelease.lean) derives the release
@@ -217,6 +217,12 @@ Boolean destination.
 checks length, protector release, and the root rejection return.
 `VerifyRejectionGenerated.lean` links a checked root-to-post-length trace
 to the emitted safety VC.
+
+The `EmptyIntegerLength` archive target checks the actual shared-reference
+assignment, protected argument-validation callback, nested metadata call, and
+length return for a non-null integer-address empty slice. The length is zero.
+The two retags increase the tag counter while leaving memory and the global
+protector ledger intact.
 
 The optional `RetagFrozenChild` target checks actual child insertion and
 the resulting range and permission frame under its concrete fresh-tag premises.
