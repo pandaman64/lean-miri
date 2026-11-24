@@ -82,7 +82,10 @@ theorem stepDetailed
         resultFrame = {frame with
           location := .mir ⟨2,12⟩
           locals := frame.locals.set 12 ⟨.live (.immediate freshRef), some RootSharedStep.sharedLayout⟩ capacity} ∧
-        resultMachine = {machine with memory := resultMachine.memory, borrowTracker := resultMachine.borrowTracker} := by
+        resultMachine = {machine with memory := resultMachine.memory, borrowTracker := resultMachine.borrowTracker} ∧
+        CurrentSharedRetag.Footprint resultMachine entry id parentTag old.global.nextPointerTag parent
+          offset len old.global.protectedTags ∧
+        old.global.newPointerTag = .ok (tracker.global, old.global.nextPointerTag) := by
   intro config initialPtr initialRef freshPtr freshRef sourceLive
   let reference := RootSharedStep.sharedLayout
   let cachedFrame := RootSharedStep.cacheDestination frame capacity
@@ -99,7 +102,7 @@ theorem stepDetailed
   have storedLoc : stored.location = .mir ⟨2,11⟩ := located
   let activeMachine := {machine with user := {machine.user with payload := {machine.user.payload with ghost := true}}}
   have typed : reference.ty = 7 := by with_unfolding_all rfl
-  obtain ⟨after, adjusted, activeUser, tracker, trackedAfter, modeAfter, protec, grant, machineFrame⟩ :=
+  obtain ⟨after, adjusted, activeUser, tracker, trackedAfter, modeAfter, protec, grant, machineFrame, footprint, nextTag⟩ :=
     CurrentSharedRetag.runDetailed options remaining span sizeFuel sizing preciseOff implicitOff frames stored activeMachine
       reference typed id parentTag parent root base offset len entry old tracked mode fresh old.global.nextPointerTag
       rfl cached live allocationMut raceOff positive bounded memoryBounds cmp metadata noAlias coherent parentNode
@@ -137,10 +140,10 @@ theorem stepDetailed
     sourceCached destLive destUncached localClocks old tracker tracked trackedAfter mode modeAfter ghost shallow
     sourceLive (by simpa only [outputValue] using validated)
   refine ⟨{finalFrame with location := .mir ⟨2,12⟩}, finalMachine, canonical, rfl, ?_, grant,
-    tracker, trackedAfter, modeAfter, protec, ?_, ?_⟩
+    tracker, trackedAfter, modeAfter, protec, ?_, ?_, footprint, nextTag⟩
   · simp [finalFrame, CurrentReferenceLocalWrite.written, storedLayout, valid, reference]
   · simp [finalFrame, stored, cachedFrame, RootSharedStep.cacheDestination, CurrentReferenceLocalWrite.written,
-      LocalPlaces.cachePlaceLayout, Array.set_set, Array.getElem_set, reference]
+      LocalPlaces.cachePlaceLayout, Array.set_set]
   · have clearUser (value : Machine.RootUser) (off : value.payload.ghost = false) :
         {value with payload := {value.payload with ghost := false}} = value := by
       rw [← off]
@@ -218,7 +221,7 @@ theorem stepWithRights
       ∃ tracker, resultMachine.borrowTracker = some tracker ∧ tracker.retagMode = .Default ∧
         tracker.global.protectedTags = old.global.protectedTags := by
   intro config initialPtr initialRef freshPtr freshRef sourceLive
-  obtain ⟨resultFrame,resultMachine,execution,location,localValue,grant,next,installed,defaultMode,protections,_,_⟩ :=
+  obtain ⟨resultFrame,resultMachine,execution,location,localValue,grant,next,installed,defaultMode,protections,_,_,_,_⟩ :=
     stepDetailed options limits remaining fuel sizeFuel span debug budget sizing preciseOff implicitOff frames
       frame machine id parentTag parent root base offset len entry old tracked mode fresh cached live allocationMut
       raceOff localClocks positive bounded memoryBounds notNull cmp metadata noAlias ghost shallow coherent parentNode

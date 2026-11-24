@@ -131,6 +131,21 @@ def ReadGrant (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUs
     ∀ point : UInt64, offset.toNat ≤ point.toNat → point.toNat < (offset+len).toNat →
       ∀ row, ValueAt tree.locations point row → LocationAccessRights tree row protectors child .Read
 
+/-- The exact unprotected reborrow tree, including the read and fresh child
+needed to transport the original mutable holder's authority. -/
+def Footprint (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (entry : LocalAllocation Provenance BorrowTree MiriMemoryKind) (id : AllocId)
+    (parentTag tag : BorTag) (parent : UniIndex) (offset len : UInt64) (protectors : ProtectedTags) : Prop :=
+  let start := Size.ofBytes offset
+  let length := Size.ofBytes len
+  let original := entry.allocation.extra
+  let read := original.performNormalAccessRange parentTag start length .Read protectors .VisitChildrenOfAccessed
+  let inside := DedupRangeMap.new length sharedState
+  let attached := read.tree.newChild start (.concrete parentTag) tag inside .Frozen false
+  machine.memory.live[id]? = some {entry with allocation := entry.allocation.setExtra attached.tree} ∧
+    ∃ child, attached.tree.indexOfTag tag = some child ∧
+      SharedChildFrame original read.tree attached.tree parent child tag start length inside
+
 private theorem uniform_partition (offset length capacity : Size)
     (bounds : offset.bytes.toNat + length.bytes.toNat ≤ capacity.bytes.toNat) :
     ∀ segment ∈ (DedupRangeMap.new length sharedState).iterAll.toList,
@@ -200,7 +215,9 @@ theorem runDetailed
       ∃ newTracker, after.borrowTracker = some newTracker ∧ newTracker.retagMode = .Default ∧
         newTracker.global.protectedTags = borrow.global.protectedTags ∧
         ReadGrant after entry id tag root offset len borrow.global.protectedTags ∧
-        after = {machine with memory := after.memory, borrowTracker := after.borrowTracker} := by
+        after = {machine with memory := after.memory, borrowTracker := after.borrowTracker} ∧
+        Footprint after entry id parentTag tag parent offset len borrow.global.protectedTags ∧
+        borrow.global.newPointerTag = .ok (newTracker.global, tag) := by
   intro cfg parentPtr childPtr input output
   let initial := Storage.withCurrent frames frame machine
   have roomForTag : borrow.global.nextPointerTag.value ≠ 18446744073709551615 := by
@@ -294,8 +311,8 @@ theorem runDetailed
     intro position valid overlap starts ends
     exact LocationRights.readRights (owners position valid overlap starts ends)
   have split := uniform_partition (Size.ofBytes offset) (Size.ofBytes len) _ bounds
-  obtain ⟨_, _, sizeEq, rooted, sameRoots, childIndex, key, node, preserves⟩ :=
-    concrete_shared_readable_reborrow entry.allocation.extra borrow.global.protectedTags parentTag tag
+  obtain ⟨_, _, sizeEq, rooted, sameRoots, childIndex, key, node, footprint, preserves⟩ :=
+    concrete_shared_readable_reborrow_with_frame entry.allocation.extra borrow.global.protectedTags parentTag tag
       parent root (Size.ofBytes offset) (Size.ofBytes len) (DedupRangeMap.new (Size.ofBytes len) sharedState) false
       coherent parentNode parentStored roots parentFound depth rank tagFresh room aligned reuse clean
       (fun segment member => (split segment member).1)
@@ -306,11 +323,14 @@ theorem runDetailed
     (DedupRangeMap.new (Size.ofBytes len) sharedState) .Frozen false
   have exactTree : child = expected := by
     simp only [child, read, info, nextTracker, protections, expected, normal, BorrowTree.performNormalAccessRange]
-  refine ⟨after, by rw [callback]; exact whole, rfl, nextTracker, rfl, mode, protections, ?_, rfl⟩
-  refine ⟨expected.tree, childIndex, ?_, rooted, sameRoots, sizeEq, key, ?_, preserves⟩
-  · rwa [exactTree] at afterLive
-  · obtain ⟨found, live, value, _, perm⟩ := node
-    exact ⟨found, live, value, perm⟩
+  have present : after.memory.live[id]? = some {entry with allocation := entry.allocation.setExtra expected.tree} := by
+    rwa [exactTree] at afterLive
+  have details : Footprint after entry id parentTag tag parent offset len borrow.global.protectedTags :=
+    ⟨present, childIndex, key, footprint⟩
+  refine ⟨after, by rw [callback]; exact whole, rfl, nextTracker, rfl, mode, protections, ?_, rfl, details, allocated⟩
+  refine ⟨expected.tree, childIndex, present, rooted, sameRoots, sizeEq, key, ?_, preserves⟩
+  obtain ⟨found, live, value, _, perm⟩ := node
+  exact ⟨found, live, value, perm⟩
 
 theorem runWithRights
     (options : EvalConfigurationCore.Options) (remaining : Nat)
@@ -365,7 +385,7 @@ theorem runWithRights
         newTracker.global.protectedTags = borrow.global.protectedTags ∧
         ReadGrant after entry id tag root offset len borrow.global.protectedTags := by
   intro cfg parentPtr childPtr input output
-  obtain ⟨after, executed, preserved, newTracker, installed, modeAfter, protections, grant, _⟩ :=
+  obtain ⟨after, executed, preserved, newTracker, installed, modeAfter, protections, grant, _, _, _⟩ :=
     runDetailed options remaining span fuel fuelEq preciseOff implicitOff frames frame machine
       reference referenceTy id parentTag parent root base offset len entry borrow tracked mode fresh tag tagEq cached live
       allocationMut raceOff positive bounded memoryBounds cmp metadata noAlias coherent parentNode parentStored roots

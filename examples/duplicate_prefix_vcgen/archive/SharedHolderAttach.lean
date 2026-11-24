@@ -1,4 +1,5 @@
 import duplicate_prefix.InheritedSharedRights
+import duplicate_prefix.RetagReleaseFootprint
 
 namespace DuplicatePrefix.SharedRelease
 
@@ -163,6 +164,27 @@ theorem retained_holder_after_shared_child
   obtain ⟨oldPosition, oldBound, before, after, exact⟩ := located
   rw [← exact]
   exact owned oldPosition oldBound positive (by omega) (by omega)
+
+/-- An older tag's materialized bytes stay in the same extent when a new
+shared child is attached. Ancestor SIFA updates preserve the saved presence. -/
+theorem retained_materialization_after_attach {before after : BorrowTree} {child watch : UniIndex}
+    {grant : LocationState → Prop} (frame : FramedWith grant before.locations child after)
+    (different : watch ≠ child) (lower upper : UInt64)
+    (scope : RetagReleaseFootprint.MaterializedWithin before watch lower upper) :
+    RetagReleaseFootprint.MaterializedWithin after watch lower upper := by
+  intro point position bounded lo hi state saved
+  obtain ⟨⟨previous, located, unchanged⟩, _⟩ := frame.2.2 point position bounded lo hi
+  have entry := unchanged watch different
+  unfold storedPermission at entry
+  rw [saved] at entry
+  cases prior : previous.perms.get watch with
+  | none => simp [prior] at entry
+  | some previousState =>
+    obtain ⟨oldPosition, inside, lower, upper, same⟩ := located
+    have materialized : before.locations.entries[oldPosition].data.perms.get watch = some previousState := by
+      rwa [same]
+    exact scope point oldPosition inside (UInt64.le_iff_toNat_le.mpr lower) (UInt64.lt_iff_toNat_lt.mpr upper)
+      previousState materialized
 
 #print axioms retained_holder_byte
 

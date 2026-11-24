@@ -7000,3 +7000,277 @@
 @@ -193 +192 @@
 -    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
 +    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)
+--- a/examples/duplicate_prefix/LenHelper.lean
++++ b/examples/duplicate_prefix/LenHelper.lean
+@@ -2 +2 @@
+-import duplicate_prefix.SharedReferenceMetadata
++import duplicate_prefix.HelperAbiLayouts
+@@ -10 +10 @@
+-noncomputable abbrev rawLayout := SharedReferenceMetadata.sharedLayout
++noncomputable abbrev rawLayout := HelperAbiLayouts.sharedSliceLayout
+@@ -15 +15 @@
+-theorem raw_layout_eq : PreparedReflection.actual.runtime.lookup 7 = .ok rawLayout := by decide +kernel
++theorem raw_layout_eq : PreparedReflection.actual.runtime.lookup 7 = .ok rawLayout := HelperAbiLayouts.shared_slice_layout_eq
+--- a/examples/duplicate_prefix/LenCallFacts.lean
++++ b/examples/duplicate_prefix/LenCallFacts.lean
+@@ -1 +1,2 @@
+-import duplicate_prefix.GuardCompilerFacts
++import duplicate_prefix.CanonicalConfigFacts
++import duplicate_prefix.AllocationCopy
+@@ -98 +99 @@
+-theorem abi_flags : LenHelper.abi.cVariadic = false ∧ LenHelper.abi.canUnwind = true ∧
++theorem abi_flags : LenHelper.abi.cVariadic = false ∧ LenHelper.abi.canUnwind = false ∧
+--- a/examples/duplicate_prefix/LenCallCore.lean
++++ b/examples/duplicate_prefix/LenCallCore.lean
+@@ -2 +1,0 @@
+-import duplicate_prefix.RootCallCore
+@@ -26 +25 @@
+-  h.pushRaw () LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Continue)
++  h.pushRaw () LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Unreachable)
+@@ -54 +53 @@
+-      #[.Copy first] false destination (.goto (some 3) .Continue) =
++      #[.Copy first] false destination (.goto (some 3) .Unreachable) =
+@@ -69 +68 @@
+-  have canUnwind : h.abiCanUnwind LenHelper.abi = true := LenCallFacts.abi_flags.2.1
++  have canUnwind : h.abiCanUnwind LenHelper.abi = false := LenCallFacts.abi_flags.2.1
+--- a/examples/duplicate_prefix/LenEntryFacts.lean
++++ b/examples/duplicate_prefix/LenEntryFacts.lean
+@@ -1,0 +2 @@
++import duplicate_prefix.Storage
+@@ -11 +12,4 @@
+-theorem len_preamble_supported : (GuardCompilerFacts.preambleQuery LenHelper.body).isOk = true := by decide +kernel
++private def preambleQuery (body : LoadedBody) : Except String MIR.SpanRef := do
++  let some entry := PreparedReflection.actual.compiler.lifecycle.lifecycle.entries[body.identity.index]?
++    | throw "body lifecycle evidence absent"
++  entry.preamble
+@@ -13 +17,3 @@
+-def lenPreamble := checkedOk (GuardCompilerFacts.preambleQuery LenHelper.body) len_preamble_supported
++theorem len_preamble_supported : (preambleQuery LenHelper.body).isOk = true := by decide +kernel
++
++def lenPreamble := checkedOk (preambleQuery LenHelper.body) len_preamble_supported
+--- a/examples/duplicate_prefix/LenFrame.lean
++++ b/examples/duplicate_prefix/LenFrame.lean
+@@ -15 +15 @@
+-    LenHelper.resolved.callee () (.goto (some 3) .Continue) destination LenEntryFacts.lenPreamble identity
++    LenHelper.resolved.callee () (.goto (some 3) .Unreachable) destination LenEntryFacts.lenPreamble identity
+@@ -28 +28 @@
+-        (.goto (some 3) .Continue) destination LenEntryFacts.lenPreamble identity) state =
++        (.goto (some 3) .Unreachable) destination LenEntryFacts.lenPreamble identity) state =
+@@ -33 +33 @@
+-      (.goto (some 3) .Continue) destination LenEntryFacts.lenPreamble identity : Frame Provenance LocalLayout Unit) state rfl
++      (.goto (some 3) .Unreachable) destination LenEntryFacts.lenPreamble identity : Frame Provenance LocalLayout Unit) state rfl
+--- a/examples/duplicate_prefix/LenPush.lean
++++ b/examples/duplicate_prefix/LenPush.lean
+@@ -33 +33 @@
+-      LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Continue) state =
++      LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Unreachable) state =
+--- a/examples/duplicate_prefix/LenLocals.lean
++++ b/examples/duplicate_prefix/LenLocals.lean
+@@ -1,0 +2 @@
++import duplicate_prefix.CompilerFrameLayout
+@@ -50,11 +51,2 @@
+-  have normalized := normalized_local1 frame body identity callee
+-  unfold CompilerFrameContext.computeLocalLayout
+-  simp only [MachineHooks.currentFrame, Storage.withCurrent, Stack.currentFrame?, Array.back?_push,
+-    bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure]
+-  rw [normalized]
+-  with_unfolding_all change (match PreparedReflection.actual.runtime.lookup 7 with
+-    | .ok value => EStateM.Result.ok value (Storage.withCurrent frames frame machine)
+-    | .error error => EStateM.Result.error (StepError.unsupported s!"compiler frame query: {toString error}")
+-        (Storage.withCurrent frames frame machine)) = _
+-  rw [LenHelper.raw_layout_eq]
+-  rfl
++  exact PointerAddFacts.compute_local frames frame machine 1 7 LenHelper.rawLayout
++    (normalized_local1 frame body identity callee) LenHelper.raw_layout_eq
+--- a/examples/duplicate_prefix/LenArgument.lean
++++ b/examples/duplicate_prefix/LenArgument.lean
+@@ -1,3 +1,2 @@
+-import duplicate_prefix.LenArgumentCopy
+-import duplicate_prefix.LenZeroArgumentCopy
+-import duplicate_prefix.RootArgumentEntry
++import duplicate_prefix.CallArgumentStages
++import duplicate_prefix.CallEntryLocals
+@@ -7 +5,0 @@
+-open RootArgumentEntry
+@@ -11,0 +10,5 @@
++def liveFrame (frame : Frame Provenance LocalLayout MachineHooks.FrameExtra)
++    (id : MIR.LocalId) (valid : id < frame.locals.size) :=
++  {frame with locals := (frame.locals.set id
++    {value := .live (.immediate .uninit), layout := frame.locals[id].layout} valid)}
++
+--- a/examples/duplicate_prefix/LenInstall.lean
++++ b/examples/duplicate_prefix/LenInstall.lean
+@@ -21 +21 @@
+-  let live := RootArgumentEntry.liveFrame cached 1 (by simpa [cached,cacheFrame, spanFrame,LocalOperands.cachedLayoutFrame] using valid)
++  let live := LenArgument.liveFrame cached 1 (by simpa [cached,cacheFrame, spanFrame,LocalOperands.cachedLayoutFrame] using valid)
+@@ -23 +23 @@
+-    (by simpa [live,cached,RootArgumentEntry.liveFrame,cacheFrame,spanFrame,LocalOperands.cachedLayoutFrame] using valid))}
++    (by simpa [live,cached,LenArgument.liveFrame,cacheFrame,spanFrame,LocalOperands.cachedLayoutFrame] using valid))}
+@@ -25 +25 @@
+-def action (h : RootCallCore.RootHooks) (value : Immediate Provenance) : MachineHooks.M MiriMemoryKind Machine.RootUser (Nat × Nat) := do
++def action (h : LenCallCore.RootHooks) (value : Immediate Provenance) : MachineHooks.M MiriMemoryKind Machine.RootUser (Nat × Nat) := do
+@@ -49 +49 @@
+-      (LocalPlaces.localRuntimePlace frames.size (RootArgumentEntry.liveFrame (cacheFrame frame valid) 1
++      (LocalPlaces.localRuntimePlace frames.size (LenArgument.liveFrame (cacheFrame frame valid) 1
+@@ -51 +51 @@
+-      (Storage.withCurrent frames (RootArgumentEntry.liveFrame (cacheFrame frame valid) 1
++      (Storage.withCurrent frames (LenArgument.liveFrame (cacheFrame frame valid) 1
+--- a/examples/duplicate_prefix/LenDone.lean
++++ b/examples/duplicate_prefix/LenDone.lean
+@@ -2 +2 @@
+-import duplicate_prefix.RootArgumentEntry
++import duplicate_prefix.LenArgument
+@@ -52 +52 @@
+-  have trivial : cfg.lifecycle.storage.veryTriviallySized 5 = .ok true := by
++  have trivial : cfg.lifecycle.storage.veryTriviallySized 4 = .ok true := by
+@@ -55 +55 @@
+-  have h0 := storage_live_slot cfg.lifecycle.storage frames frame machine 0 5 valid
++  have h0 := storage_live_slot cfg.lifecycle.storage frames frame machine 0 4 valid
+--- a/examples/duplicate_prefix/LenFinish.lean
++++ b/examples/duplicate_prefix/LenFinish.lean
+@@ -12 +12 @@
+-def action (h : RootCallCore.RootHooks) (preamble : MIR.SpanRef) : MachineHooks.M MiriMemoryKind Machine.RootUser Unit := do
++def action (h : LenCallCore.RootHooks) (preamble : MIR.SpanRef) : MachineHooks.M MiriMemoryKind Machine.RootUser Unit := do
+--- a/examples/duplicate_prefix/LenTail.lean
++++ b/examples/duplicate_prefix/LenTail.lean
+@@ -1 +1 @@
+-import duplicate_prefix.LenPositiveInstall
++import duplicate_prefix.LenInstall
+@@ -37 +37 @@
+-      h.pushRaw () LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Continue)
++      h.pushRaw () LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Unreachable)
+--- a/examples/duplicate_prefix/LenEntry.lean
++++ b/examples/duplicate_prefix/LenEntry.lean
+@@ -55 +55 @@
+-      false (LocalPlaces.localRuntimePlace frames.size caller localId RootCompilerFacts.usizeLayout).stackView (.goto (some 3) .Continue)
++      false (LocalPlaces.localRuntimePlace frames.size caller localId RootCompilerFacts.usizeLayout).stackView (.goto (some 3) .Unreachable)
+@@ -74 +74 @@
+-  have pushActual : h.pushRaw () LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Continue) state =
++  have pushActual : h.pushRaw () LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Unreachable) state =
+@@ -78 +78 @@
+-      LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Continue) state = _
++      LenHelper.resolved.callee LenHelper.body destination (.goto (some 3) .Unreachable) state = _
+--- a/examples/duplicate_prefix/LenCallQueries.lean
++++ b/examples/duplicate_prefix/LenCallQueries.lean
+@@ -1,0 +2 @@
++import duplicate_prefix.Storage
+@@ -27 +28,28 @@
+-theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 10 = .ok functionLayout := by decide +kernel
++private theorem functionLayout_reflection :
++    (PreparedReflection.actual.runtime.lookup 10).toOption = some functionLayout := by
++  let metadata := PreparedReflection.actual.runtime
++  have observation : metadata.node 10 = .ok metadata.source.types[10] := by rfl
++  change (metadata.lookup 10).toOption = _
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : metadata.source.types[10].sourceLayout.normalizedType = 10 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have row : metadata.source.types[10]? = some metadata.source.types[10] := by rfl
++  have ordinary : metadata.source.types[10].sourceLayout.specialFloat = none := by rfl
++  have noX87 : metadata.source.types[10].sourceLayout.isX87F80 = false := rfl
++  have fnShape : (match metadata.source.types[10].shape with
++    | .functionDefinition .. => true | _ => false) = true := rfl
++  cases shape : metadata.source.types[10].shape <;> simp [shape] at fnShape
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet, StateT.map,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    get, modify, modifyGet, MonadStateOf.modifyGet, MonadLift.monadLift, Except.map, Functor.map,
++    Except.toOption, Std.HashMap.getElem?_empty, row, normalized, shape, ordinary, noX87]
++  with_unfolding_all rfl
++
++theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 10 = .ok functionLayout := by
++  have h := functionLayout_reflection
++  generalize PreparedReflection.actual.runtime.lookup 10 = actual at h ⊢
++  cases actual <;> simpa [Except.toOption] using h
+--- a/examples/duplicate_prefix/LenFunctionConstant.lean
++++ b/examples/duplicate_prefix/LenFunctionConstant.lean
+@@ -3 +2,0 @@
+-import duplicate_prefix.CopyLanguageGuard
+--- a/examples/duplicate_prefix/LenEvaluateCall.lean
++++ b/examples/duplicate_prefix/LenEvaluateCall.lean
+@@ -3 +3 @@
+-import duplicate_prefix.LenArgumentCopy
++import duplicate_prefix.LenHelper
+@@ -52 +52 @@
+-      valid live cached LenArgumentCopy.shared_sized noClocks ghost
++      valid live cached (by decide +kernel) noClocks ghost
+--- a/examples/duplicate_prefix/LenCallFrontend.lean
++++ b/examples/duplicate_prefix/LenCallFrontend.lean
+@@ -21 +21 @@
+-      false destination (.goto (some 3) .Continue) state = .ok () after) :
++      false destination (.goto (some 3) .Unreachable) state = .ok () after) :
+@@ -24 +24 @@
+-      #[.Copy ⟨.immediate value,LenHelper.rawLayout⟩],false,destination,some 3,.Continue⟩ state = .ok () after := by
++      #[.Copy ⟨.immediate value,LenHelper.rawLayout⟩],false,destination,some 3,.Unreachable⟩ state = .ok () after := by
+@@ -27 +27 @@
+-  have find := LenDispatch.find_mir options limits remaining span state args destination (some 3) .Continue backend race
++  have find := LenDispatch.find_mir options limits remaining span state args destination (some 3) .Unreachable backend race
+@@ -33,2 +33,2 @@
+-  rw [CallItemDispatch.item_step h LenHelper.resolved.callee 1 LenHelper.abi args false destination
+-    (some 3) .Continue .Rust (LenCalleeLeaves.instance_kind options limits remaining span) LenCallFacts.abi_flags.2.1 rust]
++  rw [CallItemDispatch.item_step_nounwind h LenHelper.resolved.callee 1 LenHelper.abi args false destination
++    (some 3) .Rust (LenCalleeLeaves.instance_kind options limits remaining span) LenCallFacts.abi_flags.2.1 rust]
+@@ -50 +50 @@
+-    #[LenEvaluateCall.argument] ⟨11,#[]⟩ (some 3) .Continue sourceKind fnSpan := by with_unfolding_all rfl
++    #[LenEvaluateCall.argument] ⟨11,#[]⟩ (some 3) .Unreachable sourceKind fnSpan := by with_unfolding_all rfl
+@@ -65 +65 @@
+-    (cachedSource : caller.locals[12].layout = some SharedReferenceMetadata.sharedLayout)
++    (cachedSource : caller.locals[12].layout = some LenHelper.rawLayout)
+@@ -72 +72 @@
+-      false (LocalPlaces.localRuntimePlace frames.size caller 11 RootCompilerFacts.usizeLayout).stackView (.goto (some 3) .Continue)
++      false (LocalPlaces.localRuntimePlace frames.size caller 11 RootCompilerFacts.usizeLayout).stackView (.goto (some 3) .Unreachable)
+@@ -86 +86 @@
+-  have canUnwind : h.abiCanUnwind LenHelper.abi = true := LenCallFacts.abi_flags.2.1
++  have canUnwind : h.abiCanUnwind LenHelper.abi = false := LenCallFacts.abi_flags.2.1
+@@ -100 +100 @@
+-    LenHelper.resolved.function #[LenEvaluateCall.argument] ⟨11,#[]⟩ 3 .Continue sourceKind fnSpan
++    LenHelper.resolved.function #[LenEvaluateCall.argument] ⟨11,#[]⟩ 3 .Unreachable sourceKind fnSpan
+@@ -104 +104,4 @@
+-  · simpa only [dispatchFuel,Option.any,canUnwind,ite_true] using dispatched
++  · simpa only [dispatchFuel,Option.any,canUnwind,Bool.false_eq_true,↓reduceIte] using dispatched
++  · change ((do return (← get).stack.frames.isEmpty) : MachineHooks.M MiriMemoryKind Machine.RootUser Bool) after = _
++    simp [after, Storage.withCurrent, Array.isEmpty_push, get, getThe, MonadStateOf.get, EStateM.get,
++      bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+--- a/examples/duplicate_prefix/LenUncachedFrontend.lean
++++ b/examples/duplicate_prefix/LenUncachedFrontend.lean
+@@ -2,0 +3 @@
++import duplicate_prefix.CompilerFrameLayout
+@@ -20 +21 @@
+-  have normalized : CompilerFrameContext.localType PreparedReflection.actual.compiler frame 11 = .ok 5 := by
++  have normalized : CompilerFrameContext.localType PreparedReflection.actual.compiler frame 11 = .ok 4 := by
+@@ -24,10 +25,2 @@
+-  unfold CompilerFrameContext.computeLocalLayout
+-  simp only [MachineHooks.currentFrame,Storage.withCurrent,Stack.currentFrame?,Array.back?_push,
+-    bind,EStateM.bind,get,getThe,MonadStateOf.get,EStateM.get,pure,EStateM.pure]
+-  rw [normalized]
+-  with_unfolding_all change (match PreparedReflection.actual.runtime.lookup 5 with
+-    | .ok value => EStateM.Result.ok value (Storage.withCurrent frames frame machine)
+-    | .error error => EStateM.Result.error (StepError.unsupported s!"compiler frame query: {toString error}")
+-        (Storage.withCurrent frames frame machine)) = _
+-  rw [RootCompilerFacts.usize_layout_eq]
+-  rfl
++  exact PointerAddFacts.compute_local frames frame machine 11 4 RootCompilerFacts.usizeLayout
++    normalized (by with_unfolding_all exact RootCompilerFacts.usize_layout_eq)
+@@ -47 +40 @@
+-    (cachedSource : caller.locals[12].layout = some SharedReferenceMetadata.sharedLayout)
++    (cachedSource : caller.locals[12].layout = some LenHelper.rawLayout)
+@@ -54 +47 @@
+-      false (LocalPlaces.localRuntimePlace frames.size (cachedCaller caller validDest) 11 RootCompilerFacts.usizeLayout).stackView (.goto (some 3) .Continue)
++      false (LocalPlaces.localRuntimePlace frames.size (cachedCaller caller validDest) 11 RootCompilerFacts.usizeLayout).stackView (.goto (some 3) .Unreachable)
+@@ -67 +60 @@
+-  have sourceCached' : cf.locals[12].layout = some SharedReferenceMetadata.sharedLayout := by simpa [cf,cachedCaller,LocalPlaces.cachePlaceLayout,Array.getElem_set] using cachedSource
++  have sourceCached' : cf.locals[12].layout = some LenHelper.rawLayout := by simpa [cf,cachedCaller,LocalPlaces.cachePlaceLayout,Array.getElem_set] using cachedSource
+@@ -73 +66 @@
+-  have canUnwind : h.abiCanUnwind LenHelper.abi = true := LenCallFacts.abi_flags.2.1
++  have canUnwind : h.abiCanUnwind LenHelper.abi = false := LenCallFacts.abi_flags.2.1
+@@ -87 +80 @@
+-    LenHelper.resolved.function #[LenEvaluateCall.argument] ⟨11,#[]⟩ 3 .Continue LenCallFrontend.sourceKind LenCallFrontend.fnSpan
++    LenHelper.resolved.function #[LenEvaluateCall.argument] ⟨11,#[]⟩ 3 .Unreachable LenCallFrontend.sourceKind LenCallFrontend.fnSpan
+@@ -91 +84,4 @@
+-  · simpa only [dispatchFuel,Option.any,canUnwind,ite_true] using dispatched
++  · simpa only [dispatchFuel,Option.any,canUnwind,Bool.false_eq_true,↓reduceIte] using dispatched
++  · change ((do return (← get).stack.frames.isEmpty) : MachineHooks.M MiriMemoryKind Machine.RootUser Bool) after = _
++    simp [after, Storage.withCurrent, Array.isEmpty_push, get, getThe, MonadStateOf.get, EStateM.get,
++      bind, EStateM.bind, pure, Pure.pure, EStateM.pure]

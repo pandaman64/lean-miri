@@ -3,6 +3,7 @@ import duplicate_prefix.NormalAccessRights
 import duplicate_prefix.GeneralBorrowRangePreserves
 import duplicate_prefix.ReadAccessRange
 import duplicate_prefix.ExclusiveCopyRanges
+import duplicate_prefix.RetagReleaseFootprint
 
 namespace DuplicatePrefix.SharedRelease
 
@@ -10,6 +11,7 @@ open Miri.ABI Miri.DataStructures Miri.Memory Miri.TreeBorrows Miri.TreeBorrows.
 open SourceDomain ArchiveForestProjection RetagReleaseRights
 open GeneralBorrowExposure GeneralBorrowProjection GeneralBorrowPresence BorrowRangeAccess GeneralRangeMapOrigins
 open GeneralBorrowPermissions GeneralBorrowOwnership GeneralBorrowRangePreserves
+open Miri.Verification.RangeModifyLaw RetagReleaseFootprint
 
 set_option maxRecDepth 65536
 set_option maxHeartbeats 1800000
@@ -160,7 +162,7 @@ theorem parent_after_read (tree : BorrowTree) (location : LocationTree)
 /-- The actual associated read of a shared reborrow retains the earlier
 mutable holder's exclusive grant. Reader authority and the holder's
 post-release authority are independent input rights. -/
-theorem ranged_read_retains_holder
+theorem ranged_read_retains_holder_with_frame
     (tree : BorrowTree) (tags : ProtectedTags) (accessTag releasedTag : BorTag)
     (child parent root : UniIndex) (node holder : TreeNode)
     (found : tree.nodeAt child = some node) (holderFound : tree.nodeAt parent = some holder)
@@ -183,7 +185,9 @@ theorem ranged_read_retains_holder
     run.status = .Completed ∧ run.tree = {tree with locations := run.tree.locations} ∧
       CoherentForest run.tree ∧ run.tree.locations.size = tree.locations.size ∧
       OwnedOn (fun row => LocationRights run.tree row (tags.remove releasedTag) parent)
-        offset.bytes (offset.bytes + length.bytes) run.tree.locations := by
+        offset.bytes (offset.bytes + length.bytes) run.tree.locations ∧
+      (∀ watch, MaterializedWithin tree watch offset.bytes (offset.bytes + length.bytes) →
+        MaterializedWithin run.tree watch offset.bytes (offset.bytes + length.bytes)) := by
   obtain ⟨rank, bounded, decreases⟩ := coherent.parentDepth
   let depth : ParentDepth tree.nodes := ⟨rank, bounded, by
     intro index data present parent edge
@@ -224,12 +228,26 @@ theorem ranged_read_retains_holder
     have readerKept := location_owned tree segment.data tags child root .Read .Read .VisitChildrenOfAccessed
       segment.range (fun _ => rfl) coherent.indexFits ⟨⟨graph⟩, reader⟩ depth childNodes node found roots covered
     exact ⟨readerKept, kept⟩
-  have run := preserve_range_property tree accessTag child tags .Read .VisitChildrenOfAccessed
+  let confined (point : UInt64) (row : LocationTree) : Prop :=
+    ∀ watch, MaterializedWithin tree watch offset.bytes (offset.bytes + length.bytes) →
+      ∀ state, row.perms.get watch = some state →
+        offset.bytes.toNat ≤ point.toNat ∧ point.toNat < (offset.bytes + length.bytes).toNat
+  have initial : EachByte tree.locations confined := by
+    intro point position valid lo hi watch previous
+    exact previous point position valid lo hi
+  have byteStable : ∀ (segment : RangeMapSegment LocationTree) (point : UInt64),
+      offset.bytes.toNat ≤ point.toNat → point.toNat < (offset.bytes + length.bytes).toNat →
+      segment.range.start ≤ point → point < segment.range.stop → confined point segment.data →
+      confined point (tree.performTreeAccessAt segment.data (some child) .Read tags
+        .VisitChildrenOfAccessed segment.range).location := by
+    intro _ _ lo hi _ _ _ _ _ _ _
+    exact ⟨lo, hi⟩
+  have run := preserve_range_property_with_byte_frame tree accessTag child tags .Read .VisitChildrenOfAccessed
     offset length offset.bytes (offset.bytes + length.bytes) retains tagFound coherent.ranges
-    bounds ready preserves auth
+    bounds ready preserves confined initial byteStable auth
   let after := tree.performNormalAccessRange accessTag offset length .Read tags .VisitChildrenOfAccessed
-  have shape : after.tree = {tree with locations := after.tree.locations} := run.2.2.2.2
-  refine ⟨run.1, shape, ?_, run.2.2.2.1, ?_⟩
+  have shape : after.tree = {tree with locations := after.tree.locations} := run.2.2.2.2.1
+  refine ⟨run.1, shape, ?_, run.2.2.2.1, ?_, ?_⟩
   · rw [shape]
     exact {coherent with ranges := run.2.2.1}
   · change OwnedOn (fun row => LocationRights after.tree row (tags.remove releasedTag) parent)
@@ -240,6 +258,39 @@ theorem ranged_read_retains_holder
     have grant := (run.2.1 position inside positive lo hi).2
     rw [shape]
     exact rights_table tree after.tree.locations row (tags.remove releasedTag) parent grant
+
+  · intro watch previous point pos valid start stop
+    exact run.2.2.2.2.2 point pos valid start stop watch previous
+
+/-- The associated read retains the holder's original writable rows. -/
+theorem ranged_read_retains_holder
+    (tree : BorrowTree) (tags : ProtectedTags) (accessTag releasedTag : BorTag)
+    (child parent root : UniIndex) (node holder : TreeNode)
+    (found : tree.nodeAt child = some node) (holderFound : tree.nodeAt parent = some holder)
+    (tagFound : tree.indexOfTag accessTag = some child)
+    (chain : Ancestor tree parent child) (separate : parent ≠ child)
+    (unheld : ∀ index data, tree.nodeAt index = some data →
+      Ancestor tree index child → ¬ Ancestor tree index parent →
+        (tags.remove releasedTag).contains data.tag = false)
+    (unique : ∀ index data, tree.nodeAt index = some data → data.tag = releasedTag → index = child)
+    (coherent : CoherentForest tree) (roots : tree.roots = #[root])
+    (offset length : Size)
+    (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
+    (readerRights : OwnedOn (fun row => LocationAccessRights tree row tags child .Read)
+      offset.bytes (offset.bytes + length.bytes) tree.locations)
+    (holderRights : OwnedOn (fun row => LocationRights tree row (tags.remove releasedTag) parent)
+      offset.bytes (offset.bytes + length.bytes) tree.locations)
+    (vacant : OwnedOn (fun row => ∀ index, tree.nodeAt index = none → row.perms.get index = none)
+      offset.bytes (offset.bytes + length.bytes) tree.locations) :
+    let run := tree.performNormalAccessRange accessTag offset length .Read tags .VisitChildrenOfAccessed
+    run.status = .Completed ∧ run.tree = {tree with locations := run.tree.locations} ∧
+      CoherentForest run.tree ∧ run.tree.locations.size = tree.locations.size ∧
+      OwnedOn (fun row => LocationRights run.tree row (tags.remove releasedTag) parent)
+        offset.bytes (offset.bytes + length.bytes) run.tree.locations := by
+  have result := ranged_read_retains_holder_with_frame tree tags accessTag releasedTag child parent root node holder
+    found holderFound tagFound chain separate unheld unique coherent roots offset length bounds readerRights
+    holderRights vacant
+  exact ⟨result.1, result.2.1, result.2.2.1, result.2.2.2.1, result.2.2.2.2.1⟩
 
 #print axioms parent_after_read
 end DuplicatePrefix.SharedRelease
