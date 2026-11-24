@@ -1,4 +1,5 @@
 import Miri.Verification.CanonicalStepWP
+import Miri.Verification.FieldProjectionWP
 
 /-! Exact preconditions for evaluating the place in a MIR `PlaceMention`. -/
 
@@ -199,6 +200,7 @@ theorem canonical_statementPre
 macro "miri_place_mention_wp" : tactic =>
   `(tactic| simp only [canonical_statementPre, actionPre_evalPlace, actionPre_localToPlace,
     actionPre_placeLayoutOfLocal, actionPre_project, evalPre, localPre, localLayoutPre,
-    projectionsPre, projectPre])
+    projectionsPre, projectPre, FieldProjectionWP.actionPre_field, FieldProjectionWP.fieldPre,
+    FieldProjectionWP.actionPre_offsetWithMeta, FieldProjectionWP.offsetPre])
 
 end Miri.Verification.PlaceMentionWP

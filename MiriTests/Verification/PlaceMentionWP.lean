@@ -22,6 +22,30 @@ example (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMac
           onError) onError before := by
   simp only [canonical_statementPre, Miri.Verification.PlaceMentionWP.evalPre] <;> rfl
 
+/-- A generated field projection uses the parent layout's static offset
+before requesting the projected layout or performing the final type check. -/
+example (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
+    (choice : C) (id : LocalId) (ty : TyId) (parentLayout : LocalLayout)
+    (post : Bool → MachineHooks.State K U → Prop)
+    (onError : StepError → MachineHooks.State K U → Prop) (before : MachineHooks.State K U)
+    (offsetError : Miri.ABI.LayoutError) (sized : parentLayout.layout.isSized = true)
+    (invalidOffset : parentLayout.layout.fields.offset 1 = .error offsetError)
+    (frameIndex : Nat) (current : Frame Provenance LocalLayout MachineHooks.FrameExtra)
+    (frameIndexFound : (ExecutionMachine.projectionHooks
+      (ExecutionMachine.withValidation config limits)).place.frameIndex before = .ok frameIndex before)
+    (frameFound : (ExecutionMachine.projectionHooks
+      (ExecutionMachine.withValidation config limits)).place.getFrame before = .ok current before)
+    (resolved : ∀ (cont : LocalLayout → MachineHooks.State K U → Prop),
+      localLayoutPre (ExecutionMachine.projectionHooks
+        (ExecutionMachine.withValidation config limits)).place choice id cont onError before =
+        cont parentLayout before) :
+    CanonicalStepWP.statementPre config limits choice (.PlaceMention ⟨id, #[.Field 1 ty]⟩)
+      post onError before = onError (.invalidProgram s!"place layout: {repr offsetError}") before := by
+  simp only [canonical_statementPre, Miri.Verification.PlaceMentionWP.evalPre, localPre, resolved,
+    sized, ↓reduceIte]
+  miri_place_mention_wp
+  simp only [invalidOffset, Except.mapError, actionPre, frameIndexFound, frameFound, scalarCheckPre]
+
 variable {P S E : Type} [PointerProvenance P]
 
 /-- A missing local stops before any layout query, projection or finish check. -/
@@ -67,5 +91,24 @@ example (hooks : PlaceProjectionHooks P S C E) (choice : C) (base : RuntimePlace
     actionPre (PlaceDynamic.project hooks choice base (.ConstantIndex (2^64) 0 false))
       post onError before = onError (.invalidProgram "MIR index exceeds u64") before := by
   miri_place_mention_wp <;> rfl
+
+/-- A local projection that exceeds its parent reports the error in the
+state returned by the field layout query. -/
+example (hooks : PlaceProjectionHooks P S C E) (choice : C)
+    (frame localId : Nat) (identity : LocalsIdentity) (ty : TyId)
+    (parent field : LocalLayout) (before queried : S)
+    (post : RuntimePlace P → S → Prop) (onError : StepError → S → Prop)
+    (offset : Miri.ABI.Size) (offsetFound : parent.layout.fields.offset 1 = .ok offset)
+    (fieldFound : hooks.field choice parent 1 before = .ok field queried)
+    (sized : field.layout.isSized = true)
+    (bound : Miri.ABI.Size) (boundAdded : offset.add field.layout.size = .ok bound)
+    (outside : bound.bytes > parent.layout.size.bytes) :
+    actionPre (PlaceDynamic.project hooks choice
+      ⟨.local frame localId none identity, parent⟩ (.Field 1 ty)) post onError before =
+      onError (.invalidProgram "local projection exceeds enclosing place") queried := by
+  miri_place_mention_wp
+  simp only [offsetFound, actionPre, Except.mapError, scalarCheckPre, fieldFound, sized,
+    Bool.not_true, Bool.false_eq_true, ↓reduceIte, MemPlaceMeta.hasMeta, Bool.false_or,
+    boundAdded, outside]
 
 end MiriTests.Verification.PlaceMentionWP
