@@ -123,12 +123,18 @@ preparation and checks on the initial segments. It also handles a read
 followed by a write and retains both diagnostic traces for the success
 postcondition. See the [ranged access examples](MiriTests/Verification/TreeBorrowsWP.lean).
 
-Build the Goto/Nop, Call/Return, and protected-alias proof fixtures.
+For a canonical call, use `miri_call_dispatch_wp` on the call precondition
+produced by `vcgen`. It opens one dispatch iteration and its ABI, pointer,
+virtual, intrinsic or foreign-call checks. Apply it again when a fallback
+produces another request. The [dispatch examples](MiriTests/Verification/CallDispatchWP.lean)
+show how to reduce the error branch to a predicate on the retained state.
+
+Build the Goto/Nop, Call/Return, dispatch and protected-alias proof fixtures.
 
 ```bash
 flock --no-fork /tmp/lean-miri-lake-build.lock lake build \
   MiriTests.Verification.StepWP MiriTests.Verification.CallReturnWP \
-  MiriTests.Verification.TreeBorrowsWP
+  MiriTests.Verification.CallDispatchWP MiriTests.Verification.TreeBorrowsWP
 ```
 
 ### Generate a whole-body verification condition

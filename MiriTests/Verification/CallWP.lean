@@ -1,4 +1,6 @@
 import Miri.Verification.CanonicalStepWP
+import Miri.Verification.CallDispatchWP
+import Miri.Verification.CallLifecycleWP
 
 namespace MiriTests.Verification.CallWP
 
@@ -172,6 +174,74 @@ theorem callDirectItem (config : Config) (limits : ExecutionMachine.Limits)
     RvalueWP.actionPre_ok nextIndex, Bool.false_eq_true, ↓reduceIte, progress, moved,
     Option.isSome_some, Bool.true_and, Bool.false_and]
   exact success
+
+/-- The canonical VC for an ordinary dispatch reports a preamble-span failure
+at the state after the frame's locals identity has been issued. -/
+theorem nestedCanonicalPushError (config : Config) (limits : ExecutionMachine.Limits)
+    (before ready : State) (frame : MachineFrame) (loc : Location) (block : BasicBlock)
+    (func : Operand) (dest : Place) (span : SpanRef) (remaining : Nat)
+    (destination : RuntimeStackPlace Provenance) (operand : OpTy Provenance)
+    (definition itemDef : DefId) (genericArgs : Array GenericArg) (fnInstance loadedInstance : CallInstance)
+    (externAbi : X) (abi : Miri.ABI.FnAbi TyId) (body : LoadedBody)
+    (post : Bool → State → Prop) (onError : StepError → State → Prop)
+    (current : before.stack.currentFrame? = some frame)
+    (pc : frame.location = .mir loc) (selected : frame.body.basicBlocks[loc.block]? = some block)
+    (slot : block.statements[loc.statementIndex]? = none)
+    (opcode : block.terminator.kind = .Call func #[] dest (some 1) .Unreachable .Normal span)
+    (prepared : let checked := ExecutionMachine.withValidation config limits
+      TerminatorMachine.beforeTerminatorWithChoice checked.terminators (checked.preemptionChoice ()) before =
+        .ok () before)
+    (indexed : (calls config limits).frameIndex before = .ok (before.stack.frames.size - 1) before)
+    (active : (calls config limits).getFrame before = .ok frame before)
+    (place : (calls config limits).evalPlace () dest false before = .ok destination ready)
+    (read : (calls config limits).evalOperand () func ready = .ok operand ready)
+    (signature : (calls config limits).functionSignature () operand.layout ready = .ok (0, externAbi) ready)
+    (kind : (calls config limits).functionKind operand.layout.ty ready =
+      .ok (.FnDef definition genericArgs) ready)
+    (resolved : (calls config limits).resolve () definition genericArgs ready = .ok fnInstance ready)
+    (item : (calls config limits).instanceKind fnInstance ready = .ok (.Item itemDef) ready)
+    (computed : (calls config limits).fnAbiOfInstance () fnInstance #[] ready = .ok abi ready)
+    (location : (calls config limits).requiresCallerLocation fnInstance ready = .ok false ready)
+    (ordinary : (calls config limits).isRustCall externAbi = false)
+    (found : (calls config limits).findMirOrEvalFn () fnInstance abi #[] destination (some 1) .Unreachable ready =
+      .ok (some (body, loadedInstance)) ready)
+    (budget : limits.callDispatch = remaining + 1)
+    (requires : (calls config limits).requiresCallerLocation loadedInstance ready = .ok false ready)
+    (calleeAbi : (calls config limits).fnAbiOfInstance () loadedInstance #[] ready = .ok abi ready)
+    (compatible : (calls config limits).sameConvention abi abi = true)
+    (features : (calls config limits).checkTargetFeatures () loadedInstance ready = .ok () ready)
+    (destinationOp : OpTy Provenance)
+    (source : (calls config limits).placeToOp () destination ready = .ok destinationOp ready)
+    (nonempty : ready.stack.frames.isEmpty = false)
+    (machine : MachineHooks.MachineState K U) (identity : LocalsIdentity)
+    (error : StepError)
+    (fresh : config.lifecycle.freshLocalsIdentity ready.machine = (machine, identity))
+    (spanRejected : config.lifecycle.preambleSpan body { ready with machine } =
+      .error error { ready with machine })
+    (classified : onError error { ready with machine }) :
+    Triple (StepWP.OutcomeStep.step (hooks := ExecutionMachine.stepHooks config limits)
+      (allowed := fun _ _ => True)) (· = before) post onError := by
+  apply stepOfSelected config limits before frame loc block post onError current pc selected slot prepared
+  have evaluated := CallWP.evalNoArgsItem (calls config limits) () func dest ready ready ready ready ready ready ready
+    ready operand externAbi definition genericArgs fnInstance itemDef abi false read signature kind resolved
+    item computed location
+  simp only [CanonicalStepWP.selectedTerminatorPre, opcode, CallWP.callPre,
+    RvalueWP.actionPre_ok indexed, RvalueWP.actionPre_ok active, RvalueWP.actionPre_ok place,
+    RvalueWP.actionPre_ok evaluated, budget, ite_self]
+  rw [CallDispatchWP.canonicalDispatchPre_succ]
+  have issued :
+      ((ExecutionMachine.withValidation (ExecutionMachine.withValidation config limits) limits).lifecycle
+        |>.freshLocalsIdentity ready.machine) = (machine, identity) := fresh
+  have rejected :
+      ((ExecutionMachine.withValidation (ExecutionMachine.withValidation config limits) limits).lifecycle
+        |>.preambleSpan body { ready with machine }) = .error error { ready with machine } := spanRejected
+  simp only [CallDispatchWP.dispatchStepPre, Option.any_some, ite_self, RvalueWP.actionPre_ok item,
+    RvalueWP.actionPre_ok found, CallDispatchWP.untuplePre, ordinary, Bool.false_and,
+    Bool.false_eq_true, ↓reduceIte, CallWP.initStackFramePre,
+    RvalueWP.actionPre_ok requires, bne_self_eq_false, RvalueWP.actionPre_ok calleeAbi, compatible,
+    Bool.not_true, RvalueWP.actionPre_ok features, RvalueWP.actionPre_ok source,
+    CallLifecycleWP.actionPre_pushRaw, CallLifecycleWP.pushRawPre, nonempty, Bool.and_false, issued]
+  simpa only [RvalueWP.actionPre, rejected] using classified
 
 /-- The ordinary by-value arm checks ABI compatibility, allocates the local
 if needed, and copies the argument to the resolved destination. -/
@@ -388,6 +458,7 @@ theorem variadicCopyRestoresRetagMode (config : Config) (limits : ExecutionMachi
 #print axioms callDispatchExhaustion
 #print axioms tailCallRootFailure
 #print axioms callDirectItem
+#print axioms nestedCanonicalPushError
 #print axioms passArgumentCopy
 #print axioms passArgumentAbiMismatch
 

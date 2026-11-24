@@ -1182,17 +1182,23 @@ vector-clock backend.
   child lists. [Range rules](Miri/Verification/TreeRangeAccess.lean) express
   access success in terms of tag resolution, range preparation and independent
   checks on the initial segments, including the wildcard case. The segment
-  checks account for permissions, other roots and cache updates. With access
-  errors rejected, consecutive ranged reads and writes support postconditions
+  checks follow the ordered wildcard roots and derive access relatedness from
+  read/write exposure counters. Cache updates propagate along the parent chain
+  and retain earlier counter changes if a node is missing or a cycle is detected.
+  When the error continuation is false, consecutive ranged reads and writes
+  support postconditions
   on both diagnostic traces and the final tree. Their successful updates
   preserve commit order for overlapping ranges. The original ranged rule
   carries the partial tree and diagnostics to a caller-supplied error
   postcondition.
   [Call rules](Miri/Verification/CallWP.lean) expose argument passing, dispatch
   and tail-call cleanup. Frame initialization exposes the convention,
-  ordinary-argument and return-ABI checks and the hooks that allocate and
-  protect the frame. The generic argument fold retains the closure, variadic
-  and spread actions.
+  ordinary-argument and return-ABI checks, closure self, variadic allocations
+  and tuple-spread copies. [Lifecycle rules](Miri/Verification/CallLifecycleWP.lean)
+  expose frame insertion, relevance-cache updates and local publication.
+  [Dispatch rules](Miri/Verification/CallDispatchWP.lean) expose retries,
+  foreign-call scope entry and exit, and intrinsic dispatch. Compiler queries
+  and externally supplied shim implementations still contribute their own effects.
   [Branch rules](Miri/Verification/BranchControlWP.lean) expose switch
   comparisons and the Boolean decoding check in assertions.
   [Aggregate rules](Miri/Verification/AggregateWP.lean) expose

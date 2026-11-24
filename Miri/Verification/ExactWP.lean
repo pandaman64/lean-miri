@@ -1,4 +1,6 @@
 import Miri.Verification.AggregateWP
+import Miri.Verification.CallDispatchWP
+import Miri.Verification.CallLifecycleWP
 import Miri.Verification.CanonicalStepWP
 import Miri.Verification.MemoryWP
 import Miri.Verification.ScalarMemoryWP

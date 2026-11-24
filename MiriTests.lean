@@ -43,6 +43,9 @@ import MiriTests.Scheduling.Stateful
 import MiriTests.Step.Driver
 import MiriTests.Verification.StepWP
 import MiriTests.Verification.CallReturnWP
+import MiriTests.TreeBorrows.NormalCacheWP
+import MiriTests.Verification.CallLifecycleWP
+import MiriTests.Verification.CallDispatchWP
 import MiriTests.Verification.InstructionWP
 import MiriTests.Verification.BranchControlWP
 import MiriTests.Verification.MemoryWP

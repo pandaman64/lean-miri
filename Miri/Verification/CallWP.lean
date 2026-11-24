@@ -304,9 +304,9 @@ private theorem collectVarargsPre_eq (args : Array (FnArg P)) (callerAbis : Arra
     simp only [collectVarargsPre, List.forIn_cons, atPre_eq_actionPre, actionPre_bind_fun,
       actionPre_pure_fun, ih]
 
+set_option autoImplicit false in
 /-- Pullback of a call hook's retag scope. Abstract hooks may use the action
 directly. Canonical hooks can use the body pullback and expose both restorations. -/
-set_option autoImplicit false in
 structure RetagPullback (hooks : Hooks) (choice : C) where
   pull {A : Type} (mode : RetagMode) (action : CallM S A)
     (body : (A → S → Prop) → Errors → S → Prop) :
