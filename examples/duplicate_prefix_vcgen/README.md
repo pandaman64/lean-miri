@@ -168,13 +168,15 @@ out="$PWD/scratch/duplicate-prefix-vcgen"
 archive="$PWD/scratch/duplicate-prefix-nested-zero"
 python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
   --output "$archive" --target RootZeroCompletePrefix \
-  --target ActiveStackRelease --target ArchiveCatalogRoot --target ArchiveTraceToVC
+  --target ActiveStackRelease --target ArchiveCatalogRoot --target ArchiveTraceToVC \
+  --target RootRejectedPrefix
 export LEAN_PATH="$out:$archive:$PWD/.lake/build/lib/lean"
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/ReturnPreOfEffects.olean" examples/duplicate_prefix_vcgen/ReturnPreOfEffects.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/RootZeroShallowReturn.olean" examples/duplicate_prefix_vcgen/RootZeroShallowReturn.lean
 lean -j1 examples/duplicate_prefix_vcgen/VerifyZeroGenerated.lean
+lean -j1 examples/duplicate_prefix_vcgen/RootRejectedAfterLen.lean
 ```
 
 `--target RootLenPrefix` checks the root's nonzero-count path from basic
@@ -184,6 +186,9 @@ and machine state.
 `--target RootRejectedPrefix` checks the too-large-count path after the
 length call, including the division guard, comparison, false result, and
 selection of `Return`, for any surrounding frames under its stated premises.
+[RootRejectedAfterLen.lean](RootRejectedAfterLen.lean) continues through
+the active protector release and writes `false` to the caller's local
+Boolean destination.
 
 The optional `RetagFrozenChild` target checks actual child insertion and
 the resulting range and permission frame under its concrete fresh-tag premises.

@@ -18,26 +18,26 @@ local notation "MachineState" => MachineHooks.MachineState MiriMemoryKind Machin
 local notation "Frame" => CompilerFrameContext.ActualFrame
 
 abbrev boolLayout := RootCompilerFacts.boolLayout
-abbrev trueOp : OpTy Provenance := ⟨.immediate (.scalar (.fromBool true)), boolLayout⟩
+abbrev boolOp (value : Bool) : OpTy Provenance := ⟨.immediate (.scalar (.fromBool value)), boolLayout⟩
 
-def putBool (frame : Frame) (index : Miri.MIR.LocalId) (valid : index < frame.locals.size) : Frame :=
+def putBool (frame : Frame) (index : Miri.MIR.LocalId) (valid : index < frame.locals.size) (value : Bool) : Frame :=
   {frame with locals := (frame.locals.set index
-    ⟨.live (.immediate (.scalar (.fromBool true))), frame.locals[index].layout⟩ valid)}
+    ⟨.live (.immediate (.scalar (.fromBool value))), frame.locals[index].layout⟩ valid)}
 
 theorem copyReturn (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
     (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
     (debugOff : options.place.debugAssertions = false) (fuel : Nat) (fuelEq : options.limits.validation = fuel + 1)
-    (older : Array Frame) (caller : Frame) (machine : MachineState)
+    (value : Bool) (older : Array Frame) (caller : Frame) (machine : MachineState)
     (index : Miri.MIR.LocalId) (valid : index < caller.locals.size)
     (old : Immediate Provenance) (live : caller.locals[index].value = .live (.immediate old))
     (cached : caller.locals[index].layout = some boolLayout)
     (noClocks : caller.extra.dataRace = none)
     (ghost : machine.user.payload.ghost = false) (shallow : machine.user.payload.validation = .Shallow) :
     let config := PreparedContracts.actualConfig options () (remaining + 1) span
-    (ExecutionMachine.terminatorHooks config limits).copyReturn () trueOp
+    (ExecutionMachine.terminatorHooks config limits).copyReturn () (boolOp value)
       (.frameLocal older.size index none boolLayout caller.localsIdentity)
       (Storage.withCurrent older caller machine) =
-      (Storage.withCurrent older (putBool caller index valid) machine, .ok ()) := by
+      (Storage.withCurrent older (putBool caller index valid value) machine, .ok ()) := by
   let config := PreparedContracts.actualConfig options () (remaining + 1) span
   let checked := ExecutionMachine.withValidation config limits
   let place := (ExecutionMachine.projectionHooks checked).place
@@ -55,45 +55,45 @@ theorem copyReturn (options : EvalConfigurationCore.Options) (limits : Execution
   have same : checked.copy.compatible boolLayout boolLayout = .ok true := by
     rw [compatible, ScalarCopyStage.same_type_copy]
   have changeTransmute (state : State) :
-      copyRuntimePlaceNoValidate place checked.copy () trueOp dest true state =
-      copyRuntimePlaceNoValidate place checked.copy () trueOp dest false state := by
+      copyRuntimePlaceNoValidate place checked.copy () (boolOp value) dest true state =
+      copyRuntimePlaceNoValidate place checked.copy () (boolOp value) dest false state := by
     unfold copyRuntimePlaceNoValidate
     unfold_internal ".Interpreter.placeLift"
-    simp only [trueOp, dest, LocalPlaces.localRuntimePlace, same, bind, Bind.bind, EStateM.bind, pure, Pure.pure,
+    simp only [boolOp, dest, LocalPlaces.localRuntimePlace, same, bind, Bind.bind, EStateM.bind, pure, Pure.pure,
       EStateM.pure, Bool.not_true, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
-  have transmute : copyRuntimePlace place checked.copy () trueOp dest true =
-      copyRuntimePlace place checked.copy () trueOp dest false := by
+  have transmute : copyRuntimePlace place checked.copy () (boolOp value) dest true =
+      copyRuntimePlace place checked.copy () (boolOp value) dest false := by
     unfold copyRuntimePlace
     exact congrArg (fun action => action >>= _) (funext changeTransmute)
   have traced := ScalarCopyStage.copy_immediate place checked.copy checked.access PreparedReflection.actual.compiler ()
-    boolLayout (.scalar (.fromBool true)) dest rfl _ repr RootGenericBoolWrite.bool_sized compatible padding
+    boolLayout (.scalar (.fromBool value)) dest rfl _ repr RootGenericBoolWrite.bool_sized compatible padding
     rfl (CanonicalConfigFacts.actual_retain_touched options () (remaining + 1) span)
   have wrote := RootGenericBoolWrite.write_bool_shallow options limits remaining span debugOff fuel fuelEq
-    older caller machine index old true valid live cached noClocks ghost shallow
-  change MachineHooks.run (copyRuntimePlace place checked.copy () trueOp dest true) before = _
+    older caller machine index old value valid live cached noClocks ghost shallow
+  change MachineHooks.run (copyRuntimePlace place checked.copy () (boolOp value) dest true) before = _
   rw [transmute, traced]
   change MachineHooks.run
-    ((ExecutionMachine.rvalueHooks config limits).writeImmediate () (.scalar (.fromBool true)) dest) before = _
+    ((ExecutionMachine.rvalueHooks config limits).writeImmediate () (.scalar (.fromBool value)) dest) before = _
   unfold MachineHooks.run Call.run
   rw [wrote]
   rfl
 
 theorem readReturn (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
     (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
-    (older : Array Frame) (callee : Frame) (machine : MachineState)
+    (value : Bool) (older : Array Frame) (callee : Frame) (machine : MachineState)
     (bound : 0 < callee.locals.size)
-    (live : callee.locals[0].value = .live (.immediate (.scalar (.fromBool true))))
+    (live : callee.locals[0].value = .live (.immediate (.scalar (.fromBool value))))
     (cached : callee.locals[0].layout = some boolLayout) (noClocks : callee.extra.dataRace = none)
     (ghost : machine.user.payload.ghost = false) :
     let config := PreparedContracts.actualConfig options () (remaining + 1) span
     (ExecutionMachine.terminatorHooks config limits).returnOperand () (Storage.withCurrent older callee machine) =
-      (Storage.withCurrent older callee machine, .ok trueOp) := by
+      (Storage.withCurrent older callee machine, .ok (boolOp value)) := by
   let config := PreparedContracts.actualConfig options () (remaining + 1) span
   let checked := ExecutionMachine.withValidation config limits
   let before := Storage.withCurrent older callee machine
   have fields := CanonicalConfigFacts.actual_fields options () (remaining + 1) span
   have slot : callee.getLocal 0 = .ok callee.locals[0] := by simp [Frame.getLocal, bound] <;> rfl
-  have operand : callee.getLocalOperand 0 = .ok (.immediate (.scalar (.fromBool true))) := by
+  have operand : callee.getLocalOperand 0 = .ok (.immediate (.scalar (.fromBool value))) := by
     simp [Frame.getLocalOperand, slot, live, bind, Bind.bind, Except.bind, pure, Pure.pure,
       Except.pure, LocalState.access, Except.mapError]
   change MachineHooks.run (config.projection.place.localToOp () 0) before = _
@@ -156,11 +156,11 @@ private theorem returnBytecode :
 theorem stepReturnToCaller (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
     (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
     (debugOff : options.place.debugAssertions = false) (fuel : Nat) (fuelEq : options.limits.validation = fuel + 1)
-    (older : Array Frame) (caller callee : Frame) (machine : MachineState)
+    (value : Bool) (older : Array Frame) (caller callee : Frame) (machine : MachineState)
     (ready : ActiveCaller older caller callee machine)
     (body : callee.body = RootBody.reflected.body.body) (position : callee.location = .mir ⟨10, 0⟩)
     (bound : 0 < callee.locals.size)
-    (live : callee.locals[0].value = .live (.immediate (.scalar (.fromBool true))))
+    (live : callee.locals[0].value = .live (.immediate (.scalar (.fromBool value))))
     (cached : callee.locals[0].layout = some boolLayout) (clocks : callee.extra.dataRace = none)
     (immediate : ZeroImmediateFacts.AllImmediate callee)
     (ghost : machine.user.payload.ghost = false) (shallow : machine.user.payload.validation = .Shallow)
@@ -170,7 +170,7 @@ theorem stepReturnToCaller (options : EvalConfigurationCore.Options) (limits : E
     let config := PreparedContracts.actualConfig options () (remaining+1) span
     ∃ poppedMachine : MachineState,
       ExecutionMachine.step config limits () (Storage.withCurrent (older.push caller) callee machine) =
-        (Storage.withCurrent older {putBool caller ready.destinationIndex ready.destinationBound with
+        (Storage.withCurrent older {putBool caller ready.destinationIndex ready.destinationBound value with
           location := .mir ⟨ready.target, 0⟩} poppedMachine, .ok true) := by
   let config := PreparedContracts.actualConfig options () (remaining + 1) span
   let checked := ExecutionMachine.withValidation config limits
@@ -199,7 +199,7 @@ theorem stepReturnToCaller (options : EvalConfigurationCore.Options) (limits : E
       finish callee (Storage.withCurrent older caller popped) :=
     released finish failure
   let after := Storage.withCurrent older
-    {putBool caller ready.destinationIndex ready.destinationBound with location := .mir ⟨ready.target, 0⟩} popped
+    {putBool caller ready.destinationIndex ready.destinationBound value with location := .mir ⟨ready.target, 0⟩} popped
   refine ⟨popped, ?_⟩
   let post : Bool → State → Prop := fun more state => more = true ∧ state = after
   let failed : StepError → State → Prop := fun _ _ => False
@@ -212,22 +212,22 @@ theorem stepReturnToCaller (options : EvalConfigurationCore.Options) (limits : E
     rfl
   have driver := ZeroTail.returnDriverPre config limits () (older.push caller) callee machine block.terminator
     selected opcode lens fixed gc unchecked post failed
-  have read := readReturn options limits remaining span (older.push caller) callee ticked bound live cached clocks postGhost
-  have copied := copyReturn options limits remaining span debugOff fuel fuelEq older caller popped
+  have read := readReturn options limits remaining span value (older.push caller) callee ticked bound live cached clocks postGhost
+  have copied := copyReturn options limits remaining span debugOff fuel fuelEq value older caller popped
     ready.destinationIndex ready.destinationBound ready.destinationSlot ready.destinationLive ready.destinationCached
     ready.callerClocks (sameUser.symm ▸ postGhost) (sameUser.symm ▸ postShallow)
   obtain ⟨unwind, afterPop⟩ := fields.lifecycleAfterPop
   have cleaned := ZeroBoolean.cleanupImmediate checked.lifecycle unwind () callee ready.target ready.unwind
     ready.continuation ready.varargs
     (fun slot member => immediate slot (by simpa using member)) afterPop
-    (Storage.withCurrent older (putBool caller ready.destinationIndex ready.destinationBound) popped)
-  have copied' : (ExecutionMachine.terminatorHooks config limits).copyReturn () trueOp callee.returnPlace
+    (Storage.withCurrent older (putBool caller ready.destinationIndex ready.destinationBound value) popped)
+  have copied' : (ExecutionMachine.terminatorHooks config limits).copyReturn () (boolOp value) callee.returnPlace
         (Storage.withCurrent older caller popped) =
-      (Storage.withCurrent older (putBool caller ready.destinationIndex ready.destinationBound) popped, .ok ()) := by
+      (Storage.withCurrent older (putBool caller ready.destinationIndex ready.destinationBound value) popped, .ok ()) := by
     rw [ready.destination]
     exact copied
   have contract := ZeroBoolean.returnPreOfEffects config limits () older caller callee
-    (putBool caller ready.destinationIndex ready.destinationBound) ticked popped trueOp block ⟨10, 0⟩ position
+    (putBool caller ready.destinationIndex ready.destinationBound value) ticked popped (boolOp value) block ⟨10, 0⟩ position
     found clean ready.target ready.unwind ready.continuation read copied' cleaned released' (post true) failed
   have ok : CanonicalStepWP.returnPre config limits () false (post true) failed before :=
     contract.mpr ⟨rfl, rfl⟩
@@ -321,7 +321,7 @@ theorem executesZeroReturn (options : EvalConfigurationCore.Options) (limits : E
       ((RootZeroCompleteState.tick_shallow options remaining span machine).trans entry.shallow)
   have flagsFirst := RootZeroCompleteState.tick_flags options remaining span machine
   have flagsSecond := RootZeroCompleteState.tick_flags options remaining span first
-  obtain ⟨popped, last⟩ := stepReturnToCaller options limits remaining span debugOff fuel fuelEq
+  obtain ⟨popped, last⟩ := stepReturnToCaller options limits remaining span debugOff fuel fuelEq true
     older caller result second finalReady (body.trans entry.body) location bound (congrArg (·.value) localSlot)
     (congrArg (·.layout) localSlot) (congrArg (·.dataRace) extra |>.trans entry.noClocks) immediate
     ghost shallow entry.fixed (flagsSecond.2.trans (flagsFirst.2.trans gc))
