@@ -205,6 +205,7 @@ theorem reborrow_exclusive_region_with_footprint [DecidableEq K] (hooks : TypedR
       RetagReleaseFootprint.VacantRows tree ∧
       after.stack = (withStrongProtector logged location tag frame frameLedger borrow).stack ∧
       after.machine.user = logged.machine.user ∧ after.machine.dataRace = logged.machine.dataRace ∧
+      after.machine.threads = logged.machine.threads ∧
       (∀ point : UInt64, location.baseOffset.bytes.toNat ≤ point.toNat →
         point.toNat < (location.baseOffset.bytes + size.bytes).toNat →
         ∀ row, ValueAt tree.locations point row →
@@ -279,7 +280,7 @@ theorem reborrow_exclusive_region_with_footprint [DecidableEq K] (hooks : TypedR
       strong_insert_repeat borrow.global.protectedTags tag
     simpa only [childProtections, Bool.true_eq, ↓reduceIte, same] using next
   refine ⟨after, child.tree, index, actual, selectedLive, rfl, ?_, capacity, childCoherent,
-    childRoots, key, ⟨node, stored, tagged, unexposed⟩, scope, emptyRows, rfl, rfl, rfl, byteGrant, ?_⟩
+    childRoots, key, ⟨node, stored, tagged, unexposed⟩, scope, emptyRows, rfl, rfl, rfl, rfl, byteGrant, ?_⟩
   · simp [after, raced, registered, withTree, withStrongProtector, GlobalState.addProtector, Stack.currentFrame?]
   · intro storage sameId sameOffset sameEntry
     apply region_from_cached_reborrow logged after size.bytes storage child.tree tag index (registeredTracker borrow tag)
@@ -354,7 +355,7 @@ theorem reborrow_exclusive_region [DecidableEq K] (hooks : TypedRetag.Hooks K U)
           next.entry = {storage.entry with allocation := storage.entry.allocation.setExtra tree} ∧
           Nonempty (ExclusiveRegion after size.bytes next tag)) := by
   obtain ⟨after, tree, child, executed, cached, borrowAfter, frameAfter, sizeAfter, forest,
-      sameRoot, found, ⟨node, stored, tagged, _⟩, _, _, _, _, _, rights, region⟩ :=
+      sameRoot, found, ⟨node, stored, tagged, _⟩, _, _, _, _, _, _, rights, region⟩ :=
     reborrow_exclusive_region_with_footprint hooks budget place size tag parentTag location before pointed resolved logged
       frame frameLedger borrow entry parent root parentNode check resolve log parentProvenance current ledger
       tracked live mutable imprecise freeze nonempty ensure raceOff coherent parentStored roots parentFound

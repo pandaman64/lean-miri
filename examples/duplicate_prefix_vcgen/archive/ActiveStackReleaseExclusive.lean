@@ -61,7 +61,7 @@ theorem region_owned (before : State) (length : UInt64)
 /-- The actual one-entry call ledger releases the selected child, keeps its
 raw-byte grants in keyed memory, removes the protector, and returns to the
 original caller stack. -/
-theorem popExclusive (kind : K) (hooks : GlobalHooks) (retag : TypedRetag.Hooks K U)
+theorem popExclusive_with_frame (kind : K) (hooks : GlobalHooks) (retag : TypedRetag.Hooks K U)
     (ensure : retag.ensureTreeExtra = GlobalAllocationMachine.ensure kind hooks)
     (older : Array BorrowFrame) (frame : BorrowFrame) (machine : MachineHooks.MachineState K U)
     (length : UInt64) (storage : InitializedRegion (⟨⟨older.push frame⟩, machine⟩ : State) length)
@@ -80,8 +80,10 @@ theorem popExclusive (kind : K) (hooks : GlobalHooks) (retag : TypedRetag.Hooks 
     (cached : FrameRelevance.top ⟨older.push frame⟩ thread.topUserRelevantFrame = some relevance) :
     ∃ after : State, after.stack.frames = older ∧ after.machine.user = machine.user ∧
       after.machine.dataRace = machine.dataRace ∧
+      after.machine.threads.fixedScheduling = machine.threads.fixedScheduling ∧
+      (∃ thread, after.machine.threads.activeThread? = some thread) ∧
       (∃ next : InitializedRegion after length, next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
-        Nonempty (ExclusiveRegion after length next tag)) ∧
+        ∃ rights : ExclusiveRegion after length next tag, rights.tracker.retagMode = region.tracker.retagMode) ∧
       ∀ post failure, ProtectorReleaseWP.popRawPre retag post failure ⟨⟨older.push frame⟩, machine⟩ ↔ post frame after := by
   let before : State := ⟨⟨older.push frame⟩, machine⟩
   let old := storage.entry.allocation.extra
@@ -93,9 +95,23 @@ theorem popExclusive (kind : K) (hooks : GlobalHooks) (retag : TypedRetag.Hooks 
   let released := releasedMachine before storage.entry storage.id tree region.tracker owned
   let tracker : MachineHooks.BorrowState := {region.tracker with global := region.tracker.global.endCall owned}
   let after : State := ⟨⟨older⟩, afterRelevance older frame released relevance⟩
-  refine ⟨after, rfl, ?_, ?_, ?_, ?_⟩
+  refine ⟨after, rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · by_cases top : relevance = older.size <;> simp [top, after, afterRelevance, released, releasedMachine, before]
   · by_cases top : relevance = older.size <;> simp [top, after, afterRelevance, released, releasedMachine, before]
+  · by_cases top : relevance = older.size <;> simp [top, after, afterRelevance, released, releasedMachine, before]
+  · by_cases top : relevance = older.size
+    · have ready : released.threads.threads[released.threads.activeThread.toNat]? = some thread := current
+      let updated := fun position (record : ThreadRecord) =>
+        if position == released.threads.activeThread.toNat then
+          {record with topUserRelevantFrame := FrameRelevance.computeTop ⟨older.push frame⟩ 1}
+        else record
+      refine ⟨updated released.threads.activeThread.toNat thread, ?_⟩
+      simp only [after, afterRelevance, top, ↓reduceIte]
+      change (released.threads.threads.mapIdx updated)[released.threads.activeThread.toNat]? = _
+      rw [List.getElem?_mapIdx, ready]
+      rfl
+    · have ready : released.threads.activeThread? = some thread := current
+      exact ⟨thread, by simpa only [after, afterRelevance, ite_eq_right top] using ready⟩
   · have stored : after.machine.memory.live[storage.id]? =
         some {storage.entry with allocation := storage.entry.allocation.setExtra tree} := by
       by_cases top : relevance = older.size <;> simp [top, after, afterRelevance, released, releasedMachine, before]
@@ -127,7 +143,9 @@ theorem popExclusive (kind : K) (hooks : GlobalHooks) (retag : TypedRetag.Hooks 
     obtain ⟨next, idEq, offsetEq, _, exclusive⟩ :=
       ExclusiveTypedRetag.region_from_cached_reborrow before after length storage tree tag region.source tracker
         stored tracked coherent known present extent owns
-    exact ⟨next, idEq, offsetEq, exclusive⟩
+    obtain ⟨rights⟩ := exclusive
+    have sameTracker : rights.tracker = tracker := Option.some.inj (rights.tracked.symm.trans tracked)
+    exact ⟨next, idEq, offsetEq, rights, by rw [sameTracker]⟩
   · have currentFrame : before.stack.currentFrame? = some frame := by simp [before, Stack.currentFrame?]
     have stackRelease : ∀ post failure, ProtectorReleaseWP.beforeStackPopPre retag.ensureTreeExtra post failure before ↔
         post {before with machine := released} := by
@@ -138,6 +156,34 @@ theorem popExclusive (kind : K) (hooks : GlobalHooks) (retag : TypedRetag.Hooks 
     have stillCurrent : released.threads.activeThread? = some thread := current
     intro post failure
     exact popOfRelease retag older frame machine released stackRelease thread relevance stillCurrent cached post failure
+
+/-- Release the active child and return to the caller with its raw rights. -/
+theorem popExclusive (kind : K) (hooks : GlobalHooks) (retag : TypedRetag.Hooks K U)
+    (ensure : retag.ensureTreeExtra = GlobalAllocationMachine.ensure kind hooks)
+    (older : Array BorrowFrame) (frame : BorrowFrame) (machine : MachineHooks.MachineState K U)
+    (length : UInt64) (storage : InitializedRegion (⟨⟨older.push frame⟩, machine⟩ : State) length)
+    (tag : BorTag) (region : ExclusiveRegion (⟨⟨older.push frame⟩, machine⟩ : State) length storage tag)
+    (synchronize : hooks.synchronizeMemory machine.memory ⟨machine, none⟩ = ⟨machine, none⟩)
+    (owned : FrameState) (ledger : frame.extra.borrowTracker = some owned)
+    (one : owned.protectedTags = #[(storage.id, tag)])
+    (root : UniIndex) (roots : storage.entry.allocation.extra.roots = #[root])
+    (node : TreeNode) (nodeFound : storage.entry.allocation.extra.nodeAt region.source = some node)
+    (unexposed : node.isExposed = false)
+    (active : Every (ActiveByteRights storage.entry.allocation.extra region.tracker.global.protectedTags
+      region.source) storage.entry.allocation.extra.locations)
+    (fits : storage.relativeStart.bytes.toNat + length.toNat ≤ storage.entry.allocation.extra.locations.size.bytes.toNat)
+    (thread : ThreadRecord) (relevance : Nat)
+    (current : machine.threads.activeThread? = some thread)
+    (cached : FrameRelevance.top ⟨older.push frame⟩ thread.topUserRelevantFrame = some relevance) :
+    ∃ after : State, after.stack.frames = older ∧ after.machine.user = machine.user ∧
+      after.machine.dataRace = machine.dataRace ∧
+      (∃ next : InitializedRegion after length, next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
+        Nonempty (ExclusiveRegion after length next tag)) ∧
+      ∀ post failure, ProtectorReleaseWP.popRawPre retag post failure ⟨⟨older.push frame⟩, machine⟩ ↔ post frame after := by
+  obtain ⟨after, stack, user, race, _, _, ⟨next, id, offset, rights, _⟩, exactPop⟩ :=
+    popExclusive_with_frame kind hooks retag ensure older frame machine length storage tag region
+      synchronize owned ledger one root roots node nodeFound unexposed active fits thread relevance current cached
+  exact ⟨after, stack, user, race, ⟨next, id, offset, ⟨rights⟩⟩, exactPop⟩
 
 #print axioms popExclusive
 
