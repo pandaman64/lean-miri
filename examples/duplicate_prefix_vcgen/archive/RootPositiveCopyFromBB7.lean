@@ -100,7 +100,7 @@ theorem completes
       (∀ unrelated, unrelated ≠ storage.id → finalMachine.memory.live[unrelated]? = machine.memory.live[unrelated]?) ∧
       finalMachine.memory.live[storage.id]? = some ⟨storage.entry.kind,allocation⟩ ∧
       allocation.byteSize = storage.entry.allocation.byteSize ∧ allocation.len = storage.entry.allocation.len ∧
-      allocation.extra = writeAccess.tree ∧
+      allocation.extra = writeAccess.tree ∧ CopyProvenanceBounds.AllocationBacking allocation ∧
       AllocationCopy.snapshot allocation =
         (AllocationCopy.snapshot storage.entry.allocation).extract 0 (offset+count).toNat ++
         (AllocationCopy.snapshot storage.entry.allocation).extract offset.toNat (offset+count).toNat ++
@@ -173,7 +173,7 @@ theorem completes
     CopyOwnershipTransport.storageAfter storage memEq
   let trusted : ExclusiveRegion (Storage.withCurrent frames prepared firstMachine) length owned tag :=
     CopyOwnershipTransport.rightsAfter rights memEq trackedEq
-  obtain ⟨allocation,finalMachine,bTrack,dr,addr,g,v,be,ex,fix,arithmetic,gc,threadAfter,untouched,copyTrace,entry,sized,len,tree,snapshot⟩ :=
+  obtain ⟨allocation,finalMachine,bTrack,dr,addr,g,v,be,ex,fix,arithmetic,gc,threadAfter,untouched,copyTrace,entry,sized,len,tree,allocationBacking,snapshot⟩ :=
     CopyRootPositiveRoundtripExact.complete options limits remaining span frames prepared firstMachine length count base tag owned trusted
       copyInput statementFuel mode (UInt64.lt_iff_toNat_lt.mpr positive) disjoint maskLen maskValid initialized provenance storageFits
       root roots rangeCapacity bounded (by rw [addrEq];exact address) (by rw [profile.extras];exact extras)
@@ -198,7 +198,7 @@ theorem completes
     (fun i h => (same i (by omega)).trans (kept i h)),copiedDirect,
     bTrack.trans trackedEq,dr.trans (profile.race.trans noRace),addr.trans addrEq,g.trans ghost1,v.trans shallow1,
     be.trans (profile.backend.trans backend),ex.trans profile.extras,fix.trans profile.fixed,arithmetic,gc,threadAfter,
-    distinct,entry,sized,len,tree,snapshot⟩
+    distinct,entry,sized,len,tree,allocationBacking,snapshot⟩
 
 end DuplicatePrefix.RootPositiveCopyFromBB7
 

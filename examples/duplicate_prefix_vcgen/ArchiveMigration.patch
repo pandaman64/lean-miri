@@ -8297,3 +8297,126 @@
 +++ b/examples/duplicate_prefix/MetadataCalleeLeaves.lean
 @@ -0,0 +1 @@
 +import duplicate_prefix.ProjectionMetadataFacts
+--- a/examples/duplicate_prefix/CompleteAllocationCopy.lean
++++ b/examples/duplicate_prefix/CompleteAllocationCopy.lean
+@@ -2,0 +3 @@
++import duplicate_prefix.CopyProvenanceBounds
+@@ -30,0 +32 @@
++      CopyProvenanceBounds.PointerBounds result.len result.provenanceMap ∧
+@@ -91,0 +94,4 @@
++  have pointerBounds := CopyProvenanceBounds.interval allocation.provenanceMap clearedMap updatedMap
++    (Size.ofBytes offset) n (snapshot allocation) (by simpa only [snapshotLen] using valid)
++    (by simpa only [snapshotLen] using storageFits) (by simpa only [snapshotLen, Size.ofBytes, storage] using bounded)
++    snapshotMap preparedMap cleared applied
+@@ -143 +149 @@
+-  refine ⟨_, rfl, rfl, ?_, rfl, rfl, rfl, finalValid, ?_, ?_⟩
++  refine ⟨_, rfl, rfl, ?_, rfl, rfl, rfl, finalValid, ?_, ?_, ?_⟩
+@@ -145,0 +152,9 @@
++  · change CopyProvenanceBounds.PointerBounds
++      (raw.extract 0 (offset+n).toNat ++ raw.extract offset.toNat (offset+n).toNat ++
++        raw.extract (offset+n+n).toNat raw.size).size updatedMap
++    have byteCount :
++        (raw.extract 0 (offset+n).toNat ++ raw.extract offset.toNat (offset+n).toNat ++
++          raw.extract (offset+n+n).toNat raw.size).size = size.bytes.toNat := by
++      simpa only [UInt64.toNat_add offset n] using updatedLength
++    rw [byteCount]
++    simpa only [snapshotLen, storage] using pointerBounds
+@@ -195,0 +211 @@
++      CopyProvenanceBounds.PointerBounds result.len result.provenanceMap ∧
+--- a/examples/duplicate_prefix/CanonicalCopy.lean
++++ b/examples/duplicate_prefix/CanonicalCopy.lean
+@@ -552 +552 @@
+-theorem canonical_interval_initialized_success {Os R P H D O Aff B Host : Type}
++theorem canonical_interval_initialized_success_with_backing {Os R P H D O Aff B Host : Type}
+@@ -597,0 +598 @@
++      CopyProvenanceBounds.AllocationBacking result ∧
+@@ -633 +634 @@
+-      nativeResult, finalMaskValid, finalMaskLen, bytesResult⟩ :=
++      nativeResult, finalMaskValid, finalMaskLen, pointerBounds, bytesResult⟩ :=
+@@ -636 +637 @@
+-  refine ⟨result, ?_, ?_, ?_, ?_, ?_⟩
++  refine ⟨result, ?_, ?_, ?_, ?_, ?_, ?_⟩
+@@ -729,0 +731 @@
++  · exact ⟨mutableResult.trans writeMutable, finalMaskValid, finalMaskLen.trans sizeResult.symm, pointerBounds⟩
+@@ -731,0 +734,55 @@
++
++theorem canonical_interval_initialized_success {Os R P H D O Aff B Host : Type}
++    (context : Context Os R P H D O Aff B Host)
++    (state : MachineHooks.State MiriMemoryKind (User Os R P H D O Aff B Host))
++    (tracker : MachineHooks.BorrowState) (id : AllocId) (tag : BorTag)
++    (base offset n : UInt64) (kind : MemoryKind MiriMemoryKind)
++    (allocation : Allocation Provenance BorrowTree)
++    (width : context.pointers.arithmetic = ⟨Size.ofBytes 8⟩)
++    (positive : 0 < n)
++    (bounded : offset.toNat + n.toNat + n.toNat ≤ allocation.byteSize.bytes.toNat)
++    (storage : allocation.len = allocation.byteSize.bytes.toNat)
++    (maskValid : InitMaskCopy.WellFormed allocation.initializationMask)
++    (maskLen : allocation.initializationMask.len = allocation.byteSize)
++    (initialized : InitMaskCopy.InitializedOn allocation.initializationMask
++      (Size.ofBytes offset) (Size.ofBytes (offset + n)))
++    (valid : ProvenanceCopy.WellFormed allocation.provenanceMap allocation.len)
++    (storageFits : allocation.len + 64 < 18446744073709551616)
++    (mutable : allocation.mutability = .Mut)
++    (noClocks : state.machine.dataRace = none)
++    (noBackend : state.machine.user.payload.payload.user.backend = .none)
++    (tracked : state.machine.borrowTracker = some tracker)
++    (extras : (context.extras.get state.machine.user).allocations.find? (fun row => row.1 == id) =
++      some (id, { weakMemory := none, backtrace := AllocationBacktrace.get ((context.extras.get state.machine.user).allocations) (id) }))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
++    (cached : state.machine.user.addresses.baseAddr.find? (fun row => row.allocId == id) =
++      some ⟨id, base⟩)
++    (readValid : (allocation.extra.performBorrowAccessRange (.concrete tag)
++      (Size.ofBytes offset) (Size.ofBytes n) .Read tracker.global.protectedTags .VisitChildrenOfAccessed).status = .Completed)
++    (writeValid : ((allocation.extra.performBorrowAccessRange (.concrete tag)
++      (Size.ofBytes offset) (Size.ofBytes n) .Read tracker.global.protectedTags .VisitChildrenOfAccessed).tree.performBorrowAccessRange
++        (.concrete tag) (Size.ofBytes (offset + n)) (Size.ofBytes n) .Write tracker.global.protectedTags
++        .VisitChildrenOfAccessed).status = .Completed) :
++    let readAccess := allocation.extra.performBorrowAccessRange (.concrete tag)
++      (Size.ofBytes offset) (Size.ofBytes n) .Read tracker.global.protectedTags .VisitChildrenOfAccessed
++    let readAlloc := allocation.setExtra readAccess.tree
++    let readState := replaceAllocation state id kind readAlloc
++    let writeAccess := readAccess.tree.performBorrowAccessRange (.concrete tag)
++      (Size.ofBytes (offset + n)) (Size.ofBytes n) .Write tracker.global.protectedTags .VisitChildrenOfAccessed
++    let writeAlloc := readAlloc.setExtra writeAccess.tree
++    let writeState := replaceAllocation readState id kind writeAlloc
++    ∃ result,
++      GlobalMemoryCopyMachine.genericCopy context.access PointerMachine.User.addresses
++        context.pointers.arithmetic (Pointer.new (some (.concrete id tag)) (Size.ofBytes (base + offset)))
++        (Pointer.new (some (.concrete id tag)) (Size.ofBytes (base + (offset + n)))) (Size.ofBytes n) 1 true state =
++        .ok () (replaceAllocation writeState id kind result) ∧
++      result.byteSize = allocation.byteSize ∧ result.len = allocation.len ∧
++      result.extra = writeAccess.tree ∧
++      AllocationCopy.snapshot result = (AllocationCopy.snapshot allocation).extract 0 (offset + n).toNat ++
++        (AllocationCopy.snapshot allocation).extract offset.toNat (offset + n).toNat ++
++        (AllocationCopy.snapshot allocation).extract (offset + n + n).toNat allocation.len := by
++  obtain ⟨result, copied, size, bytes, extra, _, snapshot⟩ :=
++    canonical_interval_initialized_success_with_backing context state tracker id tag base offset n kind allocation
++      width positive bounded storage maskValid maskLen initialized valid storageFits mutable noClocks noBackend
++      tracked extras live cached readValid writeValid
++  exact ⟨result,copied,size,bytes,extra,snapshot⟩
+--- a/examples/duplicate_prefix/GenericCopyMemoryCore.lean
++++ b/examples/duplicate_prefix/GenericCopyMemoryCore.lean
+@@ -56,0 +57 @@
++      CopyProvenanceBounds.AllocationBacking result ∧
+@@ -60 +61 @@
+-  exact CanonicalCopy.canonical_interval_initialized_success context state tracker id tag base offset n kind allocation
++  exact CanonicalCopy.canonical_interval_initialized_success_with_backing context state tracker id tag base offset n kind allocation
+--- a/examples/duplicate_prefix/GeneralBorrowScopedCopyHelperMemory.lean
++++ b/examples/duplicate_prefix/GeneralBorrowScopedCopyHelperMemory.lean
+@@ -73,0 +74 @@
++      CopyProvenanceBounds.AllocationBacking result ∧
+@@ -88,2 +89,2 @@
+-  obtain ⟨result, copied, sizeEq, lenEq, treeEq, bytesEq⟩ := copy
+-  refine ⟨result, ?_,sizeEq,lenEq,treeEq,bytesEq⟩
++  obtain ⟨result, copied, sizeEq, lenEq, treeEq, storageReady, bytesEq⟩ := copy
++  refine ⟨result, ?_,sizeEq,lenEq,treeEq,storageReady,bytesEq⟩
+--- a/examples/duplicate_prefix/GeneralBorrowScopedCopyHelperBody.lean
++++ b/examples/duplicate_prefix/GeneralBorrowScopedCopyHelperBody.lean
+@@ -93,0 +94 @@
++      CopyProvenanceBounds.AllocationBacking result ∧
+@@ -115 +116 @@
+-  obtain ⟨result,memoryStep,resultSize,resultLen,resultTree,resultBytes⟩ :=
++  obtain ⟨result,memoryStep,resultSize,resultLen,resultTree,resultBacking,resultBytes⟩ :=
+@@ -165 +166 @@
+-    localsIdDone.trans localsId8,sizeDone,locationDone,zeroDone.trans returnReady,allDone,resultSize,resultLen,resultTree,resultBytes⟩
++    localsIdDone.trans localsId8,sizeDone,locationDone,zeroDone.trans returnReady,allDone,resultSize,resultLen,resultTree,resultBacking,resultBytes⟩

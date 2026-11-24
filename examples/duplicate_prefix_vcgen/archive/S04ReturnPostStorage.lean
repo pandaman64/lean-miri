@@ -32,7 +32,8 @@ theorem store {Extra : Type} (allocation : Allocation Provenance Extra)
     (mutable : allocation.mutability = .Mut)
     (maskValid : InitMaskCopy.WellFormed allocation.initializationMask)
     (maskLength : allocation.initializationMask.len = Size.ofBytes capacity)
-    (provenanceValid : ProvenanceCopy.WellFormed allocation.provenanceMap allocation.len)
+    (provenanceValid : ∀ entry ∈ allocation.provenanceMap.ptrs,
+      entry.1.bytes.toNat+8 ≤ allocation.len)
     (bounds : offset.toNat + 1 ≤ capacity.toNat) :
     ∃ updated, Allocation.writeScalar layout (allocRange (Size.ofBytes offset) (Size.ofBytes 1))
       (Scalar.fromBool value) allocation = .ok () updated ∧
@@ -63,7 +64,7 @@ theorem store {Extra : Type} (allocation : Allocation Provenance Extra)
     oldMask offset maskValid (by omega) (by simpa [maskLength,Size.ofBytes] using bounds)
   obtain ⟨provenance, provenanceOk⟩ := ProvenanceCopy.clear_exists oldProvenance
     range finish raw endpoint
-    (by simpa [Allocation.len] using ProvenanceCopy.WellFormed.pointerBounds provenanceValid)
+    (by simpa [Allocation.len] using provenanceValid)
     (by omega)
   have ordered : offset ≤ offset + 1 := UInt64.le_iff_toNat_le.mpr (by omega)
   have bounded : offset + 1 ≤ capacity := UInt64.le_iff_toNat_le.mpr (by omega)
@@ -132,7 +133,7 @@ theorem store {Extra : Type} (allocation : Allocation Provenance Extra)
   · intro entry member
     change entry ∈ provenance.ptrs at member
     have old := S04ReturnProvenanceClear.clear_pointer_subset oldProvenance provenance range finish raw endpoint provenanceOk entry member
-    have allowed := ProvenanceCopy.WellFormed.pointerBounds provenanceValid entry old
+    have allowed := provenanceValid entry old
     change entry.1.bytes.toNat + 8 ≤
       (raw.extract 0 offset.toNat ++ #[if value then 1 else 0] ++ raw.extract (offset.toNat + 1) raw.size).size
     rw [bytesSize]
@@ -167,7 +168,8 @@ theorem store_and_read {Extra : Type} (allocation : Allocation Provenance Extra)
     (mutable : allocation.mutability = .Mut)
     (maskValid : InitMaskCopy.WellFormed allocation.initializationMask)
     (maskLength : allocation.initializationMask.len = Size.ofBytes capacity)
-    (provenanceValid : ProvenanceCopy.WellFormed allocation.provenanceMap allocation.len)
+    (provenanceValid : ∀ entry ∈ allocation.provenanceMap.ptrs,
+      entry.1.bytes.toNat+8 ≤ allocation.len)
     (bounds : offset.toNat + 1 ≤ capacity.toNat) :
     ∃ updated, Allocation.writeScalar layout (allocRange (Size.ofBytes offset) (Size.ofBytes 1))
       (Scalar.fromBool value) allocation = .ok () updated ∧

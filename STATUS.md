@@ -1196,8 +1196,12 @@ vector-clock backend.
   covers integer-address, unresolved wildcard, and concretely backed empty
   inputs, including backed empty forests with multiple roots. A backed
   empty source may share the physical Boolean output allocation, which
-  retains the stated one-root condition. Resolving wildcard frames
-  remain open.
+  retains the stated one-root condition. A nonempty concrete slice may
+  share a root physical Boolean return allocation when the output byte is
+  outside the slice and the declared grants, protector ancestry, accessed
+  ranges, and backing conditions hold. The same-allocation witness covers
+  every count with a stored inactive slice tag at the return byte.
+  Resolving wildcard frames remain open.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

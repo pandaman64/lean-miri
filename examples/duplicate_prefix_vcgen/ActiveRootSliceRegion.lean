@@ -1,0 +1,180 @@
+import RootLengthOfActiveSlice
+import duplicate_prefix.ExclusiveTypedRetag
+import duplicate_prefix.AccessedCopyHolderRights
+
+namespace DuplicatePrefix.RootZeroShallowReturn
+open Miri Miri.ABI Miri.DataStructures Miri.Input Miri.Interpreter Miri.Memory Miri.TreeBorrows Miri.MIR
+open CanonicalConfigFacts PreparedArguments SourceDomain ArchiveForestProjection GeneralRangeMapOrigins MutableSliceRights
+
+/-- Rebuild the initialized source and exclusive loan from the precise heap
+returned by the length prefix. Physical byte and initialization fields come
+from the original allocation witness. -/
+theorem RootLengthOfActiveSlice.sourceRegion
+    {config : RootConfig} {frames : Array CompilerFrameContext.ActualFrame}
+    {initialFrame frame : CompilerFrameContext.ActualFrame}
+    {initial final : LenExitFacts.MachineState} {root : RetainedSlice initial}
+    {allocation : LocalAllocation Provenance BorrowTree MiriMemoryKind} {offset len count : UInt64}
+    {tracker : MachineHooks.BorrowState}
+    (post : RootLengthOfActiveSlice config frames initialFrame frame initial final root allocation offset len count tracker)
+    (before : InitializedRegion (Storage.withCurrent frames initialFrame initial) len)
+    (sameId : before.id = root.id) (sameAllocation : before.entry = allocation)
+    (sameStart : before.relativeStart.bytes = offset)
+    (originalExtent : offset.toNat + len.toNat ≤ allocation.allocation.extra.locations.size.bytes.toNat)
+ :
+    ∃ next : InitializedRegion (Storage.withCurrent frames frame final) len,
+      next.id = before.id ∧ next.relativeStart = before.relativeStart ∧ next.entry = post.branch.ready.entry ∧
+      ∃ loan : ExclusiveRegion (Storage.withCurrent frames frame final) len next post.branch.ready.tag,
+        loan.source = post.branch.ready.source ∧ loan.tracker = post.branch.ready.tracker := by
+  let after := Storage.withCurrent frames frame final
+  let tree := post.branch.ready.entry.allocation.extra
+  let borrowing := post.branch.ready.tracker
+  have live : after.machine.memory.live[before.id]? =
+      some {before.entry with allocation := before.entry.allocation.setExtra tree} := by
+    change final.memory.live[before.id]? = _
+    rw [sameAllocation, sameId, ← post.branch.id]
+    exact post.branch.ready.present.trans (congrArg some post.branch.allocationData)
+  have preservedSize : before.relativeStart.bytes.toNat + len.toNat ≤ tree.locations.size.bytes.toNat := by
+    change before.relativeStart.bytes.toNat + len.toNat ≤
+      post.branch.ready.entry.allocation.extra.locations.size.bytes.toNat
+    rw [sameStart, post.branch.rangeCapacity]
+    exact originalExtent
+  have keys := post.keys
+  have tag := ready_tag_at tree keys post.branch.ready.source post.branch.ready.tag post.branch.ready.node
+    post.branch.ready.indexed post.branch.ready.found
+  have perByte (point : UInt64) (lower : offset.toNat ≤ point.toNat) (upper : point.toNat < (offset+len).toNat)
+      (row : Miri.TreeBorrows.LocationTree) (located : ValueAt tree.locations point row) :
+      LocationRights tree row borrowing.global.protectedTags post.branch.ready.source := by
+    obtain ⟨position, valid, starts, stops, exact⟩ := located
+    have starts' : post.branch.ready.entry.allocation.extra.locations.entries[position].range.start.toNat ≤ point.toNat := starts
+    have stops' : point.toNat < post.branch.ready.entry.allocation.extra.locations.entries[position].range.stop.toNat := stops
+    have owned := post.branch.writable position valid (by omega) (by omega) (by omega)
+    have sameRow : post.branch.ready.entry.allocation.extra.locations.entries[position].data = row := exact
+    rwa [sameRow] at owned
+  obtain ⟨next, newId, newStart, nextEntry, ⟨loan⟩⟩ :=
+    ExclusiveTypedRetag.region_from_cached_reborrow _ after len before tree post.branch.ready.tag
+      post.branch.ready.source borrowing live post.branch.ready.tracked post.branch.coherence
+      post.branch.ready.indexed ⟨post.branch.ready.node, post.branch.ready.found, tag⟩ preservedSize
+      (fun point lower upper row located => by
+        rw [sameStart] at lower upper
+        intro index node present
+        obtain ⟨current, value, write, foreign⟩ := perByte point lower upper row located index node present
+        exact ⟨current, value, fun path => (localOwns_iff _ _).mp (write path),
+          fun away => (foreignCompatible_iff _ _).mp (foreign away)⟩)
+  have entryEq : next.entry = post.branch.ready.entry := by
+    rw [nextEntry, sameAllocation, post.branch.allocationData]
+  refine ⟨next, newId, newStart, entryEq, loan, ?_, ?_⟩
+  · have recorded := loan.tagKnown
+    rw [entryEq] at recorded
+    exact Option.some.inj (recorded.symm.trans post.branch.ready.indexed)
+  · exact Option.some.inj (loan.tracked.symm.trans post.branch.ready.tracked)
+
+theorem RootLengthOfActiveSlice.footprint
+    {config : RootConfig} {frames : Array CompilerFrameContext.ActualFrame}
+    {initialFrame frame : CompilerFrameContext.ActualFrame}
+    {initial final : LenExitFacts.MachineState} {root : RetainedSlice initial}
+    {allocation : LocalAllocation Provenance BorrowTree MiriMemoryKind} {offset len count : UInt64}
+    {tracker : MachineHooks.BorrowState}
+    (post : RootLengthOfActiveSlice config frames initialFrame frame initial final root allocation offset len count tracker) :
+    AccessedCopyHolderRights.Footprint post.branch.ready.entry.allocation.extra post.branch.ready.tracker.global.protectedTags
+      post.branch.ready.source post.branch.ready.source offset (offset+len) :=
+  ⟨post.branch.writable, post.branch.writable, post.branch.activeScope, post.branch.vacant⟩
+
+theorem RootLengthOfActiveSlice.insertionCapacity
+    {config : RootConfig} {frames : Array CompilerFrameContext.ActualFrame}
+    {initialFrame frame : CompilerFrameContext.ActualFrame}
+    {initial final : LenExitFacts.MachineState} {root : RetainedSlice initial}
+    {allocation : LocalAllocation Provenance BorrowTree MiriMemoryKind} {offset len count : UInt64}
+    {tracker : MachineHooks.BorrowState}
+    (post : RootLengthOfActiveSlice config frames initialFrame frame initial final root allocation offset len count tracker)
+ :
+    CurrentTwoPhaseStructural.InsertionCapacity post.branch.ready.entry.allocation.extra post.branch.ready.source
+      post.branch.ready.root post.branch.ready.tracker.global.nextPointerTag := by
+  refine RetagInsertionCapacity.derive _ _ _ _ post.branch.coherence post.branch.ready.roots
+    post.branch.ready.node post.branch.ready.found (post.keys) ?_
+  intro index node found collision
+  have age := post.tagAge index node found
+  rw [collision] at age
+  exact (Nat.lt_irrefl _) age
+
+#print axioms RootLengthOfActiveSlice.sourceRegion
+#print axioms RootLengthOfActiveSlice.footprint
+/-- Use the actual retained allocation and a literal relative range when
+constructing the next instruction's source operands. -/
+def RootLengthOfActiveSlice.storageAtOffset
+    {config : RootConfig} {frames : Array CompilerFrameContext.ActualFrame}
+    {initialFrame frame : CompilerFrameContext.ActualFrame} {initial final : LenExitFacts.MachineState}
+    {root : RetainedSlice initial} {allocation : LocalAllocation Provenance BorrowTree MiriMemoryKind}
+    {offset len count : UInt64} {tracker : MachineHooks.BorrowState}
+    (post : RootLengthOfActiveSlice config frames initialFrame frame initial final root allocation offset len count tracker)
+    (before : InitializedRegion (Storage.withCurrent frames initialFrame initial) len)
+    (sameId : before.id = root.id) (sameAllocation : before.entry = allocation)
+    (sameStart : before.relativeStart.bytes = offset) :
+    InitializedRegion (Storage.withCurrent frames frame final) len := by
+  have oldStart : Size.ofBytes offset = before.relativeStart := by
+    cases h : before.relativeStart
+    have e := sameStart
+    rw [h] at e
+    cases e
+    rfl
+  refine ⟨before.id,Size.ofBytes offset,post.branch.ready.entry,?_,?_,?_,?_,?_⟩
+  · change final.memory.live[before.id]? = some post.branch.ready.entry
+    rw [sameId,← post.branch.id]
+    exact post.branch.ready.present
+  · rw [post.branch.allocationData]
+    change allocation.allocation.mutability = .Mut
+    rw [← sameAllocation]
+    exact before.writable
+  · rw [post.branch.allocationData]
+    change allocation.allocation.len = allocation.allocation.byteSize.bytes.toNat
+    rw [← sameAllocation]
+    exact before.backed
+  · rw [post.branch.allocationData]
+    change (Size.ofBytes offset).bytes.toNat + len.toNat ≤ allocation.allocation.byteSize.bytes.toNat
+    rw [← sameAllocation,oldStart]
+    exact before.fits
+  · rw [post.branch.allocationData]
+    change len ≠ 0 → allocation.allocation.initializationMask.isRangeInitialized
+      (allocRange (Size.ofBytes offset) (Size.ofBytes len)) = .ok (.ok ())
+    rw [← sameAllocation,oldStart]
+    exact before.initialized
+
+theorem RootLengthOfActiveSlice.loanAtOffset
+    {config : RootConfig} {frames : Array CompilerFrameContext.ActualFrame}
+    {initialFrame frame : CompilerFrameContext.ActualFrame} {initial final : LenExitFacts.MachineState}
+    {root : RetainedSlice initial} {allocation : LocalAllocation Provenance BorrowTree MiriMemoryKind}
+    {offset len count : UInt64} {tracker : MachineHooks.BorrowState}
+    (post : RootLengthOfActiveSlice config frames initialFrame frame initial final root allocation offset len count tracker)
+    (before : InitializedRegion (Storage.withCurrent frames initialFrame initial) len)
+    (sameId : before.id = root.id) (sameAllocation : before.entry = allocation)
+    (sameStart : before.relativeStart.bytes = offset)
+    (originalExtent : offset.toNat + len.toNat ≤ allocation.allocation.extra.locations.size.bytes.toNat) :
+    ∃ loan : ExclusiveRegion (Storage.withCurrent frames frame final) len
+      (post.storageAtOffset before sameId sameAllocation sameStart) post.branch.ready.tag,
+      loan.source = post.branch.ready.source ∧ loan.tracker = post.branch.ready.tracker := by
+  obtain ⟨region, key, offsetEq, entryEq, loan, sameSource, sameTracker⟩ :=
+    post.sourceRegion before sameId sameAllocation sameStart originalExtent
+  have sizeEq : region.relativeStart = Size.ofBytes offset := by
+    cases h : region.relativeStart
+    have eq := (congrArg Size.bytes offsetEq).trans sameStart
+    rw [h] at eq
+    cases eq
+    rfl
+  generalize lifted : post.storageAtOffset before sameId sameAllocation sameStart = fixed
+  have fixedId : fixed.id = before.id := by rw [← lifted]; rfl
+  have fixedStart : fixed.relativeStart = Size.ofBytes offset := by rw [← lifted]; rfl
+  have fixedEntry : fixed.entry = post.branch.ready.entry := by rw [← lifted]; rfl
+  have eq : region = fixed := by
+    have key := key.trans fixedId.symm
+    have start := sizeEq.trans fixedStart.symm
+    have heap := entryEq.trans fixedEntry.symm
+    cases region
+    cases fixed
+    dsimp only at key start heap
+    cases key
+    cases start
+    cases heap
+    rfl
+  subst region
+  exact ⟨loan,sameSource,sameTracker⟩
+
+end DuplicatePrefix.RootZeroShallowReturn

@@ -99,6 +99,8 @@ structure SharedChildFrame (original read after : BorrowTree) (parent child : Un
     after.nodes.size = original.nodes.size + 1
   recycled : original.tagMapping.deassigned.back? = some child →
     child.toNat < original.nodes.size → after.nodes.size = original.nodes.size
+  byteFrame : FramedWith (fun state => state.permission = .Frozen ∧ state.accessed = true)
+    read.locations child after
 
 
 private theorem under_read (original read : BorrowTree) (source index : UniIndex)
@@ -418,7 +420,7 @@ theorem concrete_shared_readable_reborrow_with_frame
       have values := Option.some.inj same
       exact ⟨previous, rfl, (congrArg Prod.fst values).symm, congrArg (fun v => v.2.2) values⟩
   have footprint : SharedChildFrame tree read.tree result.tree parent child tag offset length inside := by
-    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, frameWith⟩
     · intro index data distinct found
       obtain ⟨previous, existsBefore, tag, permission⟩ := oldNodes index data distinct found
       exact ⟨previous, by

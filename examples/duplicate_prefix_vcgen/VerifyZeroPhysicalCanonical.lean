@@ -179,7 +179,7 @@ theorem zeroCountPhysical
     mutable
     maskValid := mask
     maskLength
-    provenance }
+    provenance := ProvenanceCopy.WellFormed.pointerBounds provenance }
   have newKey : window.entry.allocation.extra.indexOfTag window.tag = some source := by
     change afterTree.indexOfTag tag = some source
     rw [treeFrame]

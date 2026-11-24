@@ -86,6 +86,7 @@ theorem exclusive_copy_step
           (CanonicalCopy.replaceAllocation writeState storage.id storage.entry.kind result).machine,.ok true) ∧
       result.byteSize = allocation.byteSize ∧ result.len = allocation.len ∧
       result.extra = writeAccess.tree ∧
+      CopyProvenanceBounds.AllocationBacking result ∧
       AllocationCopy.snapshot result = (AllocationCopy.snapshot allocation).extract 0 (offset+n).toNat ++
         (AllocationCopy.snapshot allocation).extract offset.toNat (offset+n).toNat ++
         (AllocationCopy.snapshot allocation).extract (offset+n+n).toNat allocation.len := by

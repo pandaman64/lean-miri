@@ -107,6 +107,7 @@ theorem from_bb7
           {PointerAddCurrentReturn.writeFrame caller callerId .uninit callerValid with location := .mir ⟨target,0⟩} finalMachine) ∧
       finalMachine.memory.live[id]? = some ⟨kind,result⟩ ∧
       result.byteSize = allocation.byteSize ∧ result.len = allocation.len ∧ result.extra = writeAccess.tree ∧
+      CopyProvenanceBounds.AllocationBacking result ∧
       AllocationCopy.snapshot result = (AllocationCopy.snapshot allocation).extract 0 (offset+n).toNat ++
         (AllocationCopy.snapshot allocation).extract offset.toNat (offset+n).toNat ++
         (AllocationCopy.snapshot allocation).extract (offset+n+n).toNat allocation.len := by
@@ -121,7 +122,7 @@ theorem from_bb7
   have returnSlot : frame.locals[0]? = some ⟨.live (.immediate .uninit),none⟩ :=
     Array.getElem?_eq_some_iff.mpr ⟨oldValid0,oldNode⟩
   obtain ⟨result,done,bodyTrace,bodyDone,identityDone,calleeDone,extraDone,returnDone,continuationDone,varargsDone,localsIdDone,
-    sizeDone,locationDone,zeroDone,allDone,resultSize,resultLen,resultTree,resultBytes⟩ :=
+    sizeDone,locationDone,zeroDone,allDone,resultSize,resultLen,resultTree,resultBacking,resultBytes⟩ :=
     GeneralBorrowScopedCopyHelperBody.to_return options limits remaining span debugOff fuel validationFuel
       (frames.push caller) frame machine sourceBody identity callee location size returnSlot tracker id tag base offset sliceLen n kind allocation
       positive sliceBounds copyBounds storage maskValid maskLen initialized valid storageFits mutable noClocks noBackend tracked extras live cached
@@ -151,7 +152,7 @@ theorem from_bb7
   let finalMachine := GenericPopFrame.afterRelevanceAt (frames.push caller) done
     (ActualPopPlan.released (PointerAddCurrentReturn.accountedMachine options remaining span copied) copied.memory tracker borrowFrame)
     (thread.topUserRelevantFrame.getD (frames.push caller).size)
-  refine ⟨result,done,finalMachine,rfl,?_,?_,resultSize,resultLen,resultTree,resultBytes⟩
+  refine ⟨result,done,finalMachine,rfl,?_,?_,resultSize,resultLen,resultTree,resultBacking,resultBytes⟩
   · exact SuccessfulTrace.append bodyTrace (.next returned (.refl _))
   · have memoryEq : finalMachine.memory = copied.memory := by
       unfold finalMachine GenericPopFrame.afterRelevanceAt

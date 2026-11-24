@@ -120,6 +120,19 @@ supply individual cases of the all-count argument.
 
 ### Safety for both prepared return destinations
 
+[VerifyCanonicalPreparedReturn.lean](VerifyCanonicalPreparedReturn.lean)
+proves `DuplicatePrefix.CanonicalCallDomain.safetyForPreparedReturn` for
+every `UInt64` count. In addition to the prepared calls below, it covers a
+nonempty initialized slice whose allocation also contains the physical
+Boolean return byte. The byte may lie on either side of the slice, with
+the byte and slice ranges allowed to meet at an endpoint. The shared
+allocation case requires concrete provenance for both pointers, a root
+physical return, the declared write grants and protector ranges, and a
+return protector outside the source holder's ancestry. The release checks
+use the accessed rows of each protector. They allow a tag to remain stored
+outside its range with `accessed = false`, including the disabled slice tag
+that stock preparation leaves at the return byte.
+
 [VerifyCanonicalBackedSafety.lean](VerifyCanonicalBackedSafety.lean) proves
 `DuplicatePrefix.CanonicalCallDomain.safetyForPreparedCallWithBackedEmpty`.
 It discharges the exact generated safety condition for every `UInt64` count
@@ -153,9 +166,17 @@ mkdir -p "$out"
 tools/body-vc safety examples/duplicate_prefix_vcgen/duplicate_prefix.rs \
   --output "$out/Representative.lean" --no-check
 python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
-  --generated "$out/Representative.lean" --client VerifyCanonicalBackedSafety \
+  --generated "$out/Representative.lean" --client VerifyCanonicalPreparedReturn \
+  --client SameAllocationPhysicalWitness \
   --output "$PWD/scratch/duplicate-prefix-all-count"
 ```
+
+[SameAllocationPhysicalWitness.lean](SameAllocationPhysicalWitness.lean)
+constructs a three-byte allocation with a two-byte slice and a return byte
+immediately after it. `existsSafePreparedCall` proves that this layout meets
+the prepared-call contract and the emitted safety condition for every
+count. The checked tree has a stored disabled slice tag at the return byte
+with `accessed = false` and an idempotent foreign `Write`.
 
 [PreparedCallWitness.lean](PreparedCallWitness.lean) constructs a two-byte
 prepared slice with count one and a cached Boolean return. Lean checks the

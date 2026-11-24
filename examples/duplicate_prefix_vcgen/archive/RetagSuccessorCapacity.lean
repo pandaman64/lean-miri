@@ -1,22 +1,79 @@
 import duplicate_prefix.FrozenReborrowInputs
 import duplicate_prefix.RetagCapacityFrame
+import duplicate_prefix.ExclusiveCopyRanges
 
 namespace DuplicatePrefix.RetagSuccessorCapacity
 open Miri Miri.ABI Miri.DataStructures Miri.Memory Miri.TreeBorrows Miri.TreeBorrows.Tree
 open Miri.Verification.MutableRetagFootprint Miri.Verification.MutableTypedRetag
 open ArchiveForestProjection FrozenReborrowInputs SourceDomain RetagInsertionCapacity
-open GeneralRangeMapOrigins RetagReleaseFootprint RetagFrozenChild
+open GeneralRangeMapOrigins RetagReleaseFootprint RetagFrozenChild Miri.Verification.RangeModifyLaw
+open GeneralBorrowExposure GeneralRangeMapState
 set_option maxRecDepth 65536
 set_option maxHeartbeats 3000000
 set_option backward.isDefEq.respectTransparency false
 
+/-- Clean vacant slots are stable through the actual associated read. -/
+theorem readKeepsVacant (tree : BorrowTree) (tag : BorTag)
+    (source root : UniIndex) (tags : ProtectedTags) (offset length : Size)
+    (found : tree.indexOfTag tag = some source) (coherent : CoherentForest tree)
+    (roots : tree.roots = #[root]) (node : TreeNode) (present : tree.nodeAt source = some node)
+    (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
+    (owners : OwnedOn (fun row => LocationRights tree row tags source)
+      offset.bytes (offset.bytes+length.bytes) tree.locations)
+    (vacant : VacantRows tree) :
+    let read := tree.performNormalAccessRange tag offset length .Read tags .VisitChildrenOfAccessed
+    read.tree = {tree with locations := read.tree.locations} ∧ CoherentForest read.tree ∧
+      read.tree.locations.size = tree.locations.size ∧ VacantRows read.tree := by
+  intro read
+  obtain ⟨rank, bounded, decreases⟩ := coherent.parentDepth
+  let depth : ParentDepth tree.nodes := ⟨rank,bounded,by
+    intro i data present parent edge
+    obtain ⟨up, held⟩ := coherent.parentPresent i data parent present edge
+    exact ⟨up,held,decreases i data parent present edge⟩⟩
+  let property (_ : UInt64) (row : LocationTree) :=
+    ∀ i, tree.nodeAt i = none → row.perms.get i = none
+  have initial : EachByte tree.locations property := by
+    intro point i valid lo hi key empty
+    exact vacant key empty i valid
+  have children : GeneralBorrowGraph.ChildNodes tree := by
+    intro i data present child member
+    obtain ⟨off, foundChild, _⟩ := (coherent.childEdges i data present).2.1 child (by simpa using member)
+    exact ⟨off,foundChild⟩
+  have keeps (segment : RangeMapSegment LocationTree) (point : UInt64)
+      (_ : offset.bytes.toNat ≤ point.toNat) (_ : point.toNat < (offset.bytes+length.bytes).toNat)
+      (_ : segment.range.start ≤ point) (_ : point < segment.range.stop)
+      (previous : property point segment.data) :
+      property point (tree.performTreeAccessAt segment.data (some source) .Read tags
+        .VisitChildrenOfAccessed segment.range).location := by
+    intro i empty
+    rw [single_root_location tree segment.data tags source root .Read segment.range coherent node present roots]
+    exact GeneralBorrowRangePreserves.normal_no_stale tree segment.data tags source i .Read .VisitChildrenOfAccessed
+      depth children node present empty (previous i empty)
+  obtain ⟨_, _, well, size, same, output⟩ := preserve_range_property_with_byte_frame
+    tree tag source tags .Read .VisitChildrenOfAccessed offset length offset.bytes (offset.bytes+length.bytes)
+    (fun _ => True) found coherent.ranges bounds (fun _ _ _ _ _ => trivial)
+    (fun _ _ _ _ _ _ => trivial) property initial keeps
+    (bounded_slots tree tags source root .Read offset length coherent node present roots bounds owners)
+  change read.tree = {tree with locations := read.tree.locations} at same
+  refine ⟨same,?_,size,?_⟩
+  · rw [same]
+    exact {coherent with ranges := well}
+  · intro i empty pos valid
+    have prior : tree.nodeAt i = none := (congrArg (fun t : BorrowTree => t.nodeAt i) same).symm.trans empty
+    have proper := well
+    have nonempty : read.tree.locations.entries.size ≠ 0 := by omega
+    change read.tree.locations.WellFormed at proper
+    simp only [DedupRangeMap.WellFormed, nonempty, ↓reduceDIte] at proper
+    exact output read.tree.locations.entries[pos].range.start pos valid (UInt64.le_refl _)
+      (proper.2.1 pos valid) i prior
+
 /-- The real associated read and child attach preserve sufficient insertion
 resources for the next fresh tag. Existing keys are tied to occupied node tags
 and the fresh allocator generation must strictly increase. -/
-theorem next
+theorem nextWithData
     (tree : BorrowTree) (tags : ProtectedTags) (parentTag newTag following : BorTag)
     (parent root : UniIndex) (offset length : Size) (inside : DedupRangeMap LocationState) (held : Bool)
-    (stage : Stage tree tags parentTag newTag parent root offset length inside held)
+    (stage : StageData tree tags parentTag newTag parent root offset length inside held)
     (ready : Ready tree) (space : tree.nodes.size + 1 < 2^32)
     (ages : ∀ i data, tree.nodeAt i = some data → data.tag.value.toNat < newTag.value.toNat)
     (successor : newTag.value.toNat < following.value.toNat)
@@ -36,12 +93,9 @@ theorem next
   have capacity := RetagInsertionCapacity.derive tree parent root newTag stage.coherent stage.roots parentNode
     present ready currentFresh
   obtain ⟨graph,rank⟩ := capacity.ranked
-  let original : CopyHolderRights.Footprint tree tags parent parent offset.bytes (offset.bytes+length.bytes) :=
-    ⟨stage.owners,stage.owners,stage.scope,stage.vacant⟩
-  obtain ⟨readDone, readShape, readCoherent, readSize, readFootprint⟩ :=
-    CopyHolderRights.accessRange_retains_holder tree tags parentTag parent parent root .Read offset length
-      offset.bytes (offset.bytes+length.bytes) stage.coherent parentNode present stage.roots stage.parentFound (.self parent)
-      (fun _ _ _ same away => False.elim (away same)) stage.bounds (Nat.le_refl _) (Nat.le_refl _) original
+  obtain ⟨readShape, readCoherent, readSize, readClean⟩ :=
+    readKeepsVacant tree parentTag parent root tags offset length stage.parentFound stage.coherent
+      stage.roots parentNode present stage.bounds stage.owners stage.vacant
   change read.tree = {tree with locations := read.tree.locations} at readShape
   change read.tree.locations.size = tree.locations.size at readSize
   have nodes := congrArg BorrowTree.nodes readShape
@@ -61,7 +115,7 @@ theorem next
     have strict := readFollowing i data stored
     rw [equal] at strict
     exact Nat.lt_irrefl _ strict
-  have readReady := RetagCapacityFrame.afterRangeUpdate tree read.tree ready table nodes readFootprint.vacant
+  have readReady := RetagCapacityFrame.afterRangeUpdate tree read.tree ready table nodes readClean
   have readCapacity := RetagInsertionCapacity.derive read.tree parent root newTag readCoherent
     (by rw [readShape]; exact stage.roots) parentNode readPresent readReady readFresh
   obtain ⟨readGraph,readRank⟩ := readCapacity.ranked
@@ -109,6 +163,22 @@ theorem next
   rw [equal] at distinct
   exact Nat.lt_irrefl _ distinct
 
+theorem next
+    (tree : BorrowTree) (tags : ProtectedTags) (parentTag newTag following : BorTag)
+    (parent root : UniIndex) (offset length : Size) (inside : DedupRangeMap LocationState) (held : Bool)
+    (stage : Stage tree tags parentTag newTag parent root offset length inside held)
+    (ready : Ready tree) (space : tree.nodes.size + 1 < 2^32)
+    (ages : ∀ i data, tree.nodeAt i = some data → data.tag.value.toNat < newTag.value.toNat)
+    (successor : newTag.value.toNat < following.value.toNat)
+    (insideBounds : ∀ seg ∈ inside.iterAll.toList, seg.range.stop.toNat ≤ length.bytes.toNat) :
+    let read := tree.performNormalAccessRange parentTag offset length .Read tags .VisitChildrenOfAccessed
+    let result := read.tree.newChild offset (.concrete parentTag) newTag inside (.ReservedFrz false) held
+    Ready result.tree ∧
+    ∀ selected, result.tree.indexOfTag newTag = some selected →
+      CurrentTwoPhaseStructural.InsertionCapacity result.tree selected root following :=
+  nextWithData tree tags parentTag newTag following parent root offset length inside held
+    stage.data ready space ages successor insideBounds
+
 theorem allocated_tag_value (old after : TreeBorrows.GlobalState)
     (allocated : old.newPointerTag = .ok (after,old.nextPointerTag))
     (budget : old.nextPointerTag.value.toNat + 2 < 2 ^ 64) :
@@ -154,10 +224,10 @@ theorem successor_unprotected (global : TreeBorrows.GlobalState)
     rw [successor_tag_value _ budget] at less
     omega
 
-theorem afterReservation
+theorem afterReservationWithData
     (tree : BorrowTree) (global : TreeBorrows.GlobalState) (parentTag : BorTag)
     (parent root : UniIndex) (offset length : Size)
-    (stage : Stage tree global.protectedTags parentTag global.nextPointerTag parent root offset length
+    (stage : StageData tree global.protectedTags parentTag global.nextPointerTag parent root offset length
       (DedupRangeMap.new length ExclusiveTwoPhaseRetag.initial) false)
     (ready : Ready tree) (space : tree.nodes.size + 1 < 2^32)
     (ages : ∀ i node, tree.nodeAt i = some node → node.tag.value.toNat < global.nextPointerTag.value.toNat)
@@ -184,9 +254,25 @@ theorem afterReservation
     · simp [DedupRangeMap.new,DedupRangeMap.iterAll,beq_iff_eq,empty] at member
       subst seg
       exact Nat.le_refl _
-  exact ⟨fits,(next tree global.protectedTags parentTag global.nextPointerTag after.nextPointerTag
+  exact ⟨fits,(nextWithData tree global.protectedTags parentTag global.nextPointerTag after.nextPointerTag
     parent root offset length (DedupRangeMap.new length ExclusiveTwoPhaseRetag.initial) false
     stage ready space ages following span).2 selected key⟩
+
+theorem afterReservation
+    (tree : BorrowTree) (global : TreeBorrows.GlobalState) (parentTag : BorTag)
+    (parent root : UniIndex) (offset length : Size)
+    (stage : Stage tree global.protectedTags parentTag global.nextPointerTag parent root offset length
+      (DedupRangeMap.new length ExclusiveTwoPhaseRetag.initial) false)
+    (ready : Ready tree) (space : tree.nodes.size + 1 < 2^32)
+    (ages : ∀ i node, tree.nodeAt i = some node → node.tag.value.toNat < global.nextPointerTag.value.toNat)
+    (budget : global.nextPointerTag.value.toNat + 2 < 2 ^ 64) :
+    ∀ (after : TreeBorrows.GlobalState) (selected : UniIndex),
+      let advanced := ExclusiveTwoPhaseRetag.reservationTree tree parentTag global.nextPointerTag offset length global.protectedTags
+      global.newPointerTag = .ok (after,global.nextPointerTag) →
+      advanced.indexOfTag global.nextPointerTag = some selected →
+      after.nextPointerTag.value ≠ 18446744073709551615 ∧
+        CurrentTwoPhaseStructural.InsertionCapacity advanced selected root after.nextPointerTag :=
+  afterReservationWithData tree global parentTag parent root offset length stage.data ready space ages budget
 
 end DuplicatePrefix.RetagSuccessorCapacity
 
@@ -195,3 +281,6 @@ end DuplicatePrefix.RetagSuccessorCapacity
 #print axioms DuplicatePrefix.RetagSuccessorCapacity.afterReservation
 
 #print axioms DuplicatePrefix.RetagSuccessorCapacity.successor_unprotected
+
+#print axioms DuplicatePrefix.RetagSuccessorCapacity.nextWithData
+#print axioms DuplicatePrefix.RetagSuccessorCapacity.afterReservationWithData

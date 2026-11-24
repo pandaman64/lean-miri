@@ -68,9 +68,9 @@ theorem uniform (offset size capacity : Size) (initial : LocationState) (held : 
     subst segment
     exact ⟨⟨by simp,bounded⟩,frozen,Nat.le_refl _⟩
 
-theorem installed (tree : BorrowTree) (tags : ProtectedTags) (parentTag tag : BorTag)
+theorem installedWithData (tree : BorrowTree) (tags : ProtectedTags) (parentTag tag : BorTag)
     (parent root : UniIndex) (offset length : Size) (inside : DedupRangeMap LocationState) (held : Bool)
-    (stage : Stage tree tags parentTag tag parent root offset length inside held)
+    (stage : StageData tree tags parentTag tag parent root offset length inside held)
     (fresh : ∀ index node, tree.nodeAt index = some node → node.tag ≠ tag)
     (insideBounds : ∀ seg ∈ inside.iterAll.toList, seg.range.stop.toNat ≤ length.bytes.toNat) :
     let read := tree.performNormalAccessRange parentTag offset length .Read tags .VisitChildrenOfAccessed
@@ -100,6 +100,21 @@ theorem installed (tree : BorrowTree) (tags : ProtectedTags) (parentTag tag : Bo
   exact ⟨coherent,roots,⟨node,atNode,unexposed⟩,insideScope,rows,
     owners_of_points after (childProtections tags tag held) child offset length coherent own⟩
 
+theorem installed (tree : BorrowTree) (tags : ProtectedTags) (parentTag tag : BorTag)
+    (parent root : UniIndex) (offset length : Size) (inside : DedupRangeMap LocationState) (held : Bool)
+    (stage : Stage tree tags parentTag tag parent root offset length inside held)
+    (fresh : ∀ index node, tree.nodeAt index = some node → node.tag ≠ tag)
+    (insideBounds : ∀ seg ∈ inside.iterAll.toList, seg.range.stop.toNat ≤ length.bytes.toNat) :
+    let read := tree.performNormalAccessRange parentTag offset length .Read tags .VisitChildrenOfAccessed
+    let after := (read.tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) held).tree
+    after.locations.size = tree.locations.size ∧
+    (∃ index, after.indexOfTag tag = some index) ∧
+    ∀ index, after.indexOfTag tag = some index →
+      Installed after (childProtections tags tag held) index root offset length :=
+  installedWithData tree tags parentTag tag parent root offset length inside held stage.data fresh insideBounds
+
 end DuplicatePrefix.RetagStageImage
 
 #print axioms DuplicatePrefix.RetagStageImage.installed
+
+#print axioms DuplicatePrefix.RetagStageImage.installedWithData

@@ -106,7 +106,7 @@ theorem complete
     rw [dest]
     rfl
   have startEq : (Size.ofBytes storage.relativeStart.bytes) = storage.relativeStart := rfl
-  obtain ⟨result,_,finalMachine,_,copied,present,sized,bytes,tree,snapshot⟩ :=
+  obtain ⟨result,_,finalMachine,_,copied,present,sized,bytes,tree,_,snapshot⟩ :=
     ArchiveForestProjection.exclusive_to_caller options limits remaining span input.debug input.fuel input.validationFuel
       frames rootFrame ready copyMachine body identity callee rfl shape.size right.tracker storage.id tag
       base storage.relativeStart.bytes length n storage.entry.kind storage.entry.allocation

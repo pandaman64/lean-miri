@@ -29,7 +29,8 @@ structure Window (before : MachineHooks.MachineState MiriMemoryKind Machine.Root
   mutable : entry.allocation.mutability = .Mut
   maskValid : InitMaskCopy.WellFormed entry.allocation.initializationMask
   maskLength : entry.allocation.initializationMask.len = Size.ofBytes capacity
-  provenance : ProvenanceCopy.WellFormed entry.allocation.provenanceMap entry.allocation.len
+  provenance : ∀ pointer ∈ entry.allocation.provenanceMap.ptrs,
+    pointer.1.bytes.toNat+8 ≤ entry.allocation.len
 
 theorem on_context_of_access (context : PhysicalMachineWrite.Context)
     (state : MachineHooks.State MiriMemoryKind Machine.RootUser)

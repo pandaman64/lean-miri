@@ -116,6 +116,7 @@ theorem exclusive_to_caller
           {PointerAddCurrentReturn.writeFrame caller callerId .uninit callerValid with location := .mir ⟨target,0⟩} finalMachine) ∧
       finalMachine.memory.live[id]? = some ⟨kind,result⟩ ∧
       result.byteSize = allocation.byteSize ∧ result.len = allocation.len ∧ result.extra = writeAccess.tree ∧
+      CopyProvenanceBounds.AllocationBacking result ∧
       AllocationCopy.snapshot result = (AllocationCopy.snapshot allocation).extract 0 (offset+n).toNat ++
         (AllocationCopy.snapshot allocation).extract offset.toNat (offset+n).toNat ++
         (AllocationCopy.snapshot allocation).extract (offset+n+n).toNat allocation.len := by

@@ -45,6 +45,7 @@ structure ReadyAfterCopy
       (Size.ofBytes offset) (Size.ofBytes count) .Read rights.tracker.global.protectedTags .VisitChildrenOfAccessed
     allocation.extra = (read.tree.performBorrowAccessRange (.concrete tag)
       (Size.ofBytes (offset+count)) (Size.ofBytes count) .Write rights.tracker.global.protectedTags .VisitChildrenOfAccessed).tree
+  storageValid : CopyProvenanceBounds.AllocationBacking allocation
   copiedBytes : let offset := storage.relativeStart.bytes
     AllocationCopy.snapshot allocation =
       (AllocationCopy.snapshot storage.entry.allocation).extract 0 (offset+count).toNat ++
@@ -128,7 +129,7 @@ theorem runs_to_return
   have initialized := InitializedRegionPrefix.initialized length count storage nonempty (by omega) maskLen storageFits
   obtain ⟨result,last,allocation,trace,location9,size9,body9,identity9,callee9,extra,place,continuation,varargs,localsId,trackedCaller,
     a17,a18,a19,a21,a24,kept,direct,borrows,race,addresses,ghost9,shallow9,backend9,extras9,fixed9,arith,gc,active9,untouched,
-    present,allocationSize,allocationLen,tree,snapshot⟩ :=
+    present,allocationSize,allocationLen,tree,allocationBacking,snapshot⟩ :=
     RootPositiveCopyFromBB7.completes options limits remaining span debug fuel validation statementFuel frames frame before machine incoming
       length count base tag storage rights positive countFits disjoint address size pointerSlot temp16 live16 countSlot
       unused unused24 body identity callee location noClocks mode ghost shallow all noRace trackNone thread active top relevant
@@ -142,7 +143,7 @@ theorem runs_to_return
     _ _ _ _ _ stays0 stays15 a17 a18 a19 a21 a24 (body9.trans body) (identity9.trans identity) (callee9.trans callee) location9
     (by rw [extra]; exact noClocks) rights.tracker tracked9 mode ghost9 shallow9 arith gc fixed9 before trace post
     (finish result last allocation ⟨body9,extra,place,continuation,varargs,direct,tracked9,race,addresses,ghost9,shallow9,backend9,extras9,
-      fixed9,arith,gc,active9,untouched,present,allocationSize,allocationLen,tree,snapshot⟩)
+      fixed9,arith,gc,active9,untouched,present,allocationSize,allocationLen,tree,allocationBacking,snapshot⟩)
 
 #print axioms runs_to_return
 end DuplicatePrefix.RootPositiveRootSuffix

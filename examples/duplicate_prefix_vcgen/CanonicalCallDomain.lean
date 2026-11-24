@@ -56,11 +56,13 @@ def argumentLedger (pointer : Pointer (Option Provenance)) : Array (AllocId × B
 visit bytes and uses the single-root access proof. A dormant zero-length
 tag can be released in any coherent forest. -/
 structure ReleaseRange (tree : BorrowTree) (holder : UniIndex) (start : Size)
-    (length : UInt64) : Prop where
+    (length : UInt64) (activeOnly : Bool := false) : Prop where
   root : length ≠ 0 → ∃ onlyRoot, tree.roots = #[onlyRoot]
   extent : start.bytes.toNat + length.toNat ≤ tree.locations.size.bytes.toNat
   materialized : ∀ segment ∈ tree.locations.entries,
-    (segment.data.perms.get holder).isSome = true →
+    (if activeOnly then
+      (segment.data.perms.get holder).any (·.accessed)
+     else (segment.data.perms.get holder).isSome) = true →
       start.bytes.toNat ≤ segment.range.start.toNat ∧
       segment.range.stop.toNat ≤ start.bytes.toNat + length.toNat
   vacant : ∀ index, tree.nodeAt index = none → ∀ segment ∈ tree.locations.entries,
@@ -115,6 +117,11 @@ def ByteWriteGrant (tree : BorrowTree) (point : UInt64) (source : UniIndex)
         (Ancestor tree index source → localOwns current (protections.contains node.tag)) ∧
         (¬ Ancestor tree index source → foreignCompatible current (protections.contains node.tag))
 
+/-- The Boolean byte and the argument span may meet at an endpoint. The
+  coordinates are absolute natural-number addresses for the same allocation. -/
+def DisjointResultByte (byte start : Nat) (length : UInt64) : Prop :=
+  byte + 1 ≤ start ∨ start + length.toNat ≤ byte
+
 /-- Before execution, a physical Boolean return destination resolves to one
 in-bounds byte of live mutable storage. The byte may be uninitialized. Its
 grant is separate from the slice's grant. The call-owned return protector
@@ -122,7 +129,9 @@ has a grant with all current protections installed for its release
 traversal. The saved return pointer's tag has an independent grant with
 the protections retained after ending this frame. -/
 structure PhysicalBoolDestination (before : State) (frame : Frame)
-    (pointer : Pointer (Option Provenance)) (length : UInt64) : Prop where
+    (pointer : Pointer (Option Provenance)) (length : UInt64)
+    (allowSharedAllocation : Bool := false)
+    (boundsOnly : Bool := false) : Prop where
   storage : ∃ (place : MPlaceTy Provenance) (id : AllocId)
     (slot : LocalAllocation Provenance BorrowTree MiriMemoryKind)
     (relative : Size) (tag : BorTag) (base : UInt64)
@@ -136,7 +145,9 @@ structure PhysicalBoolDestination (before : State) (frame : Frame)
       slot.allocation.len = slot.allocation.byteSize.bytes.toNat ∧
       DuplicatePrefix.InitMaskCopy.WellFormed slot.allocation.initializationMask ∧
       slot.allocation.initializationMask.len = slot.allocation.byteSize ∧
-      DuplicatePrefix.ProvenanceCopy.WellFormed slot.allocation.provenanceMap slot.allocation.len ∧
+      (if boundsOnly then
+        ∀ entry ∈ slot.allocation.provenanceMap.ptrs, entry.1.bytes.toNat + 8 ≤ slot.allocation.len
+       else DuplicatePrefix.ProvenanceCopy.WellFormed slot.allocation.provenanceMap slot.allocation.len) ∧
       relative.bytes < slot.allocation.byteSize.bytes ∧
       place.mplace.ptr.provenance = some (.concrete id tag) ∧
       place.mplace.ptr.offset.bytes ≠ 0 ∧
@@ -153,7 +164,7 @@ structure PhysicalBoolDestination (before : State) (frame : Frame)
       slot.allocation.extra.indexOfTag returnTag = some returnIndex ∧
       (∃ node, slot.allocation.extra.nodeAt returnIndex = some node ∧ node.tag = returnTag ∧
         node.parent = some source ∧ node.isExposed = false) ∧
-      ReleaseRange slot.allocation.extra returnIndex relative 1 ∧
+      ReleaseRange slot.allocation.extra returnIndex relative 1 allowSharedAllocation ∧
       ByteWriteGrant slot.allocation.extra relative.bytes returnIndex tracker.global.protectedTags ∧
       (∃ segment ∈ slot.allocation.extra.locations.entries,
         segment.range.start ≤ relative.bytes ∧ relative.bytes < segment.range.stop ∧
@@ -164,7 +175,13 @@ structure PhysicalBoolDestination (before : State) (frame : Frame)
             (¬ Ancestor slot.allocation.extra index source →
               foreignCompatible current ((tracker.global.endCall owned).protectedTags.contains node.tag))) ∧
       (length ≠ 0 → ∀ sourceId srcTag,
-        pointer.provenance = some (.concrete sourceId srcTag) → sourceId ≠ id)
+        pointer.provenance = some (.concrete sourceId srcTag) →
+        if allowSharedAllocation then
+          sourceId ≠ id ∨
+            (DisjointResultByte (base.toNat + relative.bytes.toNat) pointer.offset.bytes.toNat length ∧
+              ∀ holder, slot.allocation.extra.indexOfTag srcTag = some holder →
+                ¬ Ancestor slot.allocation.extra returnIndex holder)
+        else sourceId ≠ id)
 
 /-- The cached Boolean slot belongs to the suspended caller at its actual
 stack index. The continuation identifies an existing basic block. -/
@@ -184,10 +201,11 @@ structure CachedBoolDestination (before : State) (frame : Frame) : Prop where
 /-- These are the two return carriers supported by this prepared-call
 profile. The root form has no suspended caller. -/
 inductive Destination (before : State) (frame : Frame)
-    (pointer : Pointer (Option Provenance)) (length : UInt64) : Prop where
+    (pointer : Pointer (Option Provenance)) (length : UInt64)
+    (allowSharedAllocation : Bool := false) : Prop where
   | physicalRoot (stack : before.stack.frames = #[frame])
       (continuation : frame.returnContinuation = .stop true)
-      (destination : PhysicalBoolDestination before frame pointer length)
+      (destination : PhysicalBoolDestination before frame pointer length allowSharedAllocation)
   | cachedCaller (destination : CachedBoolDestination before frame)
       (ledger : ∃ owned, frame.extra.borrowTracker = some owned ∧
         owned.protectedTags = argumentLedger pointer)
@@ -229,7 +247,8 @@ structure Admitted
     (program : BodyVCGen.LoadedProgram)
     (options : EvalConfigurationCore.Options) (remaining tagHeadroom : Nat)
     (span : PreparedContracts.FixedSpanQuery) (before : State)
-    (frame : Frame) (pointer : Pointer (Option Provenance)) (length count : UInt64) : Prop where
+    (frame : Frame) (pointer : Pointer (Option Provenance)) (length count : UInt64)
+    (allowSharedAllocation : Bool := false) : Prop where
   profile : Profile options remaining span before
   shape : PreparedFrameShape before frame
   stack : StackProfile before frame
@@ -247,7 +266,7 @@ structure Admitted
       (storage.id, tag) ∈ owned.protectedTags ∧
       region.tracker.global.protectedTags.get tag = some .StrongProtector ∧
       (∃ node, storage.entry.allocation.extra.nodeAt region.source = some node ∧ node.isExposed = false) ∧
-      ReleaseRange storage.entry.allocation.extra region.source storage.relativeStart length
+      ReleaseRange storage.entry.allocation.extra region.source storage.relativeStart length allowSharedAllocation
   emptyProtector : length = 0 →
     match pointer.provenance with
     | some (.concrete id tag) =>
@@ -264,21 +283,21 @@ structure Admitted
         pointer.offset.bytes.toNat = base.toNat + start.bytes.toNat ∧
         ReleaseRange entry.allocation.extra holder start 0
     | _ => True
-  destination : Destination before frame pointer length
+  destination : Destination before frame pointer length allowSharedAllocation
   argLayout : (frame.locals[1]?.bind (·.layout)) = some RootCompilerFacts.sliceLayout
   countLayout : (frame.locals[2]?.bind (·.layout)) = some RootCompilerFacts.usizeLayout
   resultSlot : frame.locals[0]? = some ⟨.live (.immediate .uninit), none⟩
   immediateLocals : ∀ slot ∈ frame.locals, ∀ memory, slot.value ≠ .live (.indirect memory)
 
-theorem Admitted.entered {program options remaining tagHeadroom span before frame pointer length count}
-    (admitted : Admitted program options remaining tagHeadroom span before frame pointer length count) :
+theorem Admitted.entered {program options remaining tagHeadroom span before frame pointer length count allowSharedAllocation}
+    (admitted : Admitted program options remaining tagHeadroom span before frame pointer length count allowSharedAllocation) :
     WholeBodyWP.entryMatchesLoaded program.root before :=
   admitted.slice.entered
 
 /-- The frame named in the domain is the same frame that supplies the
 emitted program's arguments and entry position. -/
-theorem Admitted.boundArguments {program options remaining tagHeadroom span before frame pointer length count}
-    (admitted : Admitted program options remaining tagHeadroom span before frame pointer length count) :
+theorem Admitted.boundArguments {program options remaining tagHeadroom span before frame pointer length count allowSharedAllocation}
+    (admitted : Admitted program options remaining tagHeadroom span before frame pointer length count allowSharedAllocation) :
     ∃ buffer, frame.bodyIdentity = program.root.identity ∧
       frame.body = program.root.body ∧ frame.location = .mir ⟨0, 0⟩ ∧
       Immediate.newSlice pointer length PreparedReflection.actual.runtime.target.base = .ok buffer ∧
@@ -291,8 +310,8 @@ theorem Admitted.boundArguments {program options remaining tagHeadroom span befo
   exact ⟨buffer, rest⟩
 
 /-- Stack depth is determined by the actual return carrier. -/
-theorem Destination.callDepth {before frame pointer length}
-    (destination : Destination before frame pointer length) :
+theorem Destination.callDepth {before frame pointer length allowSharedAllocation}
+    (destination : Destination before frame pointer length allowSharedAllocation) :
     before.stack.frames.size = 1 ∨ 2 ≤ before.stack.frames.size := by
   cases destination with
   | physicalRoot stack _ _ => simp [stack]

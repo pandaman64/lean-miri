@@ -32,6 +32,45 @@ structure Stage (tree : BorrowTree) (tags : ProtectedTags) (parentTag newTag : B
   scope : MaterializedWithin tree parent offset.bytes (offset.bytes+length.bytes)
   vacant : VacantRows tree
 
+/-- Operational resources for one bounded reborrow, independently of any
+materialization left by the older parent outside the reborrow window. -/
+structure StageData (tree : BorrowTree) (tags : ProtectedTags) (parentTag newTag : BorTag)
+    (parent root : UniIndex) (offset length : Size) (inside : DedupRangeMap LocationState)
+    (held : Bool) : Prop where
+  coherent : CoherentForest tree
+  parentFound : tree.indexOfTag parentTag = some parent
+  parentPresent : ∃ node, tree.nodeAt parent = some node
+  roots : tree.roots = #[root]
+  fresh : tree.indexOfTag newTag = none
+  room : tree.tagMapping.deassigned.back? = none → tree.tagMapping.mapping.size ≤ 4294967295
+  aligned : tree.tagMapping.deassigned.back? = none → tree.tagMapping.mapping.size = tree.nodes.size
+  reuse : ∀ index, tree.tagMapping.deassigned.back? = some index →
+    index.toNat < tree.nodes.size ∧ tree.nodeAt index = none
+  bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat
+  span : ∀ segment ∈ inside.iterAll.toList, segment.range.start ≤ segment.range.stop ∧
+    offset.bytes.toNat + segment.range.stop.toNat ≤ tree.locations.size.bytes.toNat
+  policy : ∀ segment ∈ inside.iterAll.toList, FrozenChildState held segment.data
+  owners : OwnedOn (fun row => LocationRights tree row tags parent)
+    offset.bytes (offset.bytes+length.bytes) tree.locations
+  vacant : VacantRows tree
+
+def Stage.data {tree tags parentTag newTag parent root offset length inside held}
+    (stage : Stage tree tags parentTag newTag parent root offset length inside held) :
+    StageData tree tags parentTag newTag parent root offset length inside held where
+  coherent := stage.coherent
+  parentFound := stage.parentFound
+  parentPresent := stage.parentPresent
+  roots := stage.roots
+  fresh := stage.fresh
+  room := stage.room
+  aligned := stage.aligned
+  reuse := stage.reuse
+  bounds := stage.bounds
+  span := stage.span
+  policy := stage.policy
+  owners := stage.owners
+  vacant := stage.vacant
+
 /-- An actual bounded read and child insertion, with a designated outer
 holder's scope and lineage retained for its eventual release. -/
 theorem retag

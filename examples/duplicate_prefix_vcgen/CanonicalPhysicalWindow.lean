@@ -18,7 +18,7 @@ private theorem rebuildPhysicalPointer (pointer : Pointer (Option Provenance)) :
 
 /-- Reuse the canonical physical slot geometry after the actual release
 plan has committed its Tree Borrows state without changing its byte storage. -/
-def physicalWindowAfterRelease
+def physicalWindowAfterReleaseOfBounds
     (machine : MachineState) (place : MPlaceTy Provenance) (id : AllocId) (tag : BorTag)
     (base : UInt64) (relative : Size) (entry : Entry) (tree : BorrowTree)
     (layout : place.layout = RootCompilerFacts.boolLayout)
@@ -29,7 +29,8 @@ def physicalWindowAfterRelease
     (bytes : entry.allocation.len = entry.allocation.byteSize.bytes.toNat)
     (mask : InitMaskCopy.WellFormed entry.allocation.initializationMask)
     (maskLength : entry.allocation.initializationMask.len = entry.allocation.byteSize)
-    (provenance : ProvenanceCopy.WellFormed entry.allocation.provenanceMap entry.allocation.len)
+    (provenance : ∀ pointer ∈ entry.allocation.provenanceMap.ptrs,
+      pointer.1.bytes.toNat+8 ≤ entry.allocation.len)
     (fits : relative.bytes < entry.allocation.byteSize.bytes)
     (identity : place.mplace.ptr.provenance = some (.concrete id tag))
     (address : place.mplace.ptr.offset.bytes.toNat = base.toNat + relative.bytes.toNat)
@@ -57,6 +58,26 @@ def physicalWindowAfterRelease
     maskLength
     provenance }
 
+def physicalWindowAfterRelease
+    (machine : MachineState) (place : MPlaceTy Provenance) (id : AllocId) (tag : BorTag)
+    (base : UInt64) (relative : Size) (entry : Entry) (tree : BorrowTree)
+    (layout : place.layout = RootCompilerFacts.boolLayout)
+    (aligned : place.mplace.misaligned = none)
+    (live : machine.memory.live[id]? = some {entry with allocation := entry.allocation.setExtra tree})
+    (cached : machine.user.addresses.baseAddr.find? (·.allocId == id) = some ⟨id, base⟩)
+    (mutable : entry.allocation.mutability = .Mut)
+    (bytes : entry.allocation.len = entry.allocation.byteSize.bytes.toNat)
+    (mask : InitMaskCopy.WellFormed entry.allocation.initializationMask)
+    (maskLength : entry.allocation.initializationMask.len = entry.allocation.byteSize)
+    (provenance : ProvenanceCopy.WellFormed entry.allocation.provenanceMap entry.allocation.len)
+    (fits : relative.bytes < entry.allocation.byteSize.bytes)
+    (identity : place.mplace.ptr.provenance = some (.concrete id tag))
+    (address : place.mplace.ptr.offset.bytes.toNat = base.toNat + relative.bytes.toNat)
+    (capacity : base.toNat + entry.allocation.byteSize.bytes.toNat < 2^64) :
+    PhysicalBoolWindowWrite.Window machine place :=
+  physicalWindowAfterReleaseOfBounds machine place id tag base relative entry tree layout aligned live cached
+    mutable bytes mask maskLength (ProvenanceCopy.WellFormed.pointerBounds provenance) fits identity address capacity
+
 theorem ordinaryPhysicalExtras
     {program options remaining headroom span before frame pointer length count}
     (admitted : Admitted program options remaining headroom span before frame pointer length count)
@@ -76,6 +97,7 @@ theorem ordinaryPhysicalExtras
   obtain ⟨extra, present, weak, sync⟩ := admitted.allocations.extras id
     (MemoryCopyBridge.live_any_of_present before.machine.memory id entry live)
   rw [present, AllocationBacktrace.of_lookup present]
+  clear admitted
   cases extra
   simp_all
 

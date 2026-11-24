@@ -71,6 +71,7 @@ theorem complete
       finalMachine.memory.live[storage.id]? = some ⟨storage.entry.kind,result⟩ ∧
       result.byteSize = storage.entry.allocation.byteSize ∧ result.len = storage.entry.allocation.len ∧
       result.extra = writeAccess.tree ∧
+      CopyProvenanceBounds.AllocationBacking result ∧
       AllocationCopy.snapshot result =
         (AllocationCopy.snapshot storage.entry.allocation).extract 0 (offset+n).toNat ++
         (AllocationCopy.snapshot storage.entry.allocation).extract offset.toNat (offset+n).toNat ++
@@ -121,7 +122,7 @@ theorem complete
     rw [dest]
     rfl
   have startEq : (Size.ofBytes storage.relativeStart.bytes) = storage.relativeStart := rfl
-  obtain ⟨result,done,finalMachine,machineEq,copied,present,sized,bytes,tree,snapshot⟩ :=
+  obtain ⟨result,done,finalMachine,machineEq,copied,present,sized,bytes,tree,backing,snapshot⟩ :=
     ArchiveForestProjection.exclusive_to_caller options limits remaining span input.debug input.fuel input.validationFuel
       frames rootFrame ready copyMachine body identity callee rfl shape.size right.tracker storage.id tag
       base storage.relativeStart.bytes length n storage.entry.kind storage.entry.allocation
@@ -216,7 +217,7 @@ theorem complete
     userFields.2.1.trans preserved.ghost,userFields.2.2.1.trans preserved.validation,
     userFields.2.2.2.1.trans preserved.backend,userFields.2.2.2.2.trans preserved.extras,
     finalFixed,finalUnchecked,finalGc,finalActive,untouched,
-    SuccessfulTrace.append history copied,present,sized,bytes,tree,snapshot⟩
+    SuccessfulTrace.append history copied,present,sized,bytes,tree,backing,snapshot⟩
 
 end DuplicatePrefix.CopyRootPositiveRoundtripExact
 

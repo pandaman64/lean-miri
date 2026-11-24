@@ -149,7 +149,7 @@ theorem returns
       mutable := slot.mutable
       maskValid := slot.maskValid
       maskLength := slot.maskLength
-      provenance := slot.provenance }
+      provenance := ProvenanceCopy.WellFormed.pointerBounds slot.provenance }
   have backingReady :
       (physical.extras.get state.machine.user).allocations.find? (fun row => row.1 == slot.id) =
       some (slot.id,{weakMemory := none,backtrace := (AllocationBacktrace.get

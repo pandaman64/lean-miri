@@ -26,30 +26,31 @@ private theorem advance (global : TreeBorrows.GlobalState)
     simp at sum
   cases next : global.nextPointerTag.succ with
   | none => simp [BorTag.succ,BorTag.ofUInt64,notMax,notZero] at next
-  | some tag => exact ⟨{global with nextPointerTag := tag},by simp [TreeBorrows.GlobalState.newPointerTag,next],by simp [next]⟩
+  | some tag => exact ⟨{global with nextPointerTag := tag},by simp [TreeBorrows.GlobalState.newPointerTag,next],by simp⟩
 
-/-- The raw pointer returned by the mutable helper carries the original
-holder's ownership and the exact unprotected ancestry used by copy. -/
-theorem holderImage
+/-- Input data for the two actual mutable reborrows and the scoped
+release of the temporary FnEntry tag. -/
+theorem stageImages
     (tree : BorrowTree) (global : TreeBorrows.GlobalState) (holderTag : BorTag)
     (holder root : UniIndex) (start length : Size)
-    (source : Stage tree global.protectedTags holderTag global.nextPointerTag holder root start length
+    (source : StageData tree global.protectedTags holderTag global.nextPointerTag holder root start length
       (DedupRangeMap.new length ExclusiveTwoPhaseRetag.initial) false)
     (coherence : Ready tree) (space : tree.nodes.size + 1 < 2 ^ 32)
     (age : ∀ i node, tree.nodeAt i = some node → node.tag.value.toNat < global.nextPointerTag.value.toNat)
     (protectedOrder : ∀ old, global.protectedTags.contains old = true → old.value.toNat < global.nextPointerTag.value.toNat)
     (tagRoom : global.nextPointerTag.value.toNat + 2 < 2 ^ 64)
-    (holderHidden : (tree.nodeAt holder).map TreeNode.isExposed = some false) :
-    let reservationTag := global.nextPointerTag
+    : let reservationTag := global.nextPointerTag
     let finalTag := reservationTag.succ.getD reservationTag
     let tags := global.protectedTags
     let reservation := ExclusiveTwoPhaseRetag.reservationTree tree holderTag reservationTag start length tags
     let active := ExclusiveTypedRetag.protectedFrozenTree reservation tags reservationTag finalTag start length
-    let released := (active.releaseProtector finalTag (tags.insert finalTag .StrongProtector)).tree
-    ∀ index, released.indexOfTag finalTag = some index →
-      HolderImage released ((tags.insert finalTag .StrongProtector).remove finalTag)
-        holder index holderTag start length.bytes := by
-  intro reservationTag finalTag tags reservation active released index picked
+    let innerRows := DedupRangeMap.new length ExclusiveTypedRetag.readState
+    tags.contains reservationTag = false ∧ tags.contains finalTag = false ∧
+      (∀ selected, reservation.indexOfTag reservationTag = some selected →
+        Stage reservation (tags.insert finalTag .StrongProtector) reservationTag finalTag selected root start length innerRows true) ∧
+      (∀ returned, active.indexOfTag finalTag = some returned →
+        RawHolderScope.ReleaseStage active (tags.insert finalTag .StrongProtector) returned root start length) := by
+  intro reservationTag finalTag tags reservation active normalizedInner
   obtain ⟨after,allocated,indexEq⟩ := advance global tagRoom
   have futureTag : after.nextPointerTag = finalTag := indexEq
   have distinctAge : reservationTag.value.toNat < finalTag.value.toNat := by
@@ -76,9 +77,9 @@ theorem holderImage
     have prior := age i node found
     rw [equal] at prior
     exact Nat.lt_irrefl _ prior
-  have prepared := RetagStageImage.installed tree tags holderTag reservationTag holder root start length outerRows false
+  have prepared := RetagStageImage.installedWithData tree tags holderTag reservationTag holder root start length outerRows false
       source fresh (fun _ member => (outerSpan _ member).2.2)
-  have capacity := RetagSuccessorCapacity.afterReservation tree global holderTag holder root start length
+  have capacity := RetagSuccessorCapacity.afterReservationWithData tree global holderTag holder root start length
     source coherence space age tagRoom
   have inner (selected : UniIndex) (key : reservation.indexOfTag reservationTag = some selected) :
       Stage reservation (tags.insert finalTag .StrongProtector) reservationTag finalTag selected root start length innerRows true := by
@@ -134,6 +135,34 @@ theorem holderImage
       simp [childProtections,ProtectedTags.insert,Array.filter_filter]
     rw [mask] at shape
     exact ⟨shape.coherent,shape.roots,shape.found,shape.scope,shape.vacant,shape.owners⟩
+  exact ⟨noReservation,noFinal,inner,release⟩
+
+/-- The raw pointer returned by the mutable helper carries the original
+holder's ownership and the exact unprotected ancestry used by copy. -/
+theorem holderImage
+    (tree : BorrowTree) (global : TreeBorrows.GlobalState) (holderTag : BorTag)
+    (holder root : UniIndex) (start length : Size)
+    (source : Stage tree global.protectedTags holderTag global.nextPointerTag holder root start length
+      (DedupRangeMap.new length ExclusiveTwoPhaseRetag.initial) false)
+    (coherence : Ready tree) (space : tree.nodes.size + 1 < 2 ^ 32)
+    (age : ∀ i node, tree.nodeAt i = some node → node.tag.value.toNat < global.nextPointerTag.value.toNat)
+    (protectedOrder : ∀ old, global.protectedTags.contains old = true → old.value.toNat < global.nextPointerTag.value.toNat)
+    (tagRoom : global.nextPointerTag.value.toNat + 2 < 2 ^ 64)
+    (holderHidden : (tree.nodeAt holder).map TreeNode.isExposed = some false) :
+    let reservationTag := global.nextPointerTag
+    let finalTag := reservationTag.succ.getD reservationTag
+    let tags := global.protectedTags
+    let reservation := ExclusiveTwoPhaseRetag.reservationTree tree holderTag reservationTag start length tags
+    let active := ExclusiveTypedRetag.protectedFrozenTree reservation tags reservationTag finalTag start length
+    let released := (active.releaseProtector finalTag (tags.insert finalTag .StrongProtector)).tree
+    ∀ index, released.indexOfTag finalTag = some index →
+      HolderImage released ((tags.insert finalTag .StrongProtector).remove finalTag)
+        holder index holderTag start length.bytes := by
+  intro reservationTag finalTag tags reservation active released index picked
+  obtain ⟨noReservation,noFinal,inner,release⟩ :=
+    stageImages tree global holderTag holder root start length source.data coherence space age protectedOrder tagRoom
+  let outerRows := DedupRangeMap.new length ExclusiveTwoPhaseRetag.initial
+  let innerRows := DedupRangeMap.new length ExclusiveTypedRetag.readState
   obtain ⟨_,_,oldKey,hidden,sourceIndex,sourceKey,between,footprint⟩ :=
     RawHolderScope.from_two_reborrows tree tags holderTag reservationTag finalTag holder root start length
       noReservation noFinal outerRows innerRows source holderHidden inner release
@@ -149,3 +178,4 @@ theorem holderImage
 end DuplicatePrefix.PositiveRetagResources
 
 #print axioms DuplicatePrefix.PositiveRetagResources.holderImage
+#print axioms DuplicatePrefix.PositiveRetagResources.stageImages
