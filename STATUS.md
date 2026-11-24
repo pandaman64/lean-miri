@@ -1154,9 +1154,54 @@ execution model.
 
 These gaps remain in the backlog, without implying that the whole feature is
 unimplemented. Check existing support against pinned upstream before extending
-it; preserve implementations and fail-closed Unsupported outcomes. WP remains
-deferred with its implementation removed. GenMC is removed; available race
-tracking modes are disabled tracking and the Miri vector-clock backend.
+it; preserve implementations and fail-closed Unsupported outcomes. GenMC is
+removed; available race tracking modes are disabled tracking and the Miri
+vector-clock backend.
+
+* **WP and VC generation** — [StepWP](Miri/Verification/StepWP.lean) lowers
+  one-block MIR bodies ending in `Return` to checked instruction sequences.
+  [BodyVCGen](examples/empty_function/BodyVCGen.lean) uses the imported
+  `empty_function` body for the whole-local immediate caller case and
+  composes its proof with actual frame preparation after callee resolution.
+  [Effect specs](Miri/Verification/EffectSpecs.lean) expose canonical MIR
+  operations. `body_of_blocks` composes block VCs across branches and loops
+  given an entry invariant and a scope-exit postcondition.
+  `callPre_of_contract` composes frame preparation with a callee contract.
+  [ExactWP](Miri/Verification/ExactWP.lean) gives `vcgen` an exact
+  one-step continuation for every permitted choice. It covers the driver's
+  MIR dispatch, statement advancement, switch, return and unwind control,
+  and preserves both successors and typed failures. The canonical assignment
+  rules expose rvalue, place, operand and memory effects. The Tree Borrows
+  rules expose ranged access, child insertion, exposure, release, deallocation
+  and collection continuations. [Whole-body VC generation](Miri/Verification/BodyVCGen.lean)
+  constructs a weakest liberal precondition for a supplied MIR body using
+  shared control-flow equations. Generation takes the interpreter configuration,
+  choice policy, and continuations. It follows nested calls and loops without
+  a client-supplied block proof. Clients still need to prove the generated
+  obligation for their machine, choice policy, and postconditions. Termination
+  requires a separate argument.
+  The [duplicate_prefix example](examples/duplicate_prefix_vcgen/README.md)
+  checks symbolic copy access effects with explicit permission and policy
+  premises. Its adversarial caller demonstrates that a prepared mutable
+  slice frame can still fail a Tree Borrows write with a live incompatible
+  protector. The concrete slice domain now states bytewise permissions and
+  topology independently of execution. The exact emitted VC is proved for
+  zero-count calls of any admitted slice length under the stated Shallow and
+  caller-rights premises, for either a physical root Boolean destination or a
+  nested cached Boolean destination.
+  The emitted VC is also proved for every `UInt64` count of a nonempty
+  initialized slice under the canonical compiler profile, backing invariants,
+  and tag capacity premises, with either supported Boolean return. Both
+  appended and recycled Tree Borrows keys are covered. The combined proof
+  covers integer-address, unresolved wildcard, and concretely backed empty
+  inputs, including backed empty forests with multiple roots. A backed
+  empty source may share the physical Boolean output allocation, which
+  retains the stated one-root condition. A nonempty concrete slice may
+  share a root physical Boolean return allocation when the output byte is
+  outside the slice and the declared grants, protector ancestry, accessed
+  ranges, and backing conditions hold. The same-allocation witness covers
+  every count with a stored inactive slice tag at the return byte.
+  Resolving wildcard frames remain open.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

@@ -466,7 +466,15 @@ def runFromInitialProfiled
       (EvalUnixSourceConstruction.Other Raw Listener TcpStream Error) CpuAffinity.Mask B
       Poll Instant System Native Profiler)
     (stableChoice : Option (StableChoice choice) := none)
-    (unbounded : Bool := false) :
+    (unbounded : Bool := false)
+    (observeCore : Option (EvalExecutable.Core Os R EvalSyncObjectAccess.Payload H D
+      (EvalUnixSourceConstruction.Other Raw Listener TcpStream Error) CpuAffinity.Mask B
+      (SourceHost Poll Instant System H D
+        (EvalUnixSourceConstruction.Other Raw Listener TcpStream Error) Native Profiler) C Instant →
+      C →
+      EvalRunConstruction.State Os R EvalSyncPayload.Payload H D
+        (EvalUnixSourceConstruction.Other Raw Listener TcpStream Error) CpuAffinity.Mask B
+        Poll Instant System Native Profiler → Option String) := none) :
     Except StepError
       (EvalRunConstruction.RunResult
         (EvalRunConstruction.State Os R EvalSyncPayload.Payload H D
@@ -571,6 +579,17 @@ def runFromInitialProfiled
                 let loop := EvalRunConstruction.hooksFromSource
                   sourceLeaves.hostConfiguration callbacks bootstrap.2.main configs limits
                   choiceAccess clock durationSince process
+                let loop := match observeCore with
+                  | none => loop
+                  | some observe =>
+                    { loop with coreStep := fun selected state =>
+                      let message := (configs selected).toOption.bind fun config =>
+                        observe config selected state
+                      match message with
+                      | none => loop.coreStep selected state
+                      | some message =>
+                        dbg_trace message
+                        loop.coreStep selected state }
                 let loopReady := Lean.profileit "startup.bootstrap_ready" profile
                   (fun _ => afterCallbacks)
                 letI : Nonempty _ := ⟨loopReady⟩

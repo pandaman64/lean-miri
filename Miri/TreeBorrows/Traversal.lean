@@ -109,6 +109,35 @@ def traverseWithSkip (tree : TraversalTree) (start : Nat)
     foreignRoots.flatMap (foreignPostorder tree shouldSkip tree.nodes.size)
   (root, localEvents ++ foreignEvents)
 
+private theorem foreignPostorder_notSkipped (tree : TraversalTree) (skip : Nat → Bool)
+    (fuel index : Nat) (event : TraversalEvent)
+    (visited : event ∈ tree.foreignPostorder skip fuel index) : skip event.node = false := by
+  induction fuel generalizing index with
+  | zero => simp [foreignPostorder] at visited
+  | succ fuel ih =>
+    by_cases omitted : skip index = true
+    · simp [foreignPostorder, omitted] at visited
+    · have notSkipped := Bool.eq_false_iff.mpr omitted
+      simp only [foreignPostorder, notSkipped, Bool.false_eq_true, ↓reduceIte, List.mem_append,
+        List.mem_flatMap, List.mem_singleton] at visited
+      rcases visited with ⟨child, _, reaches⟩ | atIndex
+      · exact ih child reaches
+      · subst event
+        exact notSkipped
+
+/-- Every generated foreign event passed the traversal's initial pruning
+test. Local events bypass that test. -/
+theorem traverseWithSkip_foreign_notSkipped (tree : TraversalTree)
+    (start : Nat) (mode : ChildrenVisitMode) (skip : Nat → Bool) (event : TraversalEvent)
+    (visited : event ∈ (tree.traverseWithSkip start mode skip).2)
+    (foreign : event.relatedness = .ForeignAccess) :
+    skip event.node = false := by
+  simp only [traverseWithSkip, List.mem_append, List.mem_map, List.mem_flatMap] at visited
+  rcases visited with ⟨localNode, _, equal⟩ | ⟨root, _, reaches⟩
+  · subst event
+    cases foreign
+  · exact foreignPostorder_notSkipped tree skip _ root event reaches
+
 /-- Schedule a normal access with an explicit set of foreign nodes to skip. -/
 def traverse (tree : TraversalTree) (start : Nat)
     (mode : ChildrenVisitMode) (skipNodes : List Nat) :
@@ -121,6 +150,66 @@ theorem traverse_starts_at_accessed_node (tree : TraversalTree) (start : Nat)
     (traverse tree start mode skipNodes).2.head? =
       some ⟨start, .LocalAccess⟩ := by
   simp [traverse, traverseWithSkip, ancestorPath_head]
+
+private def flatMapPre {A B : Type} (step : A → (List B → Prop) → Prop) :
+    List A → (List B → Prop) → Prop
+  | [], finish => finish []
+  | head :: tail, finish => step head (fun first =>
+      flatMapPre step tail (fun rest => finish (first ++ rest)))
+
+private theorem flatMapPre_iff {A B : Type} (run : A → List B)
+    (step : A → (List B → Prop) → Prop)
+    (exactStep : ∀ value finish, step value finish ↔ finish (run value))
+    (items : List A) (finish : List B → Prop) :
+    flatMapPre step items finish ↔ finish (items.flatMap run) := by
+  induction items generalizing finish with
+  | nil => rfl
+  | cons head tail ih =>
+    rw [flatMapPre, exactStep, ih]
+    rfl
+
+private def foreignPostorderPre (tree : TraversalTree) (shouldSkip : Nat → Bool) :
+    Nat → Nat → (List TraversalEvent → Prop) → Prop
+  | 0, _, finish => finish []
+  | fuel + 1, index, finish =>
+    if shouldSkip index then finish []
+    else
+      flatMapPre (foreignPostorderPre tree shouldSkip fuel) (nodeAt tree index).children.reverse
+        (fun children => finish (children ++ [⟨index, .ForeignAccess⟩]))
+
+private theorem foreignPostorderPre_iff (tree : TraversalTree) (shouldSkip : Nat → Bool)
+    (fuel index : Nat) (finish : List TraversalEvent → Prop) :
+    foreignPostorderPre tree shouldSkip fuel index finish ↔
+      finish (foreignPostorder tree shouldSkip fuel index) := by
+  induction fuel generalizing index finish with
+  | zero => rfl
+  | succ fuel ih =>
+    simp only [foreignPostorderPre, foreignPostorder]
+    cases skip : shouldSkip index with
+    | true => rfl
+    | false =>
+      simpa only [skip, Bool.false_eq_true, ↓reduceIte] using
+        (flatMapPre_iff (foreignPostorder tree shouldSkip fuel)
+          (foreignPostorderPre tree shouldSkip fuel) ih (nodeAt tree index).children.reverse
+          (fun children => finish (children ++ [⟨index, .ForeignAccess⟩])))
+
+/-- Pull back through the exact normal visit schedule. The skip predicate is
+consulted only for each reached foreign subtree, before visiting its children. -/
+def traverseWithSkipPre (tree : TraversalTree) (start : Nat) (mode : ChildrenVisitMode)
+    (shouldSkip : Nat → Bool) (finish : Nat → List TraversalEvent → Prop) : Prop :=
+  let path := ancestorPath tree start
+  let localEvents := path.map (fun index => ⟨index, .LocalAccess⟩)
+  flatMapPre (foreignPostorderPre tree shouldSkip tree.nodes.size)
+    (initialForeignRoots tree path mode)
+    (fun foreignEvents => finish path.getLast! (localEvents ++ foreignEvents))
+
+theorem traverseWithSkipPre_iff (tree : TraversalTree) (start : Nat) (mode : ChildrenVisitMode)
+    (shouldSkip : Nat → Bool) (finish : Nat → List TraversalEvent → Prop) :
+    traverseWithSkipPre tree start mode shouldSkip finish ↔
+      let visit := tree.traverseWithSkip start mode shouldSkip
+      finish visit.1 visit.2 := by
+  unfold traverseWithSkipPre traverseWithSkip
+  exact flatMapPre_iff _ _ (foreignPostorderPre_iff tree shouldSkip tree.nodes.size) _ _
 
 end TraversalTree
 

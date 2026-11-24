@@ -106,6 +106,98 @@ Repeated `--root` options select multiple functions. A selected generic function
 contributes a declaration; only discovered concrete instances have executable
 MIR. Schema 14 requires fresh exports from earlier input formats.
 
+### Generate verification conditions for interpreter steps
+
+Import `Miri.Verification.ExactWP` and enable `set_option experimental.vcgen true`.
+Use `vcgen` on a `Std.WP.Triple` for `Miri.Verification.StepWP.OutcomeStep.step`.
+The success postcondition can inspect the driver flag and successor state.
+The error postcondition receives the error and the state where execution stopped.
+The generated precondition covers every permitted choice. Use
+`simp only [miri_rvalue]` with the selected MIR and frame facts to expose the
+canonical assignment's place, operand, and copy effects. See the
+[assignment proof fixture](MiriTests/Verification/RvalueWP.lean).
+
+Build the Goto/Nop, Call/Return, and protected-alias proof fixtures.
+
+```bash
+flock --no-fork /tmp/lean-miri-lake-build.lock lake build \
+  MiriTests.Verification.StepWP MiriTests.Verification.CallReturnWP \
+  MiriTests.Verification.TreeBorrowsWP
+```
+
+### Generate a whole-body verification condition
+
+With the pinned Rust and Lean tools set up, generate and check a safety VC from
+a Rust source file or an exported MIR JSON document.
+
+```bash
+tools/body-vc safety examples/body_vcgen/control.rs \
+  --output scratch/ControlSafety.lean
+```
+
+The command saves the Lean condition and the paired MIR JSON. It reports
+generation time and the time to check that the generated file is well typed.
+Rust source exports use the pinned MIR-enabled sysroot and `-Cpanic=abort`.
+The emitted `safetySpec` characterizes the VC at a prepared entry. It holds
+exactly when the frame matches the imported entry and every permitted finite
+error in the call scope is classified as non-UB. To see a proof that supplies
+these facts for a concrete Rust function and its admitted caller domain, follow
+the [empty_function example](examples/empty_function/README.md#generated-body-verification-condition).
+
+Export the Rust function and import the execution input with
+`Miri.Frontend.ImportMIR`. In a Lean client, import
+`Miri.Verification.BodyVCGen` and enable `set_option experimental.vcgen true`.
+Select a non-generic exported root with `BodyVCGen.loadProgram input rootIndex`.
+To include the known imported callees, use `vcgen` on a `Std.WP.Triple` for
+`BodyVCGen.runProgram config limits program allowed`. For a supplied MIR
+`Body`, use `BodyVCGen.run config limits body allowed`. Give the triple a
+predicate on the prepared entry state, a success postcondition, and an error
+postcondition. The `allowed` predicate specifies the admitted driver choices.
+
+The generated condition checks the prepared frame at its entry PC. It uses a
+shared equation at each compiled MIR location and follows the state left by
+the driver through branches, loops, and calls, including same-depth frame
+replacement. The success continuation receives either `.scopeExit` or
+`.stopped`. The error continuation receives the typed error and exact failed
+state. The weakest liberal precondition covers every permitted finite outcome,
+including errors reached after arbitrarily many loop iterations. Divergence and
+states with no permitted choices have no outcome to check.
+
+Use `miri_program` or `miri_body` after `vcgen` to reveal one symbolic
+transfer. A successor with decreasing graph rank uses substitution. Other
+successors refer to a shared condition. `BodyVCGen.generateProgram` exposes
+the graph and generated obligations indexed by loaded body identity.
+`BodyVCGen.ProgramNoUB` accepts success and the interpreter's non-UB error
+outcomes, including cutoffs. See the [imported Rust example](examples/body_vcgen/README.md).
+
+Generation needs no block triples, loop invariants, or callee contracts.
+Proving the resulting condition may still require an invariant for an
+unbounded loop, an admissibility argument for the choice policy, or facts about
+the initial machine state. The interpreter configuration supplies resource
+limits and models the effects on the actual driver path. Use
+`Miri.Verification.CheckedBodyVCGen` for choice-specific core configurations
+that can fail before the first inner transition. Its outcomes include errors
+from configuration selection and the resulting outer state. The enclosing
+executable loop owns outer scheduling and stack-empty callbacks.
+The [imported MIR example](examples/body_vcgen/Verify.lean) generates conditions
+for a Rust function containing a branch, a loop, and a call.
+
+```bash
+flock --no-fork /tmp/lean-miri-lake-build.lock lake build \
+  Miri.Verification.BodyVCGen Miri.Frontend.ImportMIR \
+  MiriTests.Verification.WholeBodyWP MiriTests.Verification.WholeBodyReplay
+lake env lean examples/body_vcgen/Verify.lean
+lake env lean examples/body_vcgen/Replay.lean
+```
+
+Measure generation and type checking for growing synthetic CFGs and the same
+imported input. The benchmark writes its results under `scratch/`.
+
+```bash
+python3 tools/measure-whole-body.py --output scratch/whole-body-bench \
+  --import-json examples/body_vcgen/input.json
+```
+
 ## Tests
 
 Run `lake build MiriTests` for self-contained Lean test modules, then

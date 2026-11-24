@@ -4,6 +4,7 @@ import Miri.Input.CompilerMiriEntry
 import Miri.Input.NativeMathHost
 import NativeStdioHost
 import NativeStdioProtocol
+import MiriTests.Verification.WholeBodyReplay
 
 /-! Standalone source run harness. The default retains the complete source
 entry API. With a dedicated control descriptor, typed stdio probes compose its
@@ -460,10 +461,31 @@ private def terminalDiagnostic (prepared : Input.EvalPreparation.Prepared)
         ("instance_id", toJson fnInstance), ("span_id", toJson span.id)]))]
   return Lean.Json.mkObj (fields ++ [("allocation_backtraces", .arr traces)])
 
+/-- Check the generated VC when the stock runner enters the selected imported
+body. Selecting a nested call observes its actual prepared frame. -/
+private def observeBodyVC
+    (program : Miri.Verification.BodyVCGen.LoadedProgram)
+    (limits : ExecutionMachine.Limits) (profile : Lean.Options) :=
+  fun (config : Input.EvalExecutable.Core Os R Payload H D Other Aff B Host Unit Instant)
+      (choice : Unit) (state : OuterState) => do
+    let frame ← state.stack.currentFrame?
+    if frame.bodyIdentity = program.root.identity ∧ frame.location = FrameLocation.mir ⟨0, 0⟩ then
+      let before := ExecutionStateTransport.inward state
+      let result := Lean.profileit "body_vc.proof_replay" profile fun _ =>
+        MiriTests.Verification.WholeBodyReplay.certify config limits program
+          (fun _ => choice) before 4096
+      return match result with
+      | none => "body_vc: no certificate"
+      | some certificate =>
+        let verdict := certificate.verdict
+        s!"body_vc: outcome={(reprStr certificate.outcome).replace "\n" " "}; normal={verdict.acceptsScopeExit}; stopped={verdict.acceptsStopped}; impossible=false; no_ub={verdict.acceptsNoUB}"
+    else none
+
 private def prepareRun (prepared : Input.EvalPreparation.Prepared)
     (initialMemory : MemoryState Provenance Miri.TreeBorrows.BorrowTree MiriMemoryKind)
     (pageSize : UInt64) (numCpus hostPid : UInt32) (diagnosticSeed : Option UInt64)
-    (profile : Lean.Options) (ui : Option UiSettings) :
+    (profile : Lean.Options) (ui : Option UiSettings)
+    (bodyVCProgram : Option Miri.Verification.BodyVCGen.LoadedProgram := none) :
     Except String ((Option (Array HostStdio.Entry) → Array ExecutionChoices.Input → Except StepError
       (Input.EvalSourceRunFinalization.Result OuterState)) ×
       (Array ExecutionChoices.Input → Except String String)) := do
@@ -528,8 +550,8 @@ private def prepareRun (prepared : Input.EvalPreparation.Prepared)
     ignoreLeaksNote := if ui.isSome then pure () else unavailable "ignore-leaks diagnostic reporting"
     failureCode := -1 }
   pure (fun stdio inputs => do
-    if let some entries := stdio then
-      let enabledLeaves := leavesFor (some entries)
+    if stdio.isSome || bodyVCProgram.isSome then
+      let enabledLeaves := leavesFor stdio
       -- Match runFromSourceProfiled's production provider installation before
       -- composing its existing create/runFromInitial/finalize operations.
       let enabledLeaves := if enabledLeaves.foreignSource.host.time.isNone then
@@ -544,11 +566,14 @@ private def prepareRun (prepared : Input.EvalPreparation.Prepared)
         | .error error _ => throw error
       unless trace.cursor == 2 do throw (.invalidProgram "raw init trace not consumed")
       -- Install once, before source startup can call any guest/Miri operation.
-      let initial := installReplay initial entries
+      let initial := match stdio with
+        | none => initial
+        | some entries => installReplay initial entries
+      let observe := bodyVCProgram.map fun program => observeBodyVC program options.limits profile
       let result ← Input.EvalSourceRunConstruction.runFromInitialProfiled
         profile prepared prepared.image bytes options enabledLeaves () machineConfig
         bootstrap options.limits 256 0 [] initial
-        (some ⟨fun selected => by cases selected; rfl⟩) true
+        (some ⟨fun selected => by cases selected; rfl⟩) true observe
       return Input.EvalSourceRunFinalization.finishResultProfiled profile reports
         ((ui.map (·.ignoreLeaks)).getD false) result
     let finalized : EStateM.Result StepError InitTrace
@@ -671,12 +696,21 @@ private def runMain (args : List String) (control : Option ControlOutput) : IO U
     IO.println s!"upstream_fingerprint: {(Lean.Json.mkObj [
       ("byte_length", toJson bytes.size), ("fnv1a64", toJson hash.toNat)]).compress}"
     return
+  let (args, bodyVCRequest) ← match args.reverse with
+    | "--check-body-vc" :: rest => pure (rest.reverse, some (0, none))
+    | index :: path :: "--check-body-vc-input" :: rest => do
+      let some root := index.toNat? | throw (IO.userError "--check-body-vc-input expects an unsigned index")
+      pure (rest.reverse, some (root, some path))
+    | index :: "--check-body-vc-root" :: rest => do
+      let some root := index.toNat? | throw (IO.userError "--check-body-vc-root expects an unsigned index")
+      pure (rest.reverse, some (root, none))
+    | _ => pure (args, none)
   let profileEnabled := args.getLast? == some "--profile"
   let args := if profileEnabled then args.dropLast else args
   let profile := if profileEnabled then
     (({} : Lean.Options).setBool `profiler true).set `profiler.threshold (0 : Nat)
     else ({} : Lean.Options)
-  let some path := args.head? | throw (IO.userError "usage: NativeRunner <untouched-export.json|/dev/stdin> [--seed <u64> | --ui-source <source> --ui-flags <JSON-array>] [--profile] (gzip streamed externally)")
+  let some path := args.head? | throw (IO.userError "usage: NativeRunner <untouched-export.json|/dev/stdin> [--seed <u64> | --ui-source <source> --ui-flags <JSON-array>] [--profile] [--check-body-vc | --check-body-vc-root <index> | --check-body-vc-input <file> <index>] (gzip streamed externally)")
   let (diagnosticSeed, ui) ← match args.drop 1 with
     | [] => pure (none, none)
     | ["--seed", raw] => do
@@ -686,7 +720,7 @@ private def runMain (args : List String) (control : Option ControlOutput) : IO U
     | ["--ui-source", source, "--ui-flags", flags] =>
       let ui ← must (uiSettings source flags)
       pure (some 0, some ui)
-    | _ => throw (IO.userError "usage: NativeRunner <untouched-export.json|/dev/stdin> [--seed <u64> | --ui-source <source> --ui-flags <JSON-array>] [--profile] (gzip streamed externally)")
+    | _ => throw (IO.userError "usage: NativeRunner <untouched-export.json|/dev/stdin> [--seed <u64> | --ui-source <source> --ui-flags <JSON-array>] [--profile] [--check-body-vc | --check-body-vc-root <index> | --check-body-vc-input <file> <index>] (gzip streamed externally)")
   let input ← readJson path
   if let some output := control then
     let bytes := input.toUTF8
@@ -705,6 +739,13 @@ private def runMain (args : List String) (control : Option ControlOutput) : IO U
   boundary "raw_host_poll: finite source initialization replay; no live poll capability"
   boundary "decode: start"
   let decoded ← must (Input.decodeJsonProfiled input profile)
+  let bodyVCProgram ← bodyVCRequest.mapM fun (root, source) => do
+    let checkedInput ← match source with
+      | none => pure decoded
+      | some path => do
+        let json ← readJson path
+        must (Input.decodeJsonProfiled json profile)
+    must (Miri.Verification.BodyVCGen.loadProgram checkedInput root)
   boundary "decode: accepted"
   if decoded.document.bodyRoots.isEmpty && !decoded.document.rootDeclarations.isEmpty then
     throw (IO.userError "input contains declaration-only roots; no concrete executable root was selected")
@@ -738,7 +779,7 @@ private def runMain (args : List String) (control : Option ControlOutput) : IO U
   let hostPid ← IO.Process.getPID
   boundary "run: start"
   let (execute, checkValidationMismatch) ← must
-    (prepareRun prepared attempt.memory pageSize numCpus hostPid diagnosticSeed profile ui)
+    (prepareRun prepared attempt.memory pageSize numCpus hostPid diagnosticSeed profile ui bodyVCProgram)
   let mismatch ← match checkValidationMismatch initialInputs with
     | .ok report => pure report
     | .error error => throw (IO.userError s!"validation preflight regression failed: {error}")
