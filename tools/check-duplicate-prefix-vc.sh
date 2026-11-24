@@ -36,7 +36,8 @@ lean -j1 --root=examples/duplicate_prefix_vcgen \
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/ZeroNodes.olean" examples/duplicate_prefix_vcgen/ZeroNodes.lean
 lean -j1 examples/duplicate_prefix_vcgen/ZeroSuffix.lean
-lean -j1 examples/duplicate_prefix_vcgen/ZeroReturnDriver.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/ZeroReturnDriver.olean" examples/duplicate_prefix_vcgen/ZeroReturnDriver.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/ZeroReturn.olean" examples/duplicate_prefix_vcgen/ZeroReturn.lean
 mkdir -p "$out/empty_function"

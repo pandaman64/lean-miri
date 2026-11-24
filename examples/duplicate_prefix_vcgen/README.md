@@ -142,8 +142,7 @@ entry through the selected `Return` under its stated canonical Shallow machine
 premises, with any surrounding frame array.
 `--target RootZeroComplete` checks the whole zero-count root call with a
 physical Boolean destination and the stated release profile, down to the
-actual memory update and root stop. The nested caller-return case has a
-separate proof boundary. [RootZeroPhysicalVC.lean](RootZeroPhysicalVC.lean)
+actual memory update and root stop. [RootZeroPhysicalVC.lean](RootZeroPhysicalVC.lean)
 applies the checked physical-root proof to the exact emitted `requiredAt`
 for every allowed `Unit` choice policy, under the same machine premises.
 
@@ -155,6 +154,26 @@ python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
   --target ArchiveCatalogRoot --target ArchiveTraceToVC
 LEAN_PATH="$out:$archive:$PWD/.lake/build/lib/lean" \
   lean -j1 examples/duplicate_prefix_vcgen/RootZeroPhysicalVC.lean
+```
+
+[VerifyZeroGenerated.lean](VerifyZeroGenerated.lean) proves the emitted condition
+for a nested zero-count call with an admitted local Boolean destination. Its
+trace includes actual active protector release, the caller's Boolean result
+update, and the saved continuation. The theorem states the Shallow machine,
+frame, and ownership premises.
+
+```sh
+out="$PWD/scratch/duplicate-prefix-vcgen"
+archive="$PWD/scratch/duplicate-prefix-nested-zero"
+python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
+  --output "$archive" --target RootZeroCompletePrefix \
+  --target ActiveStackRelease --target ArchiveCatalogRoot --target ArchiveTraceToVC
+export LEAN_PATH="$out:$archive:$PWD/.lake/build/lib/lean"
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/ReturnPreOfEffects.olean" examples/duplicate_prefix_vcgen/ReturnPreOfEffects.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/RootZeroShallowReturn.olean" examples/duplicate_prefix_vcgen/RootZeroShallowReturn.lean
+lean -j1 examples/duplicate_prefix_vcgen/VerifyZeroGenerated.lean
 ```
 
 The optional `RetagFrozenChild` target checks actual child insertion and
