@@ -143,6 +143,15 @@ theorem region_from_cached_reborrow (before after : State) (length : UInt64)
         fun path => (foreignCompatible_iff _ _).mpr (foreignRight path)⟩ }
   exact ⟨next, rfl, rfl, rfl, ⟨region⟩⟩
 
+/-- The tree computed by the actual protected frozen reborrow. The fresh
+protector is installed before the parent read. -/
+def protectedFrozenTree (tree : BorrowTree) (protectors : ProtectedTags)
+    (parentTag tag : BorTag) (offset size : Size) : BorrowTree :=
+  let tags := protectors.insert tag .StrongProtector
+  let read := tree.performNormalAccessRange parentTag offset size .Read tags .VisitChildrenOfAccessed
+  (read.tree.newChild offset (.concrete parentTag) tag (DedupRangeMap.new size readState)
+    (.ReservedFrz false) true).tree
+
 /-- The live typed mutable reborrow in the read-associated frozen profile
 hands the actual new tag's exclusive rights to its caller. The argument
 extent, live cache entry, compiler/pointer leaves, tag allocator and initial
@@ -215,7 +224,9 @@ theorem reborrow_exclusive_region_with_footprint [DecidableEq K] (hooks : TypedR
         ∃ next : InitializedRegion after size.bytes,
           next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
           next.entry = {storage.entry with allocation := storage.entry.allocation.setExtra tree} ∧
-          Nonempty (ExclusiveRegion after size.bytes next tag)) := by
+          Nonempty (ExclusiveRegion after size.bytes next tag)) ∧
+      tree = protectedFrozenTree entry.allocation.extra borrow.global.protectedTags parentTag tag location.baseOffset size ∧
+      (∀ key, key ≠ location.allocId → after.machine.memory.live[key]? = logged.machine.memory.live[key]?) := by
   let tree := entry.allocation.extra
   let inside := DedupRangeMap.new size readState
   let active := registeredTracker borrow tag
@@ -280,7 +291,7 @@ theorem reborrow_exclusive_region_with_footprint [DecidableEq K] (hooks : TypedR
       strong_insert_repeat borrow.global.protectedTags tag
     simpa only [childProtections, Bool.true_eq, ↓reduceIte, same] using next
   refine ⟨after, child.tree, index, actual, selectedLive, rfl, ?_, capacity, childCoherent,
-    childRoots, key, ⟨node, stored, tagged, unexposed⟩, scope, emptyRows, rfl, rfl, rfl, rfl, byteGrant, ?_⟩
+    childRoots, key, ⟨node, stored, tagged, unexposed⟩, scope, emptyRows, rfl, rfl, rfl, rfl, byteGrant, ?_, rfl, ?_⟩
   · simp [after, raced, registered, withTree, withStrongProtector, GlobalState.addProtector, Stack.currentFrame?]
   · intro storage sameId sameOffset sameEntry
     apply region_from_cached_reborrow logged after size.bytes storage child.tree tag index (registeredTracker borrow tag)
@@ -289,6 +300,9 @@ theorem reborrow_exclusive_region_with_footprint [DecidableEq K] (hooks : TypedR
     · rw [sameOffset, capacity]
       exact bounds
     · simpa only [sameOffset] using byteGrant
+  · intro key different
+    simp [after,raced,registered,withStrongProtector,withTree,Std.ExtTreeMap.getElem?_insert,Ne.symm different]
+
 
 /-- Coherent exclusive region after the actual protected frozen reborrow. -/
 theorem reborrow_exclusive_region [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budget : Nat)
@@ -355,7 +369,7 @@ theorem reborrow_exclusive_region [DecidableEq K] (hooks : TypedRetag.Hooks K U)
           next.entry = {storage.entry with allocation := storage.entry.allocation.setExtra tree} ∧
           Nonempty (ExclusiveRegion after size.bytes next tag)) := by
   obtain ⟨after, tree, child, executed, cached, borrowAfter, frameAfter, sizeAfter, forest,
-      sameRoot, found, ⟨node, stored, tagged, _⟩, _, _, _, _, _, _, rights, region⟩ :=
+      sameRoot, found, ⟨node, stored, tagged, _⟩, _, _, _, _, _, _, rights, region, _, _⟩ :=
     reborrow_exclusive_region_with_footprint hooks budget place size tag parentTag location before pointed resolved logged
       frame frameLedger borrow entry parent root parentNode check resolve log parentProvenance current ledger
       tracked live mutable imprecise freeze nonempty ensure raceOff coherent parentStored roots parentFound

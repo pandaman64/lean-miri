@@ -2,6 +2,7 @@ import duplicate_prefix.SliceLenBody
 import duplicate_prefix.LenReturn
 import duplicate_prefix.RootZeroCompleteState
 import duplicate_prefix.LenPlanOfOwnership
+import duplicate_prefix.LenExitFacts
 
 namespace DuplicatePrefix.SliceLenCompleteCurrent
 noncomputable section
@@ -14,7 +15,7 @@ set_option backward.dsimp.instances true
 
 /-- Execute the retained length helper through its validated Return and the
 release selected by a checked per-allocation plan. -/
-theorem returnsLengthWithPlan
+theorem returnsLengthObserved
     (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
     (remaining budget : Nat) (dispatchFuel : limits.callDispatch = budget+1)
     (span : PreparedContracts.FixedSpanQuery) (debug : options.place.debugAssertions = false)
@@ -68,7 +69,13 @@ theorem returnsLengthWithPlan
       finalMachine.threads.fixedScheduling = true ∧
       (config.terminators.getControl finalMachine.user).checkedArithmetic = false ∧
       (config.terminators.getControl finalMachine.user).gcInterval = 0 ∧
-      (∃ currentThread, finalMachine.threads.activeThread? = some currentThread) := by
+      (∃ currentThread, finalMachine.threads.activeThread? = some currentThread) ∧
+      LenExitFacts.Stable machine finalMachine ∧
+      (caller.extra.userRelevance = 255 →
+        (thread.topUserRelevantFrame = some older.size ∨
+          thread.topUserRelevantFrame = some (older.push caller).size) →
+        ∃ currentThread, finalMachine.threads.activeThread? = some currentThread ∧
+          currentThread.topUserRelevantFrame = some older.size) := by
   let frames := older.push caller
   obtain ⟨second, current, done, returned, valid, trace, sameBody, sameIdentity, sameFn, extra, place,
     cont, args, localsId, localsSize, pc, resultSlot, sameArg, deadTemp⟩ :=
@@ -125,7 +132,7 @@ theorem returnsLengthWithPlan
     PtrMetadataReturn.popped_user older caller returned releasedMachine activeIndex
   have flags := RootZeroCompleteState.tick_flags options remaining span restored
   have activeRelease : releasedMachine.threads.activeThread? = some activeThread := finalActive
-  refine ⟨finalMachine, SuccessfulTrace.append trace (.next returnStep (.refl _)), ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨finalMachine, SuccessfulTrace.append trace (.next returnStep (.refl _)), ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · unfold finalMachine PtrMetadataReturn.poppedMachine GenericPopFrame.afterRelevanceAt
     split <;> rfl
   · unfold finalMachine PtrMetadataReturn.poppedMachine GenericPopFrame.afterRelevanceAt
@@ -144,7 +151,89 @@ theorem returnsLengthWithPlan
     split
     · exact ⟨_, MetadataOutputFacts.relevance_active frames returned releasedMachine activeThread activeRelease⟩
     · exact ⟨activeThread, activeRelease⟩
+  · have satMeta : LenExitFacts.Stable machine restored :=
+      LenExitFacts.metadata_stable options remaining span frames second machine valid current done thread
+    have satTick : LenExitFacts.Stable restored ticked := by
+      unfold ticked PtrMetadataReturn.accountedMachine SourceControl.accounted
+      rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
+      exact ⟨rfl,rfl,rfl,rfl,rfl⟩
+    have satRelease : LenExitFacts.Stable ticked releasedMachine := ⟨rfl,rfl,rfl,rfl,rfl⟩
+    have satPop : LenExitFacts.Stable releasedMachine finalMachine := by
+      unfold finalMachine PtrMetadataReturn.poppedMachine GenericPopFrame.afterRelevanceAt
+      split <;> exact ⟨rfl,rfl,rfl,rfl,rfl⟩
+    exact satMeta.trans (satTick.trans (satRelease.trans satPop))
+  · intro rank initialCache
+    obtain ⟨metadataThread, cachedActive, rootOrLen⟩ :=
+      LenExitFacts.metadata_cache options remaining span older caller second machine valid current done thread
+        active rank initialCache
+    have same : metadataThread = activeThread := Option.some.inj (cachedActive.symm.trans finalActive)
+    subst metadataThread
+    exact FrameRootRelevance.restoredAfterHelper older caller returned releasedMachine activeThread activeRelease rank rootOrLen
 
+theorem returnsLengthWithPlan
+    (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
+    (remaining budget : Nat) (dispatchFuel : limits.callDispatch = budget+1)
+    (span : PreparedContracts.FixedSpanQuery) (debug : options.place.debugAssertions = false)
+    (fuel : Nat) (validationFuel : options.limits.validation = fuel+1)
+    (older : Array CompilerFrameContext.ActualFrame) (caller : CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame)
+    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (carrier : Pointer Provenance ⊕ UInt64) (len : UInt64) (carrierValid : SliceCarrier.Valid machine carrier len)
+    (size : frame.locals.size = 3)
+    (live0 : (frame.locals[0]'(by omega)).value = .live (.immediate .uninit))
+    (uncached0 : (frame.locals[0]'(by omega)).layout = none)
+    (live1 : (frame.locals[1]'(by omega)).value = .live (.immediate
+      (rawImmediate carrier (PreparedContracts.actualConfig options () remaining span).access.runtime.base len)))
+    (cached1 : (frame.locals[1]'(by omega)).layout = some SharedReferenceMetadata.sharedLayout)
+    (dead2 : (frame.locals[2]'(by omega)).value = .dead) (uncached2 : (frame.locals[2]'(by omega)).layout = none)
+    (body : frame.body = SliceLenFacts.body.body) (identity : frame.bodyIdentity = SliceLenFacts.body.identity)
+    (callee : frame.functionInstance = HelperCompilerFacts.lenCall.callee) (located : frame.location = .mir ⟨0,0⟩)
+    (noClocks : frame.extra.dataRace = none)
+    (tracker : MachineHooks.BorrowState) (tracked : machine.borrowTracker = some tracker) (defaultMode : tracker.retagMode = .Default)
+    (noRace : machine.dataRace = none) (backend : machine.user.payload.payload.user.backend = .none)
+    (ghost : machine.user.payload.ghost = false) (shallow : machine.user.payload.validation = .Shallow)
+    (dynamicFuel : Nat) (dynamicEq : options.place.dynamicFuel = dynamicFuel+1)
+    (source : PreparedContracts.SourceComparator) (cmp : ProjectionMetadataFacts.NullComparator)
+    (metadata : (EvalProjectionMachine.arrays.get (Storage.withCurrent (older.push caller) frame machine)).metadata = PreparedReflection.actual.runtime)
+    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent (older.push caller) frame machine)).entries.any (·.value.ty == 2) = false)
+    (unchecked : ((PreparedContracts.actualConfig options () (remaining+1) span).terminators.getControl machine.user).checkedArithmetic = false)
+    (noGc : ((PreparedContracts.actualConfig options () (remaining+1) span).terminators.getControl machine.user).gcInterval = 0)
+    (fixed : machine.threads.fixedScheduling = true)
+    (thread : ThreadRecord) (active : machine.threads.activeThread? = some thread)
+    (cacheBound : ∀ index, thread.topUserRelevantFrame = some index → index < (older.push caller).size+1)
+    (borrowFrame : FrameState) (ownedFrame : frame.extra.borrowTracker = some borrowFrame)
+    (finalMemory : MemoryState Provenance BorrowTree MiriMemoryKind)
+    (release : StackPopRelease.Plan tracker.global.protectedTags borrowFrame.protectedTags.toList machine.memory finalMemory)
+    (index : Miri.MIR.LocalId) (callerValid : index < caller.locals.size)
+    (callerLive : caller.locals[index].value = .live (.immediate .uninit))
+    (callerCached : caller.locals[index].layout = some RootCompilerFacts.usizeLayout)
+    (callerClocks : caller.extra.dataRace = none)
+    (destination : frame.returnPlace.toRuntimePlace =
+      LocalPlaces.localRuntimePlace older.size caller index RootCompilerFacts.usizeLayout)
+    (target : MIR.BasicBlockId) (action : MIR.UnwindAction)
+    (resume : frame.returnContinuation = .goto (some target) action)
+    (varargs : frame.vaList = #[]) :
+    let config := PreparedContracts.actualConfig options () (remaining + 1) span
+    ∃ finalMachine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser,
+      SuccessfulTrace.Trace config limits (Storage.withCurrent (older.push caller) frame machine)
+        (Storage.withCurrent older
+          {writeFrame caller index (.scalar (.fromScalarInt (.ofUInt64 len))) callerValid with
+            location := .mir ⟨target, 0⟩} finalMachine) ∧
+      finalMachine.memory = finalMemory ∧
+      finalMachine.borrowTracker = some { tracker with global := tracker.global.endCall borrowFrame } ∧
+      finalMachine.user.payload.ghost = false ∧ finalMachine.user.payload.validation = .Shallow ∧
+      finalMachine.threads.fixedScheduling = true ∧
+      (config.terminators.getControl finalMachine.user).checkedArithmetic = false ∧
+      (config.terminators.getControl finalMachine.user).gcInterval = 0 ∧
+      (∃ currentThread, finalMachine.threads.activeThread? = some currentThread) := by
+  obtain ⟨finalMachine, execution, memoryEq, trackerEq, finalGhost, finalShallow, finalFixed, finalUnchecked,
+    finalNoGc, finalActive, _, _⟩ :=
+    returnsLengthObserved options limits remaining budget dispatchFuel span debug fuel validationFuel older caller
+      frame machine carrier len carrierValid size live0 uncached0 live1 cached1 dead2 uncached2 body identity callee
+      located noClocks tracker tracked defaultMode noRace backend ghost shallow dynamicFuel dynamicEq source cmp metadata
+      notConstructed unchecked noGc fixed thread active cacheBound borrowFrame ownedFrame finalMemory release
+      index callerValid callerLive callerCached callerClocks destination target action resume varargs
+  exact ⟨finalMachine, execution, memoryEq, trackerEq, finalGhost, finalShallow, finalFixed, finalUnchecked,
+    finalNoGc, finalActive⟩
 
 theorem returnsLength
     (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
@@ -229,6 +318,7 @@ theorem returnsLength
   exact ⟨finalMachine, finalMemory, execution, release, memoryEq, trackerEq, finalGhost, finalShallow, finalFixed,
     finalUnchecked, finalNoGc, finalActive⟩
 
+#print axioms returnsLengthObserved
 #print axioms returnsLengthWithPlan
 #print axioms returnsLength
 end

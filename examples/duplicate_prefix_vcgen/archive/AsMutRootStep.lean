@@ -80,6 +80,7 @@ theorem entered
       after.user.addresses = machine.user.addresses ∧
       after.user.payload.payload.user.backend = .none ∧
       after.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras ∧
+      (∀ key, key ≠ storage.id → after.memory.live[key]? = machine.memory.live[key]?) ∧
       (cfg.terminators.getControl after.user).checkedArithmetic = false ∧
       (cfg.terminators.getControl after.user).gcInterval = 0 ∧
       after.threads.fixedScheduling = true ∧
@@ -100,7 +101,10 @@ theorem entered
         RetagReleaseFootprint.MaterializedWithin next.entry.allocation.extra right.source
           next.relativeStart.bytes (next.relativeStart.bytes + length) ∧
         RetagReleaseFootprint.VacantRows next.entry.allocation.extra ∧
-        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } := by
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
+        next.entry.allocation.extra = ExclusiveTypedRetag.protectedFrozenTree storage.entry.allocation.extra
+          loan.tracker.global.protectedTags parentTag tag storage.relativeStart (Size.ofBytes length) ∧
+        right.tracker.global.protectedTags = loan.tracker.global.protectedTags.insert tag .StrongProtector := by
   intro cfg before cached dest tag ptr child expected
   let charged := AsMutCurrentCall.charged options (remaining+1) span machine
   let cachedState := Storage.withCurrent older cached charged
@@ -167,7 +171,7 @@ theorem entered
     noClocks ghost noRace backend fixed unchecked noGc installation
   obtain ⟨enterLoc, enterBody, enterIdentity, enterCallee, saved, continuation, frameClocks, frameSize,
     varargs, ledger, resultSlot, valueSlot, deadSlots, afterGhost, afterShallow, afterRace, afterAddress,
-    afterHost, afterBackend, afterExtras, afterFixed, afterThread, afterMeta, afterAlias, rights⟩ := rest
+    afterHost, afterBackend, afterExtras, afterUnrelated, afterFixed, afterThread, afterMeta, afterAlias, rights⟩ := rest
   have controls : cfg.terminators.getControl after.user = cfg.terminators.getControl charged.user := by
     dsimp only [cfg]
     rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
@@ -193,7 +197,7 @@ theorem entered
     rfl
   refine ⟨frame,after,invoked,enterLoc,enterBody,enterIdentity,enterCallee,saved,continuation,
     frameClocks,frameSize,varargs,ledger,resultSlot,?_,deadSlots,afterGhost,afterShallow,afterRace,
-    afterAddress.trans chargedAddress,afterBackend.trans chargedBackend,afterExtras.trans chargeExtras,checked,gc,afterFixed.trans fixed,?_,afterMeta,afterAlias,?_⟩
+    afterAddress.trans chargedAddress,afterBackend.trans chargedBackend,afterExtras.trans chargeExtras,afterUnrelated,checked,gc,afterFixed.trans fixed,?_,afterMeta,afterAlias,?_⟩
   · simpa only [expected, child, ptr, Pointer.new, initialStorage, initialLoan] using valueSlot
   · refine ⟨_,afterThread,?_⟩
     intro rootWasTop

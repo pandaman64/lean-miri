@@ -158,6 +158,7 @@ theorem reborrow_exclusive [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budge
       tree.locations.size = entry.allocation.extra.locations.size ∧ CoherentForest tree ∧ tree.roots = #[root] ∧
       tree.indexOfTag tag = some child ∧
       (∃ node, tree.nodeAt child = some node ∧ node.tag = tag) ∧
+      (∀ key, key ≠ location.allocId → after.machine.memory.live[key]? = logged.machine.memory.live[key]?) ∧
       ∀ point : UInt64, location.baseOffset.bytes.toNat ≤ point.toNat →
         point.toNat < (location.baseOffset.bytes + size.bytes).toNat →
         ∀ row, ValueAt tree.locations point row →
@@ -191,8 +192,10 @@ theorem reborrow_exclusive [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budge
     imprecise freeze rfl rfl nonempty ensure raceOff readOk childOk
   have exactTree : child.tree = reservationTree tree parentTag tag location.baseOffset size borrow.global.protectedTags := by
     simp only [child, read, reservationTree, parentProvenance, tags, inside]
-  exact ⟨after, child.tree, index, actual, withTree_live raced location.allocId updated child.tree,
-    tracked, rfl, rfl, rfl, rfl, exactTree, capacity, well, stillRoot, key, node, owned⟩
+  refine ⟨after, child.tree, index, actual, withTree_live raced location.allocId updated child.tree,
+    tracked, rfl, rfl, rfl, rfl, exactTree, capacity, well, stillRoot, key, node, ?_, owned⟩
+  intro other different
+  simp [after,raced,withTree,Std.ExtTreeMap.getElem?_insert,Ne.symm different]
 
 end DuplicatePrefix.ExclusiveTwoPhaseRetag
 

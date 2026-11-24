@@ -79,6 +79,7 @@ theorem completes
       (cfg.terminators.getControl finalMachine.user).gcInterval = 0 ∧
       finalMachine.user.payload.payload.user.backend = .none ∧
       finalMachine.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras ∧
+      (∀ key, key ≠ storage.id → finalMachine.memory.live[key]? = machine.memory.live[key]?) ∧
       finalMachine.user.payload.ghost = false ∧ finalMachine.user.payload.validation = .Shallow ∧
       (∃ presentThread, finalMachine.threads.activeThread? = some presentThread) ∧
       (caller.extra.userRelevance = 255 → thread.topUserRelevantFrame = some older.size →
@@ -88,11 +89,15 @@ theorem completes
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧ next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
         next.entry.allocation.extra.roots = #[root] ∧
         next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
-        right.tracker.retagMode = .Default := by
+        right.tracker.retagMode = .Default ∧
+        next.entry.allocation.extra = ((ExclusiveTypedRetag.protectedFrozenTree storage.entry.allocation.extra
+          loan.tracker.global.protectedTags parentTag tag storage.relativeStart (Size.ofBytes length)).releaseProtector tag
+            (loan.tracker.global.protectedTags.insert tag .StrongProtector)).tree ∧
+        right.tracker.global.protectedTags = (loan.tracker.global.protectedTags.insert tag .StrongProtector).remove tag := by
   intro cfg before cached dest tag ptr child expected pointer cachedValid returned
   obtain ⟨frame,after,step,loc,bodyEq,identityEq,calleeEq,saved,cont,clocks,size,vaList,ledger,retSlot,
-    argSlot,deadSlots,ghostStill,shallowStill,raceStill,addrStill,backendStill,extrasStill,checkedStill,gcStill,fixedStill,⟨activeThread,threadEq,prevCache⟩,
-    metadataAfter,alias,next,rights,idEq,offsetEq,modeStill,rootEq,extentEq,⟨node,nodeEq,_,notExposed⟩,materialized,vacant,physicalEntry⟩ :=
+    argSlot,deadSlots,ghostStill,shallowStill,raceStill,addrStill,backendStill,extrasStill,entryUnrelated,checkedStill,gcStill,fixedStill,⟨activeThread,threadEq,prevCache⟩,
+    metadataAfter,alias,next,rights,idEq,offsetEq,modeStill,rootEq,extentEq,⟨node,nodeEq,_,notExposed⟩,materialized,vacant,physicalEntry,exactFrozen,registeredTags⟩ :=
     AsMutRootStep.entered options limits remaining fuel sizeFuel span budget sizeBudget debugOff preciseOff implicitOff
       older caller machine length base parentTag positive bounded noRace ghost shallow storage loan root capacity tagRoom
       extent address nonnull metadata noAlias cmp source dispatchBudget dispatchFuel location body identity instanceId valid argument
@@ -135,7 +140,7 @@ theorem completes
     rw [idEq,offsetEq]
     rfl
   rw [sameAddress] at joined
-  obtain ⟨final,trace,finalAddr,finalRace,finalUser,finalFixed,activeFinal,retainsRoot,result,finalId,finalOffset,physicalReturn,retainedRoots,retainedExtent,resultRights,finalMode⟩ := joined
+  obtain ⟨final,trace,finalAddr,finalRace,finalUser,finalFixed,activeFinal,returnUnrelated,retainsRoot,result,finalId,finalOffset,physicalReturn,retainedRoots,retainedExtent,exactRelease,resultRights,finalMode,returnedTags⟩ := joined
   have finalChecked : (cfg.terminators.getControl final.user).checkedArithmetic = false := by
     rw [finalUser]
     unfold AsMutCurrentCall.charged NestedGuardDriver.nextTerminatorUser
@@ -167,13 +172,17 @@ theorem completes
     rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
     exact extrasStill
   refine ⟨final, SuccessfulTrace.Trace.next step trace, finalAddr.trans addrStill,
-    finalRace.trans raceStill, finalFixed.trans fixedStill, finalChecked, finalGc, finalBackend, finalExtras, finalGhost, finalShallow,
+    finalRace.trans raceStill, finalFixed.trans fixedStill, finalChecked, finalGc, finalBackend, finalExtras, ?_, finalGhost, finalShallow,
     activeFinal, ?_, result,resultRights,finalId.trans idEq,finalOffset.trans offsetEq, ?_,retainedRoots.trans rootEq,retainedExtent.trans extentEq,
-    finalMode.trans (modeStill.trans defaultMode)⟩
+    finalMode.trans (modeStill.trans defaultMode),?_,?_⟩
+  · intro key distinct
+    exact (returnUnrelated key (by simpa only [idEq] using distinct)).trans (entryUnrelated key distinct)
   · intro rank topRoot
     exact retainsRoot rank (prevCache topRoot)
   · rw [physicalReturn, physicalEntry]
     rfl
+  · rw [exactRelease,exactFrozen,registeredTags]
+  · rw [returnedTags,registeredTags]
 
 end DuplicatePrefix.AsMutRootRoundtrip
 

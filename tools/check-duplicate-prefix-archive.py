@@ -214,8 +214,37 @@ LOCAL = {
     "RuntimeZeroCurrentUncached",
     "EmptyIntegerPrefix",
     "RootLocalBoolReturn",
+    "AsMutHolderScope",
+    "FrozenReborrowInputs",
+    "FrozenReborrowScope",
+    "LenExitFacts",
+    "PositiveRetagResources",
+    "RawHolderScope",
+    "RetagCapacityFrame",
+    "RetagInsertionCapacity",
+    "RetagStageImage",
+    "RetagSuccessorCapacity",
+    "RootAcceptedAfterLen",
+    "RootAcceptedAsMut",
+    "RootAcceptedPreparation",
+    "RootAsMutReservation",
+    "RootPositiveCachedReturn",
+    "RootPositiveFromLength",
+    "RootPositiveToCachedCaller",
+    "ScopedReleaseMaterialization",
+    "SharedKeyResources",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
+CLIENT_IMPORTS = re.compile(rb"^import ([A-Za-z][A-Za-z0-9_]*)(?:\.([A-Za-z0-9_]+))?\s*$", re.MULTILINE)
+
+
+def client_imports(data):
+    for namespace, module in CLIENT_IMPORTS.findall(data):
+        name = namespace.decode()
+        if name == "empty_function" and module == b"FrameExit":
+            yield "empty_function.FrameExit"
+        elif not module and (name == "Representative" or (CLIENT / f"{name}.lean").is_file()):
+            yield name
 ALLOWED = {"propext", "Quot.sound", "Classical.choice"}
 
 
@@ -287,6 +316,67 @@ def input_copy(source, output):
     shutil.copyfile(source, output / ARCHIVE_DIR / "input.json")
 
 
+def install_clients(output, targets, generated, input_file):
+    sources = output / "client"
+    sources.mkdir()
+    dependencies = {}
+
+    def visit(name):
+        if name in dependencies:
+            return
+        if name == "Representative":
+            path = generated
+        elif name == "empty_function.FrameExit":
+            path = REPO / "examples/empty_function/FrameExit.lean"
+        else:
+            path = CLIENT / f"{name}.lean"
+        if path is None or not path.is_file():
+            raise SystemExit(f"missing source for {name}; provide --generated for Representative")
+        data = path.read_bytes()
+        source = sources.joinpath(*name.split(".")).with_suffix(".lean")
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(data)
+        clients = set(client_imports(data))
+        archive = {"duplicate_prefix." + item.decode() for item in IMPORTS.findall(data)}
+        dependencies[name] = clients | archive
+        for parent in sorted(clients):
+            visit(parent)
+
+    for name in targets:
+        visit(name)
+    if "Representative" in dependencies:
+        shutil.copyfile(input_file, sources / "Representative.mir.json")
+    return dependencies
+
+
+def install_graph(output, archive_targets, client_targets, generated, input_file):
+    client_targets = list(client_targets)
+    clients = install_clients(output, client_targets, generated, input_file)
+    targets = set(archive_targets or (CHECKED if not clients else ()))
+    while True:
+        targets.update(
+            name.removeprefix("duplicate_prefix.")
+            for parents in clients.values() for name in parents if name.startswith("duplicate_prefix.")
+        )
+        archive = install_sources(output, sorted(targets))
+        extra = set()
+        for name, parents in archive.items():
+            data = (output / ARCHIVE_DIR / f"{name}.lean").read_bytes()
+            direct = set(client_imports(data))
+            extra.update(direct - clients.keys())
+            clients["duplicate_prefix." + name] = {
+                "duplicate_prefix." + parent for parent in parents
+            } | direct
+        if not extra:
+            break
+        targets.update(archive)
+        shutil.rmtree(output / ARCHIVE_DIR)
+        shutil.rmtree(output / "client")
+        client_targets.extend(sorted(extra))
+        clients = install_clients(output, client_targets, generated, input_file)
+    return clients
+
+
 def compile_proofs(output, dependencies, library, jobs):
     objects = output / "duplicate_prefix"
     objects.mkdir()
@@ -301,12 +391,20 @@ def compile_proofs(output, dependencies, library, jobs):
         raise SystemExit("put the pinned lean executable on PATH")
 
     def build(name):
-        source = output / ARCHIVE_DIR / f"{name}.lean"
+        archive, _, module = name.partition(".")
+        if archive == "duplicate_prefix":
+            source_root = output / "examples"
+            source = output / ARCHIVE_DIR / f"{module}.lean"
+            object_file = objects / f"{module}.olean"
+        else:
+            source_root = output / "client"
+            source = source_root.joinpath(*name.split(".")).with_suffix(".lean")
+            object_file = output.joinpath(*name.split(".")).with_suffix(".olean")
+            object_file.parent.mkdir(parents=True, exist_ok=True)
         path = logs / f"{name}.log"
         with path.open("wb") as log:
             result = subprocess.run(
-                [lean, "-j1", f"--root={output / 'examples'}", "-o",
-                 str(objects / f"{name}.olean"), str(source)],
+                [lean, "-j1", f"--root={source_root}", "-o", str(object_file), str(source)],
                 cwd=output, env=env, stdout=log, stderr=subprocess.STDOUT,
             )
         details = path.read_text(errors="replace")
@@ -348,9 +446,11 @@ def main():
     parser.add_argument("--library", type=Path, default=REPO / ".lake/build/lib/lean",
                         help="prebuilt library artifacts")
     parser.add_argument("--target", action="append", help="override coverage with archive module names")
+    parser.add_argument("--client", action="append", default=[], help="check a current example and its archive dependencies")
+    parser.add_argument("--generated", type=Path, help="Representative.lean emitted alongside the supplied MIR")
     parser.add_argument("--jobs", type=int, default=2)
     args = parser.parse_args()
-    if args.jobs < 1 or any(not name.isidentifier() for name in args.target or []):
+    if args.jobs < 1 or any(not name.isidentifier() for name in (args.target or []) + args.client):
         parser.error("use a positive job count and archive module identifiers")
     present = subprocess.run(
         ["git", "cat-file", "-e", f"{ARCHIVE}^{{commit}}"], cwd=REPO
@@ -359,9 +459,9 @@ def main():
         parser.error(f"fetch the pinned proof archive revision with git fetch origin {ARCHIVE}")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    dependencies = install_sources(output, args.target or CHECKED)
+    dependencies = install_graph(output, args.target, args.client, args.generated, args.input.resolve())
     input_copy(args.input.resolve(), output)
-    print(f"Checking {len(dependencies)} modules from {ARCHIVE}", flush=True)
+    print(f"Checking {len(dependencies)} modules with archive revision {ARCHIVE}", flush=True)
     return compile_proofs(output, dependencies, args.library.resolve(), args.jobs)
 
 

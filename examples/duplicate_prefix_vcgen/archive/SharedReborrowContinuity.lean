@@ -91,6 +91,7 @@ structure SharedChildFrame (original read after : BorrowTree) (parent child : Un
   olderExposure : ∀ query, query ≠ child →
     (after.nodeAt query).map TreeNode.isExposed = (original.nodeAt query).map TreeNode.isExposed
   olderTags : ∀ query, query ≠ tag → after.indexOfTag query = original.indexOfTag query
+  inserted : original.tagMapping.insert tag = .Inserted after.tagMapping child
   appended : original.tagMapping.deassigned = #[] →
     original.tagMapping.mapping.size = original.nodes.size →
     after.tagMapping.deassigned = #[] ∧
@@ -414,7 +415,7 @@ theorem concrete_shared_readable_reborrow_with_frame
       have values := Option.some.inj same
       exact ⟨previous, rfl, (congrArg Prod.fst values).symm, congrArg (fun v => v.2.2) values⟩
   have footprint : SharedChildFrame tree read.tree result.tree parent child tag offset length inside := by
-    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro index data distinct found
       obtain ⟨previous, existsBefore, tag, permission⟩ := oldNodes index data distinct found
       exact ⟨previous, by
@@ -462,6 +463,11 @@ theorem concrete_shared_readable_reborrow_with_frame
         mapping child different selected
       change result.tree.indexOfTag query = read.tree.indexOfTag query at ran
       simpa only [BorrowTree.indexOfTag, sameMap] using ran
+    · have same := newChild_keyMap read.tree offset (.concrete parentTag) tag inside .Frozen held
+        mapping child selected
+      change tree.tagMapping.insert tag = .Inserted result.tree.tagMapping child
+      rw [same, ← sameMap]
+      exact selected
     · intro empty alignedOriginal
       have emptyRead : read.tree.tagMapping.deassigned = #[] := by rw [sameMap]; exact empty
       obtain ⟨pool, mapSize, indexSize⟩ :=

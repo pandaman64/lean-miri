@@ -122,6 +122,7 @@ theorem completedPointer
 
 /-- The actual shared receiver tree and its surviving attachment facts. -/
 def FrameGrant (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    {originalMemory : MemoryState Provenance BorrowTree MiriMemoryKind}
     (entry : LocalAllocation Provenance BorrowTree MiriMemoryKind)
     (id : AllocId) (parentTag tag : BorTag) (parent : UniIndex) (offset len : UInt64)
     (protectors : ProtectedTags) : Prop :=
@@ -129,10 +130,13 @@ def FrameGrant (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootU
     (Size.ofBytes len) .Read protectors .VisitChildrenOfAccessed
   let inside := DedupRangeMap.new (Size.ofBytes len) sharedState
   let result := read.tree.newChild (Size.ofBytes offset) (.concrete parentTag) tag inside .Frozen true
-  ∃ index, machine.memory.live[id]? = some {entry with allocation := entry.allocation.setExtra result.tree} ∧
+  let installed := {entry with allocation := entry.allocation.setExtra result.tree}
+  ∃ index, machine.memory.live[id]? = some installed ∧
     result.tree.indexOfTag tag = some index ∧
     SharedChildFrame entry.allocation.extra read.tree result.tree parent index tag (Size.ofBytes offset)
-      (Size.ofBytes len) inside
+      (Size.ofBytes len) inside ∧
+    machine.borrowTracker.map (fun tracker => tracker.global.nextPointerTag.value) = some (tag.value + 1) ∧
+    machine.memory = {originalMemory with live := originalMemory.live.insert id installed}
 
 private theorem uniform_slot (offset length capacity : Size)
     (bounds : offset.bytes.toNat + length.bytes.toNat ≤ capacity.bytes.toNat) :
@@ -146,6 +150,15 @@ private theorem uniform_slot (offset length capacity : Size)
   · simp [DedupRangeMap.new, DedupRangeMap.iterAll, beq_iff_eq, empty] at member
     subst segment
     exact ⟨⟨by simp, bounds⟩, rfl⟩
+
+private theorem successor_value (tag next : BorTag) (chosen : BorTag.succ tag = some next) :
+    next.value = tag.value + 1 := by
+  unfold BorTag.succ BorTag.ofUInt64 at chosen
+  split at chosen
+  · contradiction
+  · split at chosen
+    · contradiction
+    · exact (congrArg BorTag.value (Option.some.inj chosen)).symm
 
 set_option maxHeartbeats 1200000 in
 theorem runWithFrame
@@ -205,7 +218,7 @@ theorem runWithFrame
         newTracker.global.protectedTags = borrow.global.protectedTags.insert tag .StrongProtector ∧
         ReadGrant after entry id tag root offset len newTracker.global.protectedTags ∧
         after = {machine with memory := after.memory, borrowTracker := after.borrowTracker} ∧
-        FrameGrant after entry id parentTag tag parent offset len newTracker.global.protectedTags := by
+        FrameGrant after (originalMemory := machine.memory) entry id parentTag tag parent offset len newTracker.global.protectedTags := by
   intro cfg parentPtr childPtr input output tagged
   let initial := Storage.withCurrent frames frame machine
   have roomForTag : borrow.global.nextPointerTag.value ≠ 18446744073709551615 := by
@@ -219,6 +232,14 @@ theorem runWithFrame
     · contradiction
     · have pair := Except.ok.inj allocation
       exact (congrArg (fun data : GlobalState × BorTag => data.1.protectedTags) pair).symm
+  have counter : nextGlobal.nextPointerTag.value = borrow.global.nextPointerTag.value + 1 := by
+    have step := allocation
+    cases selected : BorTag.succ borrow.global.nextPointerTag with
+    | none => simp only [GlobalState.newPointerTag, selected, reduceCtorEq] at step
+    | some next =>
+      simp only [GlobalState.newPointerTag, selected] at step
+      have actual := congrArg (fun data : GlobalState × BorTag => data.1.nextPointerTag.value) (Except.ok.inj step)
+      exact actual.symm.trans (successor_value borrow.global.nextPointerTag next selected)
   let nextTracker : MachineHooks.BorrowState := {borrow with global := nextGlobal}
   let allocatedState : RootState := {initial with machine := {initial.machine with borrowTracker := some nextTracker}}
   let info : RetagPipeline.ResolvedLocation := ⟨id, Size.ofBytes offset, .concrete parentTag⟩
@@ -328,7 +349,12 @@ theorem runWithFrame
         coherent parentNode parentStored roots parentFound depth rank tagFresh room aligned reuse clean
         (fun segment member => (each segment member).1)
         (fun segment member => (each segment member).2) bounds allowed
-    exact ⟨index, afterLive, lookup, framed⟩
+    refine ⟨index, afterLive, lookup, framed, ?_, ?_⟩
+    · rw [trackerAfter, tagEq]
+      exact congrArg some counter
+    · exact MemoryCopyBridge.live_update_twice machine.memory id
+        {entry with allocation := entry.allocation.setExtra read.tree}
+        {entry with allocation := entry.allocation.setExtra child.tree}
 
 theorem run
     (options : EvalConfigurationCore.Options) (remaining : Nat)

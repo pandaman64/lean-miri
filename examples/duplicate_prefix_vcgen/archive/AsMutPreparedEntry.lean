@@ -78,6 +78,7 @@ theorem prepared
       after.user.payload.payload.user.host = machine.user.payload.payload.user.host ∧
       after.user.payload.payload.user.backend = machine.user.payload.payload.user.backend ∧
       after.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras ∧
+      (∀ key, key ≠ storage.id → after.memory.live[key]? = machine.memory.live[key]?) ∧
       after.threads.fixedScheduling = machine.threads.fixedScheduling ∧
       after.threads.activeThread? = some (PushThread.after thread (older.push caller).size
         (AsMutCurrentEntry.rawFrame options before dest).extra.userRelevance relevant.extra.userRelevance) ∧
@@ -95,7 +96,10 @@ theorem prepared
         RetagReleaseFootprint.MaterializedWithin next.entry.allocation.extra right.source
           next.relativeStart.bytes (next.relativeStart.bytes + length) ∧
         RetagReleaseFootprint.VacantRows next.entry.allocation.extra ∧
-        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } := by
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
+        next.entry.allocation.extra = ExclusiveTypedRetag.protectedFrozenTree storage.entry.allocation.extra
+          loan.tracker.global.protectedTags parentTag tag storage.relativeStart (Size.ofBytes length) ∧
+        right.tracker.global.protectedTags = loan.tracker.global.protectedTags.insert tag .StrongProtector := by
   intro cfg h before dest tag ptr child value expected top populated
   let raw := AsMutCurrentEntry.rawFrame options before dest
   let pushed := (AsMutPush.completed options.userRelevantCrates before dest relevant).machine
@@ -146,7 +150,7 @@ theorem prepared
   have size : raw.locals.size = 5 := rawSize options before dest
   have v : 1 < raw.locals.size := by rw [size]; decide
   obtain ⟨installed, after, exactInstall, owned, i1, saved, continuation, body, identity, callee, clock, installedSize, varargs, kept,
-    user, race, threads, next, rights, idEq, offsetEq, sameMode, roots, nextSize, node, materialized, vacant, allocationFrame⟩ :=
+    user, race, threads, unrelated, next, rights, idEq, offsetEq, sameMode, roots, nextSize, node, materialized, vacant, allocationFrame, frozenTree, frozenTags⟩ :=
     AsMutCurrentArgument.install options limits remaining fuel sizeFuel span budget sizeBudget debugOff preciseOff implicitOff
       (older.push caller) raw pushed length base parentTag positive bounded v rfl rfl rfl
       (by with_unfolding_all rfl) (by with_unfolding_all rfl) {} ledger clocks retainedRace
@@ -171,8 +175,11 @@ theorem prepared
     simp only [pushed, AsMutPush.completed, AsMutPush.fresh, CallEntryFacts.freshRoot,
       GenericPushRelevance.afterPush, Storage.withCurrent]
     split <;> rfl
+  have keys : ∀ key, key ≠ storage.id → after.memory.live[key]? = machine.memory.live[key]? := by
+    intro key distinct
+    rw [unrelated key distinct,retainedMemory]
   refine ⟨entered,after,total,rfl,body,identity,callee,retainedReturn,retainedContinuation,clock.trans clocks,?_,?_,
-    owned,?_,?_,?_,?_,?_,race,?_,?_,?_,sameExtras,?_,?_,?_,?_,?_⟩
+    owned,?_,?_,?_,?_,?_,race,?_,?_,?_,sameExtras,keys,?_,?_,?_,?_,?_⟩
   · simpa [entered,AsMutCurrentEntry.done,AsMutDone.doneFrame,CallEntryFacts.liveSlot] using installedSize.trans size
   · change installed.vaList = #[]
     exact varargs
@@ -215,7 +222,7 @@ theorem prepared
     exact retainedNoAlias
   let nextStorage : InitializedRegion state length := {next with live := next.live}
   let rawRights : ExclusiveRegion state length nextStorage tag := {rights with tracked := rights.tracked}
-  exact ⟨nextStorage,rawRights,idEq,offsetEq,sameMode,roots,nextSize,node,materialized,vacant,allocationFrame⟩
+  exact ⟨nextStorage,rawRights,idEq,offsetEq,sameMode,roots,nextSize,node,materialized,vacant,allocationFrame,frozenTree,frozenTags⟩
 
 end DuplicatePrefix.AsMutPreparedEntry
 

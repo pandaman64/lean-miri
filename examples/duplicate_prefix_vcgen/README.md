@@ -118,6 +118,31 @@ plan for an empty argument's dormant protector, and
 physical return-slot release from bytewise ownership. These release lemmas
 supply individual cases of the all-count argument.
 
+### All counts for a nonempty slice with a cached Boolean return
+
+[VerifyAllCountCanonical.lean](VerifyAllCountCanonical.lean) proves
+`DuplicatePrefix.RootZeroShallowReturn.allCountsFromCanonicalAdmitted`.
+For any `UInt64` count, it discharges the generated safety condition from a
+prepared nonempty initialized slice and a nested cached Boolean destination.
+The theorem also requires the pinned compiler control profile, dense tag-table
+append capacity for four fresh keys and tags, and the checked Shallow,
+fixed-scheduling, no-GC, no-race configuration. The proof derives the actual
+zero-count, rejecting, or copying execution and its return from those
+initial conditions.
+
+Generate the standalone obligation and check the proof closure with the
+pinned Lean executable on `PATH` and the repository library built.
+
+```sh
+out="$PWD/scratch/duplicate-prefix-vcgen"
+mkdir -p "$out"
+tools/body-vc safety examples/duplicate_prefix_vcgen/duplicate_prefix.rs \
+  --output "$out/Representative.lean" --no-check
+python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
+  --generated "$out/Representative.lean" --client VerifyAllCountCanonical \
+  --output "$PWD/scratch/duplicate-prefix-all-count"
+```
+
 ### Recheck migrated archive components
 
 The archive overlay imports the current standalone MIR and rebuilds its proof
@@ -125,8 +150,9 @@ modules against the current interpreter. It pins the old source revision and
 applies [ArchiveMigration.patch](ArchiveMigration.patch) only in a fresh
 output directory. Its default target set covers the typed compiler metadata,
 the root's exact ABI and declaration spans, canonical frame initialization
-queries, and selected allocation, retagging and copy bridges. The all-count
-archive still needs further migration.
+queries, and selected allocation, retagging and copy bridges. The optional
+client target above recompiles the proof for nonempty slices and a cached
+Boolean return.
 
 ```sh
 git fetch origin 7950c01b18013969c360df535b8b888dd6181dff

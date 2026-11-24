@@ -1188,13 +1188,14 @@ vector-clock backend.
   topology independently of execution. The exact emitted VC is proved for
   zero-count calls under the stated Shallow and protector premises, both for
   a physical root destination and for a nested local Boolean destination.
-  The emitted VC is also proved for nonempty slices and counts above half
-  the length under the nested cached destination and dense tag-table premises.
+  The emitted VC is also proved for every `UInt64` count of a nonempty
+  initialized slice under the canonical compiler profile, nested cached
+  Boolean return, and dense tag-table capacity premises.
   Integer-address empty slices with no provenance also have a proof for all
   nonzero counts and a cached local Boolean return. Separate proofs connect
   exclusive Tree Borrows permissions to reborrow and the positive copy helper's
-  return. The common all-count proof still needs to join the successful copy
-  path and cover backed and wildcard empty slices and the physical returns.
+  return. Backed and wildcard empty slices and the general physical-return
+  cases remain open.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

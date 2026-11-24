@@ -84,12 +84,20 @@ theorem assigned
       (∀ id, id ≠ 16 → afterFrame.locals[id]? = frame.locals[id]?) ∧
       afterMachine.user = machine.user ∧ afterMachine.dataRace = machine.dataRace ∧
       afterMachine.threads = machine.threads ∧
-      ∃ (next : InitializedRegion (Storage.withCurrent older afterFrame afterMachine) length)
+      (∀ key, key ≠ storage.id → afterMachine.memory.live[key]? = machine.memory.live[key]?) ∧
+      (∃ (next : InitializedRegion (Storage.withCurrent older afterFrame afterMachine) length)
         (right : ExclusiveRegion (Storage.withCurrent older afterFrame afterMachine) length next newTag),
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
         next.entry.allocation.extra.roots = #[root] ∧
         next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
-        right.tracker.retagMode = loan.tracker.retagMode := by
+        right.tracker.retagMode = loan.tracker.retagMode ∧
+        loan.tracker.global.newPointerTag = .ok (right.tracker.global, newTag) ∧
+        next.entry.allocation.extra = ExclusiveTwoPhaseRetag.reservationTree storage.entry.allocation.extra
+          parentTag newTag storage.relativeStart (Size.ofBytes length) loan.tracker.global.protectedTags ∧
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra }) ∧
+      afterFrame.trackCallerArg = frame.trackCallerArg ∧
+      afterFrame.returnPlace = frame.returnPlace ∧ afterFrame.returnContinuation = frame.returnContinuation ∧
+      afterFrame.vaList = frame.vaList ∧ afterFrame.localsIdentity = frame.localsIdentity := by
   intro cfg oldPointer oldValue newTag newPointer newValue arg
   let innerCfg := PreparedContracts.actualConfig options () remaining span
   have sameTarget : cfg.access.runtime = innerCfg.access.runtime := by
@@ -109,7 +117,7 @@ theorem assigned
   let activeTracker := {loan.tracker with retagMode := .TwoPhase}
   let activeLoan : ExclusiveRegion active length activeStorage parentTag :=
     {loan with tracker := activeTracker, tracked := rfl}
-  obtain ⟨effect, retagged, stack, user, race, threads, next, rights, idEq, offsetEq, roots, nextSize, _⟩ :=
+  obtain ⟨effect, retagged, stack, user, race, threads, unrelated, next, rights, idEq, offsetEq, roots, nextSize, _, advanced, exactTree, physical⟩ :=
     CurrentTwoPhaseStructural.retag options remaining span sizeFuel sizeBudget preciseOff implicitOff
       RootCompilerFacts.sliceLayout referenceTy active length base parentTag activeStorage activeLoan rfl
       address positive bounded tagRoom noRace root capacity extent cmp metadata noAlias
@@ -159,9 +167,11 @@ theorem assigned
       cases current with
       | mk addresses payload alignment =>
         cases payload
-        simp_all
+        simp only at off
+        cases off
+        rfl
     exact clear machine.user ghost
-  refine ⟨finalFrame,finalMachine,exactStep,rfl,?_,rfl,rfl,rfl,rfl,?_,?_,originalUser,race.trans noRace.symm,threads,?_⟩
+  refine ⟨finalFrame,finalMachine,exactStep,rfl,?_,rfl,rfl,rfl,rfl,?_,?_,originalUser,race.trans noRace.symm,threads,unrelated,?_,rfl,rfl,rfl,rfl,rfl⟩
   · simp [finalFrame,written,stored,cached,cacheDestination,LocalPlaces.cachePlaceLayout,CurrentReferenceLocalWrite.written,storedSize]
   · simp [finalFrame,written,stored,cached,cacheDestination,LocalPlaces.cachePlaceLayout,CurrentReferenceLocalWrite.written]
   · intro id different
@@ -171,7 +181,7 @@ theorem assigned
   let finalTracker := {rights.tracker with retagMode := loan.tracker.retagMode}
   let finalRights : ExclusiveRegion final length finalStorage newTag :=
     {rights with tracker := finalTracker, tracked := rfl}
-  exact ⟨finalStorage,finalRights,idEq,offsetEq,roots,nextSize,rfl⟩
+  exact ⟨finalStorage,finalRights,idEq,offsetEq,roots,nextSize,rfl,advanced,exactTree,physical⟩
 
 end DuplicatePrefix.RootTwoPhaseComplete
 

@@ -69,6 +69,7 @@ theorem install
       (∀ i, i ≠ 1 → afterFrame.locals[i]? = frame.locals[i]?) ∧
       afterMachine.user = machine.user ∧ afterMachine.dataRace = none ∧
       afterMachine.threads = machine.threads ∧
+      (∀ key, key ≠ storage.id → afterMachine.memory.live[key]? = machine.memory.live[key]?) ∧
       ∃ (next : InitializedRegion (Storage.withCurrent older afterFrame afterMachine) length)
         (right : ExclusiveRegion (Storage.withCurrent older afterFrame afterMachine) length next tag),
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
@@ -79,7 +80,10 @@ theorem install
         RetagReleaseFootprint.MaterializedWithin next.entry.allocation.extra right.source
           next.relativeStart.bytes (next.relativeStart.bytes + length) ∧
         RetagReleaseFootprint.VacantRows next.entry.allocation.extra ∧
-        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } := by
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
+        next.entry.allocation.extra = ExclusiveTypedRetag.protectedFrozenTree storage.entry.allocation.extra
+          loan.tracker.global.protectedTags parentTag tag storage.relativeStart (Size.ofBytes length) ∧
+        right.tracker.global.protectedTags = loan.tracker.global.protectedTags.insert tag .StrongProtector := by
   intro cfg h atAddress oldPointer oldValue tag newValue
   let innerCfg := PreparedContracts.actualConfig options () remaining span
   have target : cfg.access.runtime = innerCfg.access.runtime := by
@@ -102,7 +106,7 @@ theorem install
   have current : active.stack.currentFrame? = some stored := by
     simp [active,pre,Storage.withCurrent,Stack.currentFrame?]
   let tagged := {stored with extra := {stored.extra with borrowTracker := some (ledger.addProtector storage.id tag)}}
-  obtain ⟨effect, retagged, stack, user, race, threads, next, rights, idEq, offsetEq, roots, nextSize, node, materialized, vacant, allocationFrame⟩ :=
+  obtain ⟨effect, retagged, stack, user, race, threads, unrelated, next, rights, idEq, offsetEq, roots, nextSize, node, materialized, vacant, allocationFrame, frozenTree, frozenTags⟩ :=
     CurrentAsMutStrong.retag options remaining span sizeFuel sizeBudget preciseOff implicitOff reference reference_ty
       active length base parentTag activeStorage activeLoan rfl stored ledger current frameLedger callee
       address positive bounded tagRoom noRace root capacity extent cmp metadata noAlias
@@ -166,7 +170,7 @@ theorem install
         cases off
         rfl
     exact clear machine.user ghost
-  refine ⟨written,finalMachine,scopeAction,rfl,?_,rfl,rfl,rfl,rfl,rfl,rfl,?_,rfl,?_,stableUser,race,threads,?_⟩
+  refine ⟨written,finalMachine,scopeAction,rfl,?_,rfl,rfl,rfl,rfl,rfl,rfl,?_,rfl,?_,stableUser,race,threads,unrelated,?_⟩
   · simp [written, tagged, stored, live, cached,CurrentReferenceLocalWrite.written,AsMutCurrentInstall.cacheFrame,AsMutCurrentInstall.spanFrame,LocalOperands.cachedLayoutFrame]
   · simp [written, tagged, stored, live, cached,CurrentReferenceLocalWrite.written,AsMutCurrentInstall.cacheFrame,AsMutCurrentInstall.spanFrame,LocalOperands.cachedLayoutFrame]
   · intro i different
@@ -174,7 +178,7 @@ theorem install
   let resultStorage : InitializedRegion final length := {next with live := next.live}
   let resultRights : ExclusiveRegion final length resultStorage tag :=
     {rights with tracker := releasedMode, tracked := rfl}
-  exact ⟨resultStorage,resultRights,idEq,offsetEq,rfl,roots,nextSize,node,materialized,vacant,allocationFrame⟩
+  exact ⟨resultStorage,resultRights,idEq,offsetEq,rfl,roots,nextSize,node,materialized,vacant,allocationFrame,frozenTree,frozenTags⟩
 
 end DuplicatePrefix.AsMutCurrentArgument
 

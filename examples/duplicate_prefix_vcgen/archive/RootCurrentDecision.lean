@@ -1,3 +1,4 @@
+import duplicate_prefix.LocalDirectness
 import duplicate_prefix.RootGuardStatements
 import duplicate_prefix.RootGuardSwitch
 import duplicate_prefix.SuccessfulTrace
@@ -61,6 +62,26 @@ theorem decisionFrameShape (frame : CompilerFrameContext.ActualFrame) (len count
   intro id a b c
   simp [Ne.symm a,Ne.symm b,Ne.symm c]
 
+theorem decisionImmediate (frame : CompilerFrameContext.ActualFrame) (len count : UInt64)
+    (capacity : 11 < frame.locals.size) (direct : CopyHelperCleanup.AllImmediate frame) :
+    CopyHelperCleanup.AllImmediate (decisionFrame frame len count capacity) := by
+  have divided : CopyHelperCleanup.AllImmediate (dividedFrame frame len capacity) := by
+    unfold dividedFrame
+    exact LocalDirectness.written_at frame 10 _ _ _ _ direct
+  have retired : CopyHelperCleanup.AllImmediate (retiredFrame frame len capacity) :=
+    LocalDirectness.dead (dividedFrame frame len capacity) ⟨4,1⟩ 11 _ divided
+  unfold decisionFrame comparedFrame
+  exact LocalDirectness.written_at (retiredFrame frame len capacity) 8 _ _ _ _ retired
+
+theorem decisionStatic (frame : CompilerFrameContext.ActualFrame) (len count : UInt64)
+    (capacity : 11 < frame.locals.size) :
+    let output := decisionFrame frame len count capacity
+    output.trackCallerArg = frame.trackCallerArg ∧
+    output.returnPlace = frame.returnPlace ∧ output.returnContinuation = frame.returnContinuation ∧
+    output.vaList = frame.vaList ∧ output.localsIdentity = frame.localsIdentity := by
+  simp [decisionFrame,comparedFrame,retiredFrame,dividedFrame,SourceSteps.deadFrame,
+    ActualLocalCopy.written,LocalPlaces.cachePlaceLayout]
+
 theorem decisionMachineShape (options : EvalConfigurationCore.Options) (remaining : Nat)
     (span : PreparedContracts.FixedSpanQuery)
     (older : Array CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame)
@@ -77,6 +98,26 @@ theorem decisionMachineShape (options : EvalConfigurationCore.Options) (remainin
   unfold decided decisionMachine SourceControl.accounted
   rw [(CanonicalConfigFacts.actual_fields options () remaining span).terminators]
   exact ⟨rfl,rfl,rfl,rfl,rfl,rfl,rfl⟩
+
+theorem decisionPolicy (options : EvalConfigurationCore.Options) (remaining : Nat)
+    (span : PreparedContracts.FixedSpanQuery)
+    (older : Array CompilerFrameContext.ActualFrame) (frame next : CompilerFrameContext.ActualFrame)
+    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (len count : UInt64) (capacity : 11 < frame.locals.size) :
+    let cfg := PreparedContracts.actualConfig options () remaining span
+    let charged := decisionMachine cfg older frame machine len count capacity
+    (EvalProjectionMachine.arrays.get (Storage.withCurrent older next charged)) =
+      (EvalProjectionMachine.arrays.get (Storage.withCurrent older frame machine)) ∧
+    (cfg.terminators.getControl charged.user).checkedArithmetic =
+      (cfg.terminators.getControl machine.user).checkedArithmetic ∧
+    (cfg.terminators.getControl charged.user).gcInterval =
+      (cfg.terminators.getControl machine.user).gcInterval ∧
+    charged.user.payload.payload.user.backend = machine.user.payload.payload.user.backend ∧
+    charged.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras := by
+  intro cfg charged
+  unfold charged decisionMachine SourceControl.accounted
+  rw [(CanonicalConfigFacts.actual_fields options () remaining span).terminators]
+  exact ⟨rfl,rfl,rfl,rfl,rfl⟩
 
 theorem evaluateCurrentBounds
     (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
@@ -179,5 +220,9 @@ end DuplicatePrefix.RootCurrentDecision
 
 #print axioms DuplicatePrefix.RootCurrentDecision.evaluateCurrentBounds
 
+#print axioms DuplicatePrefix.RootCurrentDecision.decisionImmediate
+#print axioms DuplicatePrefix.RootCurrentDecision.decisionStatic
 #print axioms DuplicatePrefix.RootCurrentDecision.decisionFrameShape
 #print axioms DuplicatePrefix.RootCurrentDecision.decisionMachineShape
+
+#print axioms DuplicatePrefix.RootCurrentDecision.decisionPolicy

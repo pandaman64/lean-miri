@@ -104,7 +104,7 @@ theorem stepWithFrame
       ∃ tracker, finalMachine.borrowTracker = some tracker ∧ tracker.retagMode = old.retagMode ∧
         tracker.global.protectedTags = old.global.protectedTags.insert old.global.nextPointerTag .StrongProtector ∧
         CurrentSharedRetag.ReadGrant finalMachine entry id old.global.nextPointerTag root offset len tracker.global.protectedTags ∧
-        CurrentLenFnEntry.FrameGrant finalMachine entry id parentTag old.global.nextPointerTag parent offset len tracker.global.protectedTags ∧
+        CurrentLenFnEntry.FrameGrant finalMachine (originalMemory := machine.memory) entry id parentTag old.global.nextPointerTag parent offset len tracker.global.protectedTags ∧
         finalMachine = {(LenPush.completed options.userRelevantCrates (Storage.withCurrent frames cached machine)
           destination current).machine with memory := finalMachine.memory, borrowTracker := finalMachine.borrowTracker} := by
   intro cfg inner value newValue cachedCaller destination sourceLive

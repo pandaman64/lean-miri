@@ -49,6 +49,7 @@ theorem retag
         {frame with extra := {frame.extra with borrowTracker := some (ledger.addProtector storage.id tag)}}⟩ ∧
       after.machine.user = before.machine.user ∧ after.machine.dataRace = none ∧
       after.machine.threads = before.machine.threads ∧
+      (∀ key, key ≠ storage.id → after.machine.memory.live[key]? = before.machine.memory.live[key]?) ∧
       ∃ (next : InitializedRegion after length) (region : ExclusiveRegion after length next tag),
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
         next.entry.allocation.extra.roots = #[root] ∧
@@ -57,7 +58,10 @@ theorem retag
         RetagReleaseFootprint.MaterializedWithin next.entry.allocation.extra region.source
           next.relativeStart.bytes (next.relativeStart.bytes + length) ∧
         RetagReleaseFootprint.VacantRows next.entry.allocation.extra ∧
-        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } := by
+        next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
+        next.entry.allocation.extra = ExclusiveTypedRetag.protectedFrozenTree storage.entry.allocation.extra
+          loan.tracker.global.protectedTags parentTag tag storage.relativeStart (Size.ofBytes length) ∧
+        region.tracker.global.protectedTags = loan.tracker.global.protectedTags.insert tag .StrongProtector := by
   intro cfg tag atAddress input output
   have facts := CanonicalConfigFacts.actual_fields options () remaining span
   obtain ⟨pointers, table, discriminant, globals, validity, arithmetic, wiring, ensure, sync⟩ := facts.validitySources
@@ -116,7 +120,7 @@ theorem retag
       (storage.relativeStart.bytes + length) storage.entry.allocation.extra.locations := by
     simpa only [tracker, sameProtectors] using owners
   obtain ⟨after, tree, child, reborrowed, live, tracked, _, sizeEq, coherent, roots, childKey,
-    ⟨childData, childNode, childTag, childUnexposed⟩, scope, emptyRows, stack, user, race, threads, childOwners, _⟩ :=
+    ⟨childData, childNode, childTag, childUnexposed⟩, scope, emptyRows, stack, user, race, threads, childOwners, _, frozenTree, unrelated⟩ :=
     ExclusiveTypedRetag.reborrow_exclusive_region_with_footprint h options.limits.retag place (Size.ofBytes length) tag parentTag location
       allocatedState allocatedState allocatedState allocatedState frame ledger tracker storage.entry loan.source root node
       checked resolved (by rw [sources.log]; rfl) rfl current frameLedger rfl storage.live storage.writable
@@ -137,7 +141,7 @@ theorem retag
     rw [allocEq] at key
     change tree.indexOfTag tag = some rights.source at key
     exact Option.some.inj (key.symm.trans childKey)
-  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, threads, next, rights, idEq, offsetEq, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, threads, unrelated, next, rights, idEq, offsetEq, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [allocEq]
     exact roots
   · rw [allocEq]
@@ -150,6 +154,13 @@ theorem retag
     exact emptyRows
   · rw [allocEq]
     rfl
+  · rw [allocEq]
+    have tags : tracker.global.protectedTags = loan.tracker.global.protectedTags := sameProtectors
+    simpa only [Allocation.setExtra, Allocation.mapExtra, tags, location] using frozenTree
+  · have exactTracker : rights.tracker = registeredTracker tracker tag :=
+      Option.some.inj (rights.tracked.symm.trans tracked)
+    rw [exactTracker]
+    exact congrArg (·.insert tag .StrongProtector) sameProtectors
 
 end DuplicatePrefix.CurrentAsMutStrong
 

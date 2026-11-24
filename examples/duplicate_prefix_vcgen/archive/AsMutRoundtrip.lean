@@ -75,6 +75,7 @@ theorem helper
       popped.user = (AsMutCurrentCall.charged options (remaining+1) span machine).user ∧
       popped.threads.fixedScheduling = machine.threads.fixedScheduling ∧
       (∃ presentThread, popped.threads.activeThread? = some presentThread) ∧
+      (∀ key, key ≠ storage.id → popped.memory.live[key]? = machine.memory.live[key]?) ∧
       (caller.extra.userRelevance = 255 →
         (thread.topUserRelevantFrame = some frames.size ∨ thread.topUserRelevantFrame = some (frames.push caller).size) →
         ∃ reported, popped.threads.activeThread? = some reported ∧ reported.topUserRelevantFrame = some frames.size) ∧
@@ -83,8 +84,11 @@ theorem helper
         next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
         next.entry.allocation.extra.roots = storage.entry.allocation.extra.roots ∧
         next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
+        next.entry.allocation.extra =
+          (storage.entry.allocation.extra.releaseProtector tag region.tracker.global.protectedTags).tree ∧
         ∃ right : ExclusiveRegion (Storage.withCurrent frames returned popped) length next tag,
-          right.tracker.retagMode = region.tracker.retagMode := by
+          right.tracker.retagMode = region.tracker.retagMode ∧
+          right.tracker.global.protectedTags = region.tracker.global.protectedTags.remove tag := by
   intro cfg before pointer value returned argument
   let inner := PreparedContracts.actualConfig options () remaining span
   have target : cfg.access.runtime = inner.access.runtime := by
@@ -145,14 +149,14 @@ theorem helper
   have cachedTop : FrameRelevance.top ⟨(frames.push caller).push done⟩ thread.topUserRelevantFrame = some relevance := by
     unfold FrameRelevance.top at cached ⊢
     simpa only [Array.isEmpty_push, Array.size_push] using cached
-  obtain ⟨popped,ret,unchanged,race,finalUser,fixedStill,activeThread,exactThreads,next,idEq,offsetEq,physical,rootsStill,extentStill,resultRights,modeStill⟩ :=
+  obtain ⟨popped,ret,unchanged,race,finalUser,fixedStill,activeThread,exactThreads,unrelated,next,idEq,offsetEq,physical,rootsStill,extentStill,releaseImage,resultRights,modeStill,protectedAfter⟩ :=
     AsMutReturnStep.returns options limits remaining span fuel debugOff validationFuel frames caller done machine length base tag
       stored rights (doneBody.trans body) atReturn valid0 (by rw [resultSlot]) (by rw [resultSlot])
       (by rw [doneExtra]; exact noClocks) callerId callerValid destCached destLive callerClocks
       (by rw [doneReturn]; exact destination) (by rw [doneContinuation]; exact continuation) direct (by rw [doneVarargs]; exact noVarargs)
       owned (by rw [doneExtra]; exact ledger) one root roots node nodeFound unexposed materialized vacant fits
       thread relevance current cachedTop ghost shallow fixed unchecked noGc
-  refine ⟨popped,SuccessfulTrace.append trace (.next ret (.refl _)),unchanged,race,finalUser,fixedStill,activeThread,?_,next,idEq,offsetEq,physical,rootsStill,extentStill,resultRights,modeStill⟩
+  refine ⟨popped,SuccessfulTrace.append trace (.next ret (.refl _)),unchanged,race,finalUser,fixedStill,activeThread,unrelated,?_,next,idEq,offsetEq,physical,rootsStill,extentStill,releaseImage,resultRights,modeStill,protectedAfter⟩
   intro callerRank priorCache
   have index : relevance = thread.topUserRelevantFrame.getD (frames.push caller).size := by
     rcases priorCache with top | top

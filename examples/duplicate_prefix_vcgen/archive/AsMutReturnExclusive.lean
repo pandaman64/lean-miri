@@ -38,13 +38,17 @@ theorem pop
       popped.threads.fixedScheduling = machine.threads.fixedScheduling ∧
       (∃ presentThread, popped.threads.activeThread? = some presentThread) ∧
       popped.threads = (ActiveRelease.afterRelevance (frames.push caller) frame machine relevance).threads ∧
+      (∀ key, key ≠ storage.id → popped.memory.live[key]? = machine.memory.live[key]?) ∧
       ∃ next : InitializedRegion (Storage.withCurrent frames caller popped) length,
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
         next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
         next.entry.allocation.extra.roots = storage.entry.allocation.extra.roots ∧
         next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
+        next.entry.allocation.extra =
+          (storage.entry.allocation.extra.releaseProtector tag region.tracker.global.protectedTags).tree ∧
         ∃ right : ExclusiveRegion (Storage.withCurrent frames caller popped) length next tag,
-          right.tracker.retagMode = region.tracker.retagMode := by
+          right.tracker.retagMode = region.tracker.retagMode ∧
+          right.tracker.global.protectedTags = region.tracker.global.protectedTags.remove tag := by
   intro cfg hooks
   have fields := CanonicalConfigFacts.actual_fields options () remaining span
   obtain ⟨pointers, table, globals, choice, wired, _, _, ensure, sync⟩ := fields.retagConstruction
@@ -60,7 +64,7 @@ theorem pop
   have all := RetagReleaseFootprint.active_of_footprint storage.entry.allocation.extra
     region.tracker.global.protectedTags region.source storage.relativeStart.bytes
     (storage.relativeStart.bytes + length) region.coherent materialized vacant gives
-  obtain ⟨state, stack, user, race, fixed, activeThread, exactThreads, right, exactWP⟩ :=
+  obtain ⟨state, stack, user, race, fixed, activeThread, exactThreads, unrelated, right, exactWP⟩ :=
     RetagReleaseRights.popExclusive_with_frame .global globals hooks ensureEq (frames.push caller) frame machine
       length storage tag region same owned ledger one root roots node nodeFound unexposed all fits thread relevance current cached
   have afterState : Storage.withCurrent frames caller state.machine = state := by
@@ -83,7 +87,7 @@ theorem pop
       simp [RvalueWP.actionPre,outcome] at exactPop
       obtain ⟨rfl,rfl⟩ := exactPop
       rfl
-  refine ⟨state.machine, ?_, user, race, fixed, activeThread, exactThreads, ?_⟩
+  refine ⟨state.machine, ?_, user, race, fixed, activeThread, exactThreads, unrelated, ?_⟩
   · rw [afterState]
     exact ran
   · rw [afterState]

@@ -84,7 +84,7 @@ theorem installWithFrame
       ∃ tracker, finalMachine.borrowTracker = some tracker ∧ tracker.retagMode = old.retagMode ∧
         tracker.global.protectedTags = old.global.protectedTags.insert old.global.nextPointerTag .StrongProtector ∧
         CurrentSharedRetag.ReadGrant finalMachine entry id old.global.nextPointerTag root offset len tracker.global.protectedTags ∧
-        CurrentLenFnEntry.FrameGrant finalMachine entry id parentTag old.global.nextPointerTag parent offset len tracker.global.protectedTags ∧
+        CurrentLenFnEntry.FrameGrant finalMachine (originalMemory := machine.memory) entry id parentTag old.global.nextPointerTag parent offset len tracker.global.protectedTags ∧
         finalMachine = {machine with memory := finalMachine.memory, borrowTracker := finalMachine.borrowTracker} := by
   intro cfg inner value newValue h
   let cachedFrame := LenInstall.cacheFrame frame valid
@@ -157,8 +157,13 @@ theorem installWithFrame
     dsimp only [finalMachine]
     rw [← clear, restoredUser, machineFrame]
     rfl
+  have finalFrameGrant : CurrentLenFnEntry.FrameGrant finalMachine (originalMemory := machine.memory) entry id parentTag old.global.nextPointerTag
+      parent offset len finalTracker.global.protectedTags := by
+    obtain ⟨index, live, key, attached, counter, heap⟩ := receiverFrame
+    rw [trackedAfter] at counter
+    exact ⟨index, live, key, attached, counter, heap⟩
   refine ⟨written, finalMachine, effect, rfl, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, rfl, ?_,
-    finalTracker, rfl, rfl, newProtected, grant, receiverFrame, stable⟩
+    finalTracker, rfl, rfl, newProtected, grant, finalFrameGrant, stable⟩
   · simp [written, tagged, stored, liveFrame, cachedFrame, CurrentReferenceLocalWrite.written,
       LenArgument.liveFrame, LenInstall.cacheFrame, LenInstall.spanFrame, LocalOperands.cachedLayoutFrame, reference]
   · simp [written, tagged, stored, liveFrame, cachedFrame, CurrentReferenceLocalWrite.written,

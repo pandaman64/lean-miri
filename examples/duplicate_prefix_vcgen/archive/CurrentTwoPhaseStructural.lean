@@ -90,6 +90,7 @@ theorem retag
     ∃ after : RootState, cfg.validity.retagPointer () input reference.ty before = .ok (some output) after ∧
       after.stack = before.stack ∧ after.machine.user = before.machine.user ∧ after.machine.dataRace = none ∧
       after.machine.threads = before.machine.threads ∧
+      (∀ key, key ≠ storage.id → after.machine.memory.live[key]? = before.machine.memory.live[key]?) ∧
       ∃ (next : InitializedRegion after length) (right : ExclusiveRegion after length next tag),
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
         next.entry.allocation.extra.roots = #[root] ∧
@@ -156,7 +157,7 @@ theorem retag
     simpa only [tracker, sameProtectors] using owners
   let location : RetagPipeline.ResolvedLocation := ⟨storage.id, storage.relativeStart, .concrete parentTag⟩
   obtain ⟨after, tree, child, reborrowed, live, tracked, stack, user, race, threads, exactTree, sizeEq, coherent, roots, childKey,
-    childNode, childOwners⟩ :=
+    childNode, unrelated, childOwners⟩ :=
     ExclusiveTwoPhaseRetag.reborrow_exclusive h options.limits.retag place (Size.ofBytes length) tag parentTag location
       allocatedState allocatedState allocatedState allocatedState tracker storage.entry loan.source root node
       checked resolved (by rw [sources.log]; rfl) rfl rfl storage.live storage.writable
@@ -178,7 +179,7 @@ theorem retag
     change after.machine.borrowTracker = some rights.tracker at known
     rw [tracked] at known
     exact (Option.some.inj known).symm
-  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, threads, next, rights,
+  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, threads, unrelated, next, rights,
     idEq, offsetEq, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [allocEq]
     exact roots

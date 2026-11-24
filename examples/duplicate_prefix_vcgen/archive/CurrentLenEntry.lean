@@ -88,7 +88,7 @@ theorem initWithFrame
       ∃ tracker, finalMachine.borrowTracker = some tracker ∧ tracker.retagMode = old.retagMode ∧
         tracker.global.protectedTags = old.global.protectedTags.insert old.global.nextPointerTag .StrongProtector ∧
         CurrentSharedRetag.ReadGrant finalMachine entry id old.global.nextPointerTag root offset len tracker.global.protectedTags ∧
-        CurrentLenFnEntry.FrameGrant finalMachine entry id parentTag old.global.nextPointerTag parent offset len tracker.global.protectedTags ∧
+        CurrentLenFnEntry.FrameGrant finalMachine (originalMemory := machine.memory) entry id parentTag old.global.nextPointerTag parent offset len tracker.global.protectedTags ∧
         finalMachine = {(LenPush.completed options.userRelevantCrates (Storage.withCurrent frames caller machine)
           destination current).machine with memory := finalMachine.memory, borrowTracker := finalMachine.borrowTracker} := by
   intro cfg inner value newValue destination
@@ -144,6 +144,10 @@ theorem initWithFrame
     value 11 validDest oldDest destLive destCached localClocks raceOff ghost shallow thread index current active
     top present installed after installedArg (b.trans frameBody) (i.trans identity) (c.trans callee)
     valid0 dead0 (noRace.trans rawRace)
+  have originalHeap : pushed.memory = machine.memory := by
+    rw [pushFrame]
+    rfl
+  rw [originalHeap] at receiverFrame
   let finalFrame := LenDone.doneFrame {installed with location := .unwinding LenEntryFacts.lenPreamble}
   refine ⟨finalFrame, after, init, b.trans frameBody, i.trans identity, c.trans callee, rfl,
     ?_, ?_, ?_, ?_, ledger, returned, continuation, noRace.trans rawRace, vaList, tracker, afterTracked, mode,

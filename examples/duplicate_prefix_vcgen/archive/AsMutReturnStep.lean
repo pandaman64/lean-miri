@@ -64,19 +64,23 @@ theorem returns
       popped.threads.fixedScheduling = machine.threads.fixedScheduling ∧
       (∃ presentThread, popped.threads.activeThread? = some presentThread) ∧
       popped.threads = (ActiveRelease.afterRelevance (frames.push caller) frame machine relevance).threads ∧
+      (∀ key, key ≠ storage.id → popped.memory.live[key]? = machine.memory.live[key]?) ∧
       ∃ next : InitializedRegion (Storage.withCurrent frames returned popped) length,
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
         next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
         next.entry.allocation.extra.roots = storage.entry.allocation.extra.roots ∧
         next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
+        next.entry.allocation.extra =
+          (storage.entry.allocation.extra.releaseProtector tag region.tracker.global.protectedTags).tree ∧
         ∃ right : ExclusiveRegion (Storage.withCurrent frames returned popped) length next tag,
-          right.tracker.retagMode = region.tracker.retagMode := by
+          right.tracker.retagMode = region.tracker.retagMode ∧
+          right.tracker.global.protectedTags = region.tracker.global.protectedTags.remove tag := by
   intro cfg before pointer value returned
   let charged := AsMutCurrentCall.charged options (remaining+1) span machine
   let staged := Storage.withCurrent (frames.push caller) frame charged
   let live : InitializedRegion staged length := {storage with live := storage.live}
   let permission : ExclusiveRegion staged length live tag := {region with tracked := region.tracked}
-  obtain ⟨popped, poppedEq, poppedUser, race, fixedStill, activeThread, exactThreads, next, idEq, offsetEq, physical, rootsStill, extentStill, rights, mode⟩ :=
+  obtain ⟨popped, poppedEq, poppedUser, race, fixedStill, activeThread, exactThreads, unrelated, next, idEq, offsetEq, physical, rootsStill, extentStill, releaseImage, rights, mode, protectedAfter⟩ :=
     AsMutReturnExclusive.pop options (remaining+1) span frames caller frame charged length tag live permission
       owned ledger one root roots node nodeFound unexposed materialized vacant fits thread relevance current cached
   have ghostStill : charged.user.payload.ghost = false := by
@@ -117,7 +121,7 @@ theorem returns
   let final := Storage.withCurrent frames returned popped
   let finalStorage : InitializedRegion final length := {next with live := next.live}
   let finalRights : ExclusiveRegion final length finalStorage tag := {rights with tracked := rights.tracked}
-  refine ⟨popped, ?_, ?_,race,poppedUser,fixedStill,activeThread,?_,finalStorage,idEq,offsetEq,physical,rootsStill,extentStill,finalRights,mode⟩
+  refine ⟨popped, ?_, ?_,race,poppedUser,fixedStill,activeThread,?_,unrelated,finalStorage,idEq,offsetEq,physical,rootsStill,extentStill,releaseImage,finalRights,mode,protectedAfter⟩
   · change ExecutionMachine.step cfg limits () before = (final,.ok true)
     dsimp only at exactStep
     erw [exactStep]

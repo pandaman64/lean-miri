@@ -61,6 +61,16 @@ theorem region_owned (before : State) (length : UInt64)
 /-- The actual one-entry call ledger releases the selected child, keeps its
 raw-byte grants in keyed memory, removes the protector, and returns to the
 original caller stack. -/
+private theorem releasedImage (old final : BorrowTree) (tag : BorTag) (tags : ProtectedTags)
+    (complete : ∀ post failure, ProtectorReleaseWP.releasePre tag tags post failure old ↔ post final) :
+    (old.releaseProtector tag tags).tree = final := by
+  have exactRun := (ProtectorReleaseWP.releasePre_iff tag tags (· = final) (fun _ _ => False) old).mp
+    ((complete _ _).mpr rfl)
+  cases observed : old.releaseProtector tag tags with
+  | mk tree status =>
+    rw [observed] at exactRun
+    cases status <;> exact (by first | exact exactRun | exact exactRun.elim)
+
 theorem popExclusive_with_frame (kind : K) (hooks : GlobalHooks) (retag : TypedRetag.Hooks K U)
     (ensure : retag.ensureTreeExtra = GlobalAllocationMachine.ensure kind hooks)
     (older : Array BorrowFrame) (frame : BorrowFrame) (machine : MachineHooks.MachineState K U)
@@ -83,11 +93,14 @@ theorem popExclusive_with_frame (kind : K) (hooks : GlobalHooks) (retag : TypedR
       after.machine.threads.fixedScheduling = machine.threads.fixedScheduling ∧
       (∃ thread, after.machine.threads.activeThread? = some thread) ∧
       after.machine.threads = (afterRelevance older frame machine relevance).threads ∧
+      (∀ key, key ≠ storage.id → after.machine.memory.live[key]? = machine.memory.live[key]?) ∧
       (∃ next : InitializedRegion after length, next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
         next.entry = { storage.entry with allocation := storage.entry.allocation.setExtra next.entry.allocation.extra } ∧
         next.entry.allocation.extra.roots = storage.entry.allocation.extra.roots ∧
         next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
-        ∃ rights : ExclusiveRegion after length next tag, rights.tracker.retagMode = region.tracker.retagMode) ∧
+        next.entry.allocation.extra = (storage.entry.allocation.extra.releaseProtector tag region.tracker.global.protectedTags).tree ∧
+        ∃ rights : ExclusiveRegion after length next tag, rights.tracker.retagMode = region.tracker.retagMode ∧
+          rights.tracker.global.protectedTags = region.tracker.global.protectedTags.remove tag) ∧
       ∀ post failure, ProtectorReleaseWP.popRawPre retag post failure ⟨⟨older.push frame⟩, machine⟩ ↔ post frame after := by
   let before : State := ⟨⟨older.push frame⟩, machine⟩
   let old := storage.entry.allocation.extra
@@ -99,7 +112,7 @@ theorem popExclusive_with_frame (kind : K) (hooks : GlobalHooks) (retag : TypedR
   let released := releasedMachine before storage.entry storage.id tree region.tracker owned
   let tracker : MachineHooks.BorrowState := {region.tracker with global := region.tracker.global.endCall owned}
   let after : State := ⟨⟨older⟩, afterRelevance older frame released relevance⟩
-  refine ⟨after, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨after, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · by_cases top : relevance = older.size <;> simp [top, after, afterRelevance, released, releasedMachine, before]
   · by_cases top : relevance = older.size <;> simp [top, after, afterRelevance, released, releasedMachine, before]
   · by_cases top : relevance = older.size <;> simp [top, after, afterRelevance, released, releasedMachine, before]
@@ -117,6 +130,9 @@ theorem popExclusive_with_frame (kind : K) (hooks : GlobalHooks) (retag : TypedR
     · have ready : released.threads.activeThread? = some thread := current
       exact ⟨thread, by simpa only [after, afterRelevance, ite_eq_right top] using ready⟩
   · by_cases top : relevance = older.size <;> simp [top, after, afterRelevance, released, releasedMachine, before]
+  · intro key different
+    by_cases top : relevance = older.size <;>
+      simp [top,after,afterRelevance,released,releasedMachine,before,Std.ExtTreeMap.getElem?_insert,Ne.symm different]
   · have stored : after.machine.memory.live[storage.id]? =
         some {storage.entry with allocation := storage.entry.allocation.setExtra tree} := by
       by_cases top : relevance = older.size <;> simp [top, after, afterRelevance, released, releasedMachine, before]
@@ -150,13 +166,15 @@ theorem popExclusive_with_frame (kind : K) (hooks : GlobalHooks) (retag : TypedR
         stored tracked coherent known present extent owns
     obtain ⟨rights⟩ := exclusive
     have sameTracker : rights.tracker = tracker := Option.some.inj (rights.tracked.symm.trans tracked)
-    refine ⟨next, idEq, offsetEq, ?_, ?_, ?_, rights, by rw [sameTracker]⟩
+    refine ⟨next, idEq, offsetEq, ?_, ?_, ?_, ?_, rights, by rw [sameTracker], by rw [sameTracker,newTags]⟩
     · rw [entryEq]
       rfl
     · rw [entryEq,treeShape]
       rfl
     · rw [entryEq]
       exact sameSize
+    · rw [entryEq]
+      exact (releasedImage old tree tag _ release).symm
   · have currentFrame : before.stack.currentFrame? = some frame := by simp [before, Stack.currentFrame?]
     have stackRelease : ∀ post failure, ProtectorReleaseWP.beforeStackPopPre retag.ensureTreeExtra post failure before ↔
         post {before with machine := released} := by
@@ -191,7 +209,7 @@ theorem popExclusive (kind : K) (hooks : GlobalHooks) (retag : TypedRetag.Hooks 
       (∃ next : InitializedRegion after length, next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
         Nonempty (ExclusiveRegion after length next tag)) ∧
       ∀ post failure, ProtectorReleaseWP.popRawPre retag post failure ⟨⟨older.push frame⟩, machine⟩ ↔ post frame after := by
-  obtain ⟨after, stack, user, race, _, _, _, ⟨next, id, offset, _, _, _, rights, _⟩, exactPop⟩ :=
+  obtain ⟨after, stack, user, race, _, _, _, _, ⟨next, id, offset, _, _, _, _, rights, _, _⟩, exactPop⟩ :=
     popExclusive_with_frame kind hooks retag ensure older frame machine length storage tag region
       synchronize owned ledger one root roots node nodeFound unexposed active fits thread relevance current cached
   exact ⟨after, stack, user, race, ⟨next, id, offset, ⟨rights⟩⟩, exactPop⟩
