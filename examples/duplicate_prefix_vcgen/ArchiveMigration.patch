@@ -4578,3 +4578,197 @@
 @@ -30 +146 @@
 -  have usizety : RootCompilerFacts.usizeLayout.ty = 5 := by with_unfolding_all rfl
 +  have usizety : RootCompilerFacts.usizeLayout.ty = 4 := by with_unfolding_all rfl
+--- a/examples/duplicate_prefix/SharedReferenceMetadata.lean
++++ b/examples/duplicate_prefix/SharedReferenceMetadata.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.HelperAbiLayouts
+@@ -9 +10 @@
+-theorem shared_reference : CompilerFacts.referencePointee context 7 = .ok (4,.Not) := by
++theorem shared_reference : CompilerFacts.referencePointee context 7 = .ok (2,.Not) := by
+@@ -16,4 +17 @@
+-  unfold CompilerFacts.retagTypeShape CompilerFacts.boolean
+-  unfold_fact_helpers
+-  simp only [context_node]
+-  with_unfolding_all rfl
++  decide +kernel
+@@ -28,5 +26,2 @@
+-theorem shared_dereference : CompilerFacts.builtinDeref context 7 true = .ok (some 4) := by
+-  unfold CompilerFacts.builtinDeref CompilerFacts.optionalType
+-  unfold_fact_helpers
+-  simp only [context_node]
+-  with_unfolding_all rfl
++theorem shared_dereference : CompilerFacts.builtinDeref context 7 true = .ok (some 2) := by
++  decide +kernel
+@@ -34,2 +29 @@
+-noncomputable def sharedLayout : Miri.Interpreter.LocalLayout :=
+-  ((PreparedReflection.actual.layoutResults[7]'(by decide +kernel))).toOption.getD RootCompilerFacts.sliceLayout
++abbrev sharedLayout : Miri.Interpreter.LocalLayout := HelperAbiLayouts.sharedSliceLayout
+@@ -37 +31,2 @@
+-theorem shared_layout_eq : PreparedReflection.actual.runtime.lookup 7 = .ok sharedLayout := by decide +kernel
++theorem shared_layout_eq : PreparedReflection.actual.runtime.lookup 7 = .ok sharedLayout :=
++  HelperAbiLayouts.shared_slice_layout_eq
+@@ -54,2 +49,2 @@
+-    h.typeShape 7 = pure .reference ∧ h.referencePointee 7 = pure (4,.Not) ∧
+-      h.isUnpin 4 = pure true ∧ h.isUnsafeUnpin 4 = pure true ∧ h.typeIsFreeze 4 = pure true := by
++    h.typeShape 7 = pure .reference ∧ h.referencePointee 7 = pure (2,.Not) ∧
++      h.isUnpin 2 = pure true ∧ h.isUnsafeUnpin 2 = pure true ∧ h.typeIsFreeze 2 = pure true := by
+--- a/examples/duplicate_prefix/SharedReferenceDeref.lean
++++ b/examples/duplicate_prefix/SharedReferenceDeref.lean
+@@ -5 +5 @@
+-import duplicate_prefix.ActualReferenceMetadata
++import duplicate_prefix.RetagPointerChecks
+@@ -13,0 +14,7 @@
++
++private theorem pointee_layout :
++    CompilerFacts.layoutOf context 2 = .ok ProjectionMetadataFacts.sliceLayout := by
++  unfold CompilerFacts.layoutOf
++  change (PreparedReflection.actual.runtime.lookup 2).mapError toString = _
++  rw [ProjectionMetadataFacts.slice_layout_eq]
++  rfl
+@@ -40 +47 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -47 +54 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)
+@@ -68 +75 @@
+-      show ReferenceMetadataFacts.prepared.context = context from rfl] using ActualReferenceMetadata.pointee_layout)
++      show ReferenceMetadataFacts.prepared.context = context from rfl] using pointee_layout)
+@@ -121 +128 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)
+@@ -139 +146 @@
+-      show ReferenceMetadataFacts.prepared.context = context from rfl] using ActualReferenceMetadata.pointee_layout)
++      show ReferenceMetadataFacts.prepared.context = context from rfl] using pointee_layout)
+@@ -193 +200 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)
+@@ -211 +218 @@
+-      show ReferenceMetadataFacts.prepared.context = context from rfl] using ActualReferenceMetadata.pointee_layout)
++      show ReferenceMetadataFacts.prepared.context = context from rfl] using pointee_layout)
+--- a/examples/duplicate_prefix/ActualSharedReferenceDeref.lean
++++ b/examples/duplicate_prefix/ActualSharedReferenceDeref.lean
+@@ -36 +36 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -43 +43 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false) :
+@@ -79 +79 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false) :
+@@ -104 +104 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false) :
+--- a/examples/duplicate_prefix/SliceLenFacts.lean
++++ b/examples/duplicate_prefix/SliceLenFacts.lean
+@@ -1,2 +1 @@
+-import duplicate_prefix.PtrMetadataComplete
+-import duplicate_prefix.SharedReferenceMetadata
++import duplicate_prefix.PtrMetadataHelper
+@@ -11 +10 @@
+-theorem body_shape : (body.body.argumentCount,body.body.locals,body.body.basicBlocks.size) = (1,#[5,7,49],2) := by decide +kernel
++theorem body_shape : (body.body.argumentCount,body.body.locals,body.body.basicBlocks.size) = (1,#[4,7,44],2) := by decide +kernel
+@@ -26 +25 @@
+-      target = some 1 ∧ unwind = .Continue
++      target = some 1 ∧ unwind = .Unreachable
+@@ -34 +33 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 2 = .ok 49 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 2 = .ok 44 := by
+@@ -39 +38 @@
+-theorem raw_type_shape : CompilerFacts.retagTypeShape RootMetadataQueries.context 49 =
++theorem raw_type_shape : CompilerFacts.retagTypeShape RootMetadataQueries.context 44 =
+@@ -41,3 +39,0 @@
+-  unfold CompilerFacts.retagTypeShape CompilerFacts.boolean
+-  unfold_fact_helpers
+-  simp only [RootMetadataQueries.context_node]
+--- a/examples/duplicate_prefix/SliceLenRawPlace.lean
++++ b/examples/duplicate_prefix/SliceLenRawPlace.lean
+@@ -2,0 +3,3 @@
++import duplicate_prefix.RootLocalStages
++import duplicate_prefix.LocalPlaces
++import duplicate_prefix.Storage
+--- a/examples/duplicate_prefix/SliceLenRawRetag.lean
++++ b/examples/duplicate_prefix/SliceLenRawRetag.lean
+@@ -42 +42 @@
+-    (PreparedContracts.actualConfig options () remaining span).retag.typeShape 49 = pure rawShape := by
++    (PreparedContracts.actualConfig options () remaining span).retag.typeShape 44 = pure rawShape := by
+--- a/examples/duplicate_prefix/SliceLenRawRvalue.lean
++++ b/examples/duplicate_prefix/SliceLenRawRvalue.lean
+@@ -68,2 +68,2 @@
+-    rw [show value.layout.ty = 49 from raw_layout_type]
+-    exact congrFun (SliceLenRawRetag.raw_scope_unchanged config.retag limits.retag value 49
++    rw [show value.layout.ty = 44 from raw_layout_type]
++    exact congrFun (SliceLenRawRetag.raw_scope_unchanged config.retag limits.retag value 44
+--- a/examples/duplicate_prefix/SliceCarrier.lean
++++ b/examples/duplicate_prefix/SliceCarrier.lean
+@@ -20 +20 @@
+-      (present : machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++      (present : machine.memory.live[id]? = some entry)
+@@ -35 +35 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false) :
+@@ -67 +67 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false) :
+--- a/examples/duplicate_prefix/SliceLenRawAssign.lean
++++ b/examples/duplicate_prefix/SliceLenRawAssign.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.CallEntryFacts
+@@ -25,5 +26,5 @@
+-  with_unfolding_all change (match PreparedReflection.actual.runtime.lookup 49 with
+-    | .ok value => EStateM.Result.ok value (Storage.withCurrent framesBefore frame machine)
+-    | .error error => EStateM.Result.error (StepError.unsupported s!"compiler frame query: {toString error}")
+-        (Storage.withCurrent framesBefore frame machine)) = _
+-  rw [raw_layout_eq]
++  unfold_frame_query_lift
++  simp only [pure, EStateM.pure]
++  have lookup : PreparedReflection.actual.compiler.runtime.lookup 44 = .ok rawLayout := by
++    with_unfolding_all exact PtrMetadataHelper.raw_layout_eq
++  rw [lookup]
+@@ -151 +152 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false) :
+--- a/examples/duplicate_prefix/SliceLenPrefix.lean
++++ b/examples/duplicate_prefix/SliceLenPrefix.lean
+@@ -31 +31 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false) :
+@@ -57 +57 @@
+-  have trivial : cfg.lifecycle.storage.veryTriviallySized 49 = .ok true := by
++  have trivial : cfg.lifecycle.storage.veryTriviallySized 44 = .ok true := by
+@@ -61 +61 @@
+-  have step1 := SourceSteps.storage_live_exact cfg limits () frames frame machine ⟨0,0⟩ block stmt0 2 49
++  have step1 := SourceSteps.storage_live_exact cfg limits () frames frame machine ⟨0,0⟩ block stmt0 2 44
+--- a/examples/duplicate_prefix/PtrMetadataBody.lean
++++ b/examples/duplicate_prefix/PtrMetadataBody.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.CallEntryFacts
+@@ -15 +16 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 0 = .ok 5 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 0 = .ok 4 := by
+@@ -34,5 +35,5 @@
+-  with_unfolding_all change (match PreparedReflection.actual.runtime.lookup 5 with
+-    | .ok value => EStateM.Result.ok value (Storage.withCurrent framesBefore frame machine)
+-    | .error error => EStateM.Result.error (StepError.unsupported s!"compiler frame query: {toString error}")
+-        (Storage.withCurrent framesBefore frame machine)) = _
+-  rw [RootCompilerFacts.usize_layout_eq]
++  unfold_frame_query_lift
++  simp only [pure, EStateM.pure]
++  have lookup : PreparedReflection.actual.compiler.runtime.lookup 4 = .ok RootCompilerFacts.usizeLayout := by
++    with_unfolding_all exact RootCompilerFacts.usize_layout_eq
++  rw [lookup]
+@@ -239 +240 @@
+-  have trivial : config.lifecycle.storage.veryTriviallySized 49 = .ok true := by
++  have trivial : config.lifecycle.storage.veryTriviallySized 44 = .ok true := by
+@@ -244 +245 @@
+-    2 49 location (by rw [sourceBody];exact blockAt) stmtAt0 kind0 valid2
++    2 44 location (by rw [sourceBody];exact blockAt) stmtAt0 kind0 valid2
+--- a/examples/duplicate_prefix/PtrMetadataIntegerBody.lean
++++ b/examples/duplicate_prefix/PtrMetadataIntegerBody.lean
+@@ -129 +129 @@
+-  have trivial : config.lifecycle.storage.veryTriviallySized 49 = .ok true := by
++  have trivial : config.lifecycle.storage.veryTriviallySized 44 = .ok true := by
+@@ -134 +134 @@
+-    2 49 location (by rw [sourceBody];exact blockAt) stmtAt0 kind0 valid2
++    2 44 location (by rw [sourceBody];exact blockAt) stmtAt0 kind0 valid2

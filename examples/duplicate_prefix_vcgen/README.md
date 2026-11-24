@@ -189,6 +189,9 @@ comparison and branch from its prepared live length and count locals.
 `--target RootMutPreparation` checks the statements that lead to mutable
 slice preparation on the accepted path. `--target PtrMetadataExecution`
 checks the retained pointer-metadata helper's local copy and metadata write.
+`SliceLenPrefix`, `PtrMetadataComplete`, and `LenReturn` separately check
+the length helper's preparation, actual metadata result, and return under
+their stated premises.
 
 `--target RootRejectedPrefix` checks the too-large-count path after the
 length call, including the division guard, comparison, false result, and
