@@ -4772,3 +4772,327 @@
 @@ -134 +134 @@
 -    2 49 location (by rw [sourceBody];exact blockAt) stmtAt0 kind0 valid2
 +    2 44 location (by rw [sourceBody];exact blockAt) stmtAt0 kind0 valid2
+--- a/examples/duplicate_prefix/MetadataEntryFacts.lean
++++ b/examples/duplicate_prefix/MetadataEntryFacts.lean
+@@ -1,0 +2 @@
++import duplicate_prefix.Storage
+@@ -11 +12,4 @@
+-theorem metadata_preamble_supported : (GuardCompilerFacts.preambleQuery PtrMetadataHelper.body).isOk = true := by decide +kernel
++private def preambleQuery (body : LoadedBody) : Except String MIR.SpanRef := do
++  let some entry := PreparedReflection.actual.compiler.lifecycle.lifecycle.entries[body.identity.index]?
++    | throw "body lifecycle evidence absent"
++  entry.preamble
+@@ -13 +17,3 @@
+-def metadataPreamble := checkedOk (GuardCompilerFacts.preambleQuery PtrMetadataHelper.body) metadata_preamble_supported
++theorem metadata_preamble_supported : (preambleQuery PtrMetadataHelper.body).isOk = true := by decide +kernel
++
++def metadataPreamble := checkedOk (preambleQuery PtrMetadataHelper.body) metadata_preamble_supported
+--- a/examples/duplicate_prefix/MetadataFrame.lean
++++ b/examples/duplicate_prefix/MetadataFrame.lean
+@@ -15 +15 @@
+-    PtrMetadataHelper.resolved.callee () (.goto (some 1) .Continue) destination MetadataEntryFacts.metadataPreamble identity
++    PtrMetadataHelper.resolved.callee () (.goto (some 1) .Unreachable) destination MetadataEntryFacts.metadataPreamble identity
+@@ -28 +28 @@
+-        (.goto (some 1) .Continue) destination MetadataEntryFacts.metadataPreamble identity) state =
++        (.goto (some 1) .Unreachable) destination MetadataEntryFacts.metadataPreamble identity) state =
+@@ -33 +33 @@
+-      (.goto (some 1) .Continue) destination MetadataEntryFacts.metadataPreamble identity : Frame Provenance LocalLayout Unit) state rfl
++      (.goto (some 1) .Unreachable) destination MetadataEntryFacts.metadataPreamble identity : Frame Provenance LocalLayout Unit) state rfl
+--- a/examples/duplicate_prefix/MetadataPush.lean
++++ b/examples/duplicate_prefix/MetadataPush.lean
+@@ -33 +33 @@
+-      PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Continue) state =
++      PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Unreachable) state =
+--- a/examples/duplicate_prefix/MetadataLocals.lean
++++ b/examples/duplicate_prefix/MetadataLocals.lean
+@@ -35 +35 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 1 = .ok 49 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 1 = .ok 44 := by
+@@ -55,5 +55,5 @@
+-  with_unfolding_all change (match PreparedReflection.actual.runtime.lookup 49 with
+-    | .ok value => EStateM.Result.ok value (Storage.withCurrent frames frame machine)
+-    | .error error => EStateM.Result.error (StepError.unsupported s!"compiler frame query: {toString error}")
+-        (Storage.withCurrent frames frame machine)) = _
+-  rw [PtrMetadataHelper.raw_layout_eq]
++  unfold_frame_query_lift
++  simp only [pure, EStateM.pure]
++  have lookup : PreparedReflection.actual.compiler.runtime.lookup 44 = .ok PtrMetadataHelper.rawLayout := by
++    with_unfolding_all exact PtrMetadataHelper.raw_layout_eq
++  rw [lookup]
+@@ -61,2 +60,0 @@
+-end
+-end DuplicatePrefix.MetadataLocals
+--- a/examples/duplicate_prefix/MetadataSpans.lean
++++ b/examples/duplicate_prefix/MetadataSpans.lean
+@@ -8 +8 @@
+-    PreparedReflection.actual.program.bundle.spans.toList.idxOf? (MetadataLocals.localSpan ⟨0, by decide⟩) = some 125 := by
++    PreparedReflection.actual.program.bundle.spans.toList.idxOf? (MetadataLocals.localSpan ⟨0, by decide⟩) = some 146 := by
+@@ -14 +14 @@
+-    PreparedReflection.actual.program.bundle.spans.toList.idxOf? (MetadataLocals.localSpan ⟨1, by decide⟩) = some 126 := by
++    PreparedReflection.actual.program.bundle.spans.toList.idxOf? (MetadataLocals.localSpan ⟨1, by decide⟩) = some 147 := by
+@@ -48 +48 @@
+-      .ok ⟨125⟩ (Storage.withCurrent framesBefore frame machine) := by
++      .ok ⟨146⟩ (Storage.withCurrent framesBefore frame machine) := by
+@@ -54 +54 @@
+-      (MetadataLocals.localSpan ⟨0, by decide⟩) = some 125 := by
++      (MetadataLocals.localSpan ⟨0, by decide⟩) = some 146 := by
+@@ -57 +57 @@
+-  exact local_span_from_metadata _ _ _ _ _ _ MetadataLocals.inputBody decl 125 body.symm
++  exact local_span_from_metadata _ _ _ _ _ _ MetadataLocals.inputBody decl 146 body.symm
+@@ -68 +68 @@
+-      .ok ⟨126⟩ (Storage.withCurrent framesBefore frame machine) := by
++      .ok ⟨147⟩ (Storage.withCurrent framesBefore frame machine) := by
+@@ -74 +74 @@
+-      (MetadataLocals.localSpan ⟨1, by decide⟩) = some 126 := by
++      (MetadataLocals.localSpan ⟨1, by decide⟩) = some 147 := by
+@@ -77 +77 @@
+-  exact local_span_from_metadata _ _ _ _ _ _ MetadataLocals.inputBody decl 126 body.symm
++  exact local_span_from_metadata _ _ _ _ _ _ MetadataLocals.inputBody decl 147 body.symm
+--- a/examples/duplicate_prefix/MetadataLocalStages.lean
++++ b/examples/duplicate_prefix/MetadataLocalStages.lean
+@@ -37 +37 @@
+-      .ok ⟨125⟩ (Storage.withCurrent frames frame machine) := by
++      .ok ⟨146⟩ (Storage.withCurrent frames frame machine) := by
+@@ -53 +53 @@
+-      .ok ⟨126⟩ (Storage.withCurrent frames frame machine) := by
++      .ok ⟨147⟩ (Storage.withCurrent frames frame machine) := by
+--- a/examples/duplicate_prefix/MetadataArgument.lean
++++ b/examples/duplicate_prefix/MetadataArgument.lean
+@@ -2 +2,2 @@
+-import duplicate_prefix.RootArgumentEntry
++import duplicate_prefix.CallArgumentStages
++import duplicate_prefix.CallEntryLocals
+@@ -6 +7 @@
+-open RootArgumentEntry
++
+@@ -10,0 +12,7 @@
++
++noncomputable def liveFrame (frame : Frame Provenance LocalLayout MachineHooks.FrameExtra)
++    (id : MIR.LocalId) (valid : id < frame.locals.size) :=
++  {frame with locals := (frame.locals.set id
++    {value := .live (.immediate .uninit), layout := frame.locals[id].layout} valid)}
++
++
+@@ -12 +20 @@
+-    PreparedReflection.actual.compiler.runtime 49 = .ok true := by decide +kernel
++    PreparedReflection.actual.compiler.runtime 44 = .ok true := by decide +kernel
+@@ -30 +38 @@
+-      (PtrMetadataHelper.abi.args.getD 0 PtrMetadataHelper.abi.ret) 0 ⟨1, #[]⟩ 49 false
++      (PtrMetadataHelper.abi.args.getD 0 PtrMetadataHelper.abi.ret) 0 ⟨1, #[]⟩ 44 false
+@@ -37,2 +45,2 @@
+-  have typed : frame.body.locals[1]? = some 49 := by rw [body]; rfl
+-  have storage := CallEntryLocals.storage_live options limits (remaining + 1) span frames frame machine 1 49 valid
++  have typed : frame.body.locals[1]? = some 44 := by rw [body]; rfl
++  have storage := CallEntryLocals.storage_live options limits (remaining + 1) span frames frame machine 1 44 valid
+@@ -52,2 +60,2 @@
+-  apply CallArgumentStages.copy_argument h () _ _ _ 0 ⟨1, #[]⟩ 49 _ _ _ _ _
+-  · change (49 == (PtrMetadataHelper.abi.args.getD 0 PtrMetadataHelper.abi.ret).layout.ty) = true
++  apply CallArgumentStages.copy_argument h () _ _ _ 0 ⟨1, #[]⟩ 44 _ _ _ _ _
++  · change (44 == (PtrMetadataHelper.abi.args.getD 0 PtrMetadataHelper.abi.ret).layout.ty) = true
+--- a/examples/duplicate_prefix/MetadataCallCore.lean
++++ b/examples/duplicate_prefix/MetadataCallCore.lean
+@@ -2 +2 @@
+-import duplicate_prefix.RootCallCore
++import duplicate_prefix.CallEntryFacts
+@@ -27 +27 @@
+-  h.pushRaw () PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Continue)
++  h.pushRaw () PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Unreachable)
+@@ -55 +55 @@
+-      #[.Copy first] false destination (.goto (some 1) .Continue) =
++      #[.Copy first] false destination (.goto (some 1) .Unreachable) =
+@@ -70 +70 @@
+-  have canUnwind : h.abiCanUnwind PtrMetadataHelper.abi = true := MetadataCallFacts.abi_flags.2.1
++  have canUnwind : h.abiCanUnwind PtrMetadataHelper.abi = false := MetadataCallFacts.abi_flags.2.1
+--- a/examples/duplicate_prefix/MetadataInstall.lean
++++ b/examples/duplicate_prefix/MetadataInstall.lean
+@@ -14 +14 @@
+-  {frame with location := .unwinding ⟨126⟩}
++  {frame with location := .unwinding ⟨147⟩}
+@@ -21 +21 @@
+-  let live := RootArgumentEntry.liveFrame cached 1 (by simpa [cached,cacheFrame, spanFrame,LocalOperands.cachedLayoutFrame] using valid)
++  let live := MetadataArgument.liveFrame cached 1 (by simpa [cached,cacheFrame, spanFrame,LocalOperands.cachedLayoutFrame] using valid)
+@@ -23 +23 @@
+-    (by simpa [live,cached,RootArgumentEntry.liveFrame,cacheFrame,spanFrame,LocalOperands.cachedLayoutFrame] using valid))}
++    (by simpa [live,cached,MetadataArgument.liveFrame,cacheFrame,spanFrame,LocalOperands.cachedLayoutFrame] using valid))}
+@@ -25 +25 @@
+-def action (h : RootCallCore.RootHooks) (value : Immediate Provenance) : MachineHooks.M MiriMemoryKind Machine.RootUser (Nat × Nat) := do
++def action (h : MetadataCallCore.RootHooks) (value : Immediate Provenance) : MachineHooks.M MiriMemoryKind Machine.RootUser (Nat × Nat) := do
+@@ -53,2 +53,2 @@
+-  have setspan := CallEntryLocals.set_span options limits (remaining+1) span frames frame machine ⟨126⟩
+-  change MetadataCallCore.spanAt h ⟨126⟩ (Storage.withCurrent frames frame machine) = _ at setspan
++  have setspan := CallEntryLocals.set_span options limits (remaining+1) span frames frame machine ⟨147⟩
++  change MetadataCallCore.spanAt h ⟨147⟩ (Storage.withCurrent frames frame machine) = _ at setspan
+@@ -78 +78 @@
+-  simp [resultFrame,cacheFrame,spanFrame,LocalOperands.cachedLayoutFrame,RootArgumentEntry.liveFrame,Array.getElem_set_self]
++  simp [resultFrame,cacheFrame,spanFrame,LocalOperands.cachedLayoutFrame,MetadataArgument.liveFrame,Array.getElem_set_self]
+--- a/examples/duplicate_prefix/MetadataDone.lean
++++ b/examples/duplicate_prefix/MetadataDone.lean
+@@ -51 +51 @@
+-  have trivial : cfg.lifecycle.storage.veryTriviallySized 5 = .ok true := by
++  have trivial : cfg.lifecycle.storage.veryTriviallySized 4 = .ok true := by
+@@ -54 +54 @@
+-  have h0 := storage_live_slot cfg.lifecycle.storage frames frame machine 0 5 valid
++  have h0 := storage_live_slot cfg.lifecycle.storage frames frame machine 0 4 valid
+--- a/examples/duplicate_prefix/MetadataFinish.lean
++++ b/examples/duplicate_prefix/MetadataFinish.lean
+@@ -12 +12 @@
+-def action (h : RootCallCore.RootHooks) (preamble : MIR.SpanRef) : MachineHooks.M MiriMemoryKind Machine.RootUser Unit := do
++def action (h : MetadataCallCore.RootHooks) (preamble : MIR.SpanRef) : MachineHooks.M MiriMemoryKind Machine.RootUser Unit := do
+@@ -36 +36 @@
+-  let f0 := {frame with location := .unwinding ⟨125⟩}
++  let f0 := {frame with location := .unwinding ⟨146⟩}
+@@ -39,2 +39,2 @@
+-  have set0 := CallEntryLocals.set_span options limits remaining span frames frame machine ⟨125⟩
+-  change MetadataCallCore.spanAt h ⟨125⟩ (Storage.withCurrent frames frame machine) = _ at set0
++  have set0 := CallEntryLocals.set_span options limits remaining span frames frame machine ⟨146⟩
++  change MetadataCallCore.spanAt h ⟨146⟩ (Storage.withCurrent frames frame machine) = _ at set0
+--- a/examples/duplicate_prefix/MetadataTail.lean
++++ b/examples/duplicate_prefix/MetadataTail.lean
+@@ -37 +37 @@
+-      h.pushRaw () PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Continue)
++      h.pushRaw () PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Unreachable)
+@@ -75 +75 @@
+-    simp only [result, MetadataInstall.resultFrame,RootArgumentEntry.liveFrame, MetadataInstall.cacheFrame,
++    simp only [result, MetadataInstall.resultFrame,MetadataArgument.liveFrame, MetadataInstall.cacheFrame,
+@@ -79 +79 @@
+-    simpa [result,MetadataInstall.resultFrame,RootArgumentEntry.liveFrame,MetadataInstall.cacheFrame,
++    simpa [result,MetadataInstall.resultFrame,MetadataArgument.liveFrame,MetadataInstall.cacheFrame,
+--- a/examples/duplicate_prefix/MetadataEntry.lean
++++ b/examples/duplicate_prefix/MetadataEntry.lean
+@@ -48 +48 @@
+-      false (LocalPlaces.localRuntimePlace frames.size caller 0 RootCompilerFacts.usizeLayout).stackView (.goto (some 1) .Continue)
++      false (LocalPlaces.localRuntimePlace frames.size caller 0 RootCompilerFacts.usizeLayout).stackView (.goto (some 1) .Unreachable)
+@@ -89 +89 @@
+-  have pushActual : h.pushRaw () PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Continue) state =
++  have pushActual : h.pushRaw () PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Unreachable) state =
+@@ -93 +93 @@
+-      PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Continue) state = _
++      PtrMetadataHelper.resolved.callee PtrMetadataHelper.body destination (.goto (some 1) .Unreachable) state = _
+--- a/examples/duplicate_prefix/CallItemDispatch.lean
++++ b/examples/duplicate_prefix/CallItemDispatch.lean
+@@ -1 +1 @@
+-import duplicate_prefix.RootCallCore
++import duplicate_prefix.CanonicalConfigFacts
+@@ -6 +6 @@
+-abbrev RootHooks := RootCallCore.RootHooks
++abbrev RootHooks := CallHooks Provenance CanonicalConfigFacts.RootState Unit MachineHooks.FrameExtra Unit ABI.ExternAbi (FnAbi TyId) (ArgAbi TyId)
+@@ -24,0 +25,9 @@
++ theorem item_step_nounwind (h : RootHooks) (fn : CallInstance) (definition : DefId) (abi : FnAbi TyId)
++    (args : Array (FnArg Provenance)) (location : Bool) (destination : RuntimeStackPlace Provenance)
++    (target : Option BasicBlockId) (callerAbi : ABI.ExternAbi)
++    (kind : h.instanceKind fn = pure (.Item definition)) (canUnwind : h.abiCanUnwind abi = false)
++    (rustCall : h.isRustCall callerAbi = false) :
++    Call.initFnCallStep h () ⟨.Instance fn, callerAbi, some abi, args, location, destination, target, unwind⟩ =
++      itemStage h fn abi args location destination target .Unreachable := by
++  simp [Call.initFnCallStep, kind, canUnwind, rustCall, itemStage]
++  rfl
+--- a/examples/duplicate_prefix/MetadataDispatchEntry.lean
++++ b/examples/duplicate_prefix/MetadataDispatchEntry.lean
+@@ -37 +37 @@
+-      false,(LocalPlaces.localRuntimePlace frames.size caller 0 RootCompilerFacts.usizeLayout).stackView,some 1,.Continue⟩
++      false,(LocalPlaces.localRuntimePlace frames.size caller 0 RootCompilerFacts.usizeLayout).stackView,some 1,.Unreachable⟩
+@@ -52 +52 @@
+-  have find := MetadataDispatch.find_mir options limits (remaining+1) span state args destination (some 1) .Continue backend noRace
++  have find := MetadataDispatch.find_mir options limits (remaining+1) span state args destination (some 1) .Unreachable backend noRace
+@@ -58,2 +58,2 @@
+-  rw [CallItemDispatch.item_step h PtrMetadataHelper.resolved.callee 13 PtrMetadataHelper.abi args false destination
+-    (some 1) .Continue .Rust (MetadataCalleeLeaves.instance_kind options limits (remaining+1) span) MetadataCallFacts.abi_flags.2.1 rust]
++  rw [CallItemDispatch.item_step_nounwind h PtrMetadataHelper.resolved.callee 13 PtrMetadataHelper.abi args false destination
++    (some 1) .Rust (MetadataCalleeLeaves.instance_kind options limits (remaining+1) span) MetadataCallFacts.abi_flags.2.1 rust]
+--- a/examples/duplicate_prefix/MetadataFunctionConstant.lean
++++ b/examples/duplicate_prefix/MetadataFunctionConstant.lean
+@@ -2 +1,0 @@
+-import duplicate_prefix.CopyHelperUnit
+@@ -16,2 +15,2 @@
+-  | _ => ⟨⟨0⟩,none,.Val .ZeroSized 50⟩
+-theorem literal : constant.value = .Val .ZeroSized 50 := by with_unfolding_all rfl
++  | _ => ⟨⟨0⟩,none,.Val .ZeroSized 45⟩
++theorem literal : constant.value = .Val .ZeroSized 45 := by with_unfolding_all rfl
+@@ -38 +37 @@
+-  have layout : PreparedReflection.actual.compiler.runtime.lookup 50 = .ok MetadataCallQueries.functionLayout := MetadataCallQueries.functionLayout_query
++  have layout : PreparedReflection.actual.compiler.runtime.lookup 45 = .ok MetadataCallQueries.functionLayout := MetadataCallQueries.functionLayout_query
+--- a/examples/duplicate_prefix/GenericCallStages.lean
++++ b/examples/duplicate_prefix/GenericCallStages.lean
+@@ -55,0 +56 @@
++    (nonempty : h.stackIsEmpty after = .ok false after)
+@@ -59 +60 @@
+-  simp [Call.evalCallTerminator,kindEq,oldFrame,oldFrameIndex,destination,callee,entry,newFrameIndex,
++  simp [Call.evalCallTerminator,kindEq,oldFrame,oldFrameIndex,destination,callee,entry,nonempty,newFrameIndex,
+@@ -80 +81 @@
+-  simp [effect,progress]
++  simp [ControlFlow.evalCall, effect, progress]
+--- a/examples/duplicate_prefix/MetadataEvaluateCall.lean
++++ b/examples/duplicate_prefix/MetadataEvaluateCall.lean
+@@ -1,0 +2 @@
++import duplicate_prefix.RootPointerCopy
+--- a/examples/duplicate_prefix/MetadataCallTerminator.lean
++++ b/examples/duplicate_prefix/MetadataCallTerminator.lean
+@@ -19 +19 @@
+-    #[MetadataEvaluateCall.argument] ⟨0,#[]⟩ (some 1) .Continue sourceKind fnSpan := by with_unfolding_all rfl
++    #[MetadataEvaluateCall.argument] ⟨0,#[]⟩ (some 1) .Unreachable sourceKind fnSpan := by with_unfolding_all rfl
+@@ -71 +71 @@
+-  have canUnwind : h.abiCanUnwind PtrMetadataHelper.abi = true := MetadataCallFacts.abi_flags.2.1
++  have canUnwind : h.abiCanUnwind PtrMetadataHelper.abi = false := MetadataCallFacts.abi_flags.2.1
+@@ -85 +85 @@
+-    PtrMetadataHelper.resolved.function #[MetadataEvaluateCall.argument] ⟨0,#[]⟩ 1 .Continue sourceKind fnSpan
++    PtrMetadataHelper.resolved.function #[MetadataEvaluateCall.argument] ⟨0,#[]⟩ 1 .Unreachable sourceKind fnSpan
+@@ -89 +89,4 @@
+-  · simpa only [dispatchFuel,Option.any,canUnwind,ite_true] using dispatched
++  · simpa only [dispatchFuel,Option.any,canUnwind, Bool.false_eq_true, ↓reduceIte] using dispatched
++  · change ((do return (← get).stack.frames.isEmpty) : MachineHooks.M MiriMemoryKind Machine.RootUser Bool) after = _
++    simp [after, Storage.withCurrent, Array.isEmpty_push, get, getThe, MonadStateOf.get, EStateM.get,
++      bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+--- a/examples/duplicate_prefix/MetadataUncachedCall.lean
++++ b/examples/duplicate_prefix/MetadataUncachedCall.lean
+@@ -22 +22 @@
+-  have normalized : CompilerFrameContext.localType PreparedReflection.actual.compiler frame 0 = .ok 5 := by
++  have normalized : CompilerFrameContext.localType PreparedReflection.actual.compiler frame 0 = .ok 4 := by
+@@ -30,5 +30,5 @@
+-  with_unfolding_all change (match PreparedReflection.actual.runtime.lookup 5 with
+-    | .ok value => EStateM.Result.ok value (Storage.withCurrent frames frame machine)
+-    | .error error => EStateM.Result.error (StepError.unsupported s!"compiler frame query: {toString error}")
+-        (Storage.withCurrent frames frame machine)) = _
+-  rw [RootCompilerFacts.usize_layout_eq]
++  unfold_frame_query_lift
++  simp only [pure, EStateM.pure]
++  have lookup : PreparedReflection.actual.compiler.runtime.lookup 4 = .ok RootCompilerFacts.usizeLayout := by
++    with_unfolding_all exact RootCompilerFacts.usize_layout_eq
++  rw [lookup]
+@@ -99 +99 @@
+-  have canUnwind : h.abiCanUnwind PtrMetadataHelper.abi = true := MetadataCallFacts.abi_flags.2.1
++  have canUnwind : h.abiCanUnwind PtrMetadataHelper.abi = false := MetadataCallFacts.abi_flags.2.1
+@@ -113 +113 @@
+-    PtrMetadataHelper.resolved.function #[MetadataEvaluateCall.argument] ⟨0,#[]⟩ 1 .Continue sourceKind fnSpan
++    PtrMetadataHelper.resolved.function #[MetadataEvaluateCall.argument] ⟨0,#[]⟩ 1 .Unreachable sourceKind fnSpan
+@@ -117 +117,4 @@
+-  · simpa only [dispatchFuel,Option.any,canUnwind,ite_true] using dispatched
++  · simpa only [dispatchFuel,Option.any,canUnwind, Bool.false_eq_true, ↓reduceIte] using dispatched
++  · change ((do return (← get).stack.frames.isEmpty) : MachineHooks.M MiriMemoryKind Machine.RootUser Bool) after = _
++    simp [after, Storage.withCurrent, Array.isEmpty_push, get, getThe, MonadStateOf.get, EStateM.get,
++      bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+--- a/examples/duplicate_prefix/MetadataCallStep.lean
++++ b/examples/duplicate_prefix/MetadataCallStep.lean
+@@ -76 +76 @@
+-    PtrMetadataHelper.resolved.function #[MetadataEvaluateCall.argument] ⟨0,#[]⟩ (some 1) .Continue sourceKind fnSpan
++    PtrMetadataHelper.resolved.function #[MetadataEvaluateCall.argument] ⟨0,#[]⟩ (some 1) .Unreachable sourceKind fnSpan
+--- a/examples/duplicate_prefix/MetadataEntryShape.lean
++++ b/examples/duplicate_prefix/MetadataEntryShape.lean
+@@ -27 +27 @@
+-    (initialized options state destination value).returnContinuation = .goto (some 1) .Continue ∧
++    (initialized options state destination value).returnContinuation = .goto (some 1) .Unreachable ∧
+@@ -36 +36 @@
+-    MetadataInstall.resultFrame,RootArgumentEntry.liveFrame,MetadataInstall.cacheFrame,
++    MetadataInstall.resultFrame,MetadataArgument.liveFrame,MetadataInstall.cacheFrame,
+@@ -45 +45 @@
+-    MetadataInstall.resultFrame,RootArgumentEntry.liveFrame,MetadataInstall.cacheFrame,
++    MetadataInstall.resultFrame,MetadataArgument.liveFrame,MetadataInstall.cacheFrame,
+--- a/examples/duplicate_prefix/MetadataCallSummary.lean
++++ b/examples/duplicate_prefix/MetadataCallSummary.lean
+@@ -117 +117 @@
+-      1 .Continue ctrl.2.2.2.2.2.1 ctrl.2.2.2.2.2.2 tracker {} postTracked defaultMode frameBorrow rfl helperThread postActive
++      1 .Unreachable ctrl.2.2.2.2.2.1 ctrl.2.2.2.2.2.2 tracker {} postTracked defaultMode frameBorrow rfl helperThread postActive
+--- a/examples/duplicate_prefix/SliceLenBody.lean
++++ b/examples/duplicate_prefix/SliceLenBody.lean
+@@ -38 +38 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false)
++    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false)
