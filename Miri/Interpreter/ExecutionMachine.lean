@@ -160,17 +160,12 @@ def castHooks [DecidableEq K] (h : Config K U C O X Host) (limits : Limits) :
     h.retag h.validity h.functions h.floats h.operands.dereference
     (OperandMachine.field (operandHooks h)) h.validationRecursive limits.retag limits.validation
 
-/-- Core expression dictionaries. Genuine compiler type/layout predicates and
-host/platform leaves in base records survive; operational actions are replaced. -/
-def rvalueHooks [DecidableEq K] (h : Config K U C O X Host) (limits : Limits) :
-    RvalueHooks Provenance (State K U) C Value :=
-  let h := withValidation h limits
-  let place := (projectionHooks h).place
-  let operands := operandHooks h
-  let eval := OperandMachine.evalOperand operands
-  let evaluate := PlaceDynamic.evalPlace (projectionHooks h)
-  let discr := discriminantHooks h
-  let aggregate : AggregateHooks Provenance (State K U) C Value := {
+private def aggregateFrom [DecidableEq K] (h : Config K U C O X Host)
+    (eval : C → MIR.Operand → Option LocalLayout → M K U (OpTy Provenance))
+    (place : PlaceHooks Provenance (State K U) C FrameExtra)
+    (discr : DiscriminantHooks Provenance (State K U) C Value) :
+    AggregateHooks Provenance (State K U) C Value :=
+  {
     target := h.access.runtime.base
     placeLayout := RuntimePlace.layout
     evalOperand := eval
@@ -195,6 +190,25 @@ def rvalueHooks [DecidableEq K] (h : Config K U C O X Host) (limits : Limits) :
     placePointer := pointerOf
     wrappingOffset := aggregateWrappingOffset h.arithmetic
     memCopyRepeatedly := fun _ => GlobalMemoryCopyMachine.genericCopy h.access h.addresses h.arithmetic}
+
+/-- The aggregate and array repeat effects used by the rvalue dispatcher. -/
+def aggregateHooks [DecidableEq K] (h : Config K U C O X Host) (limits : Limits) :
+    AggregateHooks Provenance (State K U) C Value :=
+  let h := withValidation h limits
+  aggregateFrom h (OperandMachine.evalOperand (operandHooks h)) (projectionHooks h).place
+    (discriminantHooks h)
+
+/-- Core expression dictionaries. Genuine compiler type/layout predicates and
+host/platform leaves in base records survive; operational actions are replaced. -/
+def rvalueHooks [DecidableEq K] (h : Config K U C O X Host) (limits : Limits) :
+    RvalueHooks Provenance (State K U) C Value :=
+  let h := withValidation h limits
+  let place := (projectionHooks h).place
+  let operands := operandHooks h
+  let eval := OperandMachine.evalOperand operands
+  let evaluate := PlaceDynamic.evalPlace (projectionHooks h)
+  let discr := discriminantHooks h
+  let aggregate := aggregateFrom h eval place discr
   let casts := castHooks h limits
   let retag := h.retag
   {

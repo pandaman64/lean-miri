@@ -33,7 +33,7 @@ structure AggregateHooks (Prov S C V : Type) where
   memCopyRepeatedly : C → Pointer (Option Prov) → Pointer (Option Prov) →
     Size → UInt64 → Bool → RvalueM S Unit
 
-private def aggregateLift (value : Except StepError A) : RvalueM S A :=
+def aggregateLift (value : Except StepError A) : RvalueM S A :=
   match value with
   | .ok value => pure value
   | .error error => throw error
