@@ -7,56 +7,72 @@ open BorrowTree BorrowTree.MutationVerification
 
 set_option maxHeartbeats 1000000
 
-private theorem ancestor_keys (mapping : UniKeyMap BorTag) (start : UniIndex)
-    (strongest : IdempotentForeignAccess) (fuel steps : Nat) (cursor : Option UniIndex)
-    (tree : BorrowTree) (keys : tree.tagMapping = mapping) :
-    weakenAncestorPre start strongest (fun t => t.tagMapping = mapping)
-      (fun _ t => t.tagMapping = mapping) fuel steps cursor tree := by
+private theorem ancestor_frame (keep : BorrowTree → Prop) (start : UniIndex)
+    (strongest : IdempotentForeignAccess)
+    (weaken : ∀ current index node, current.nodeAt index = some node → keep current →
+      keep (BorrowTree.ZeroProtection.weakened current index node strongest))
+    (fuel steps : Nat) (cursor : Option UniIndex) (tree : BorrowTree) (valid : keep tree) :
+    weakenAncestorPre start strongest keep (fun _ => keep) fuel steps cursor tree := by
   induction fuel generalizing steps cursor tree with
-  | zero => exact keys
+  | zero => exact valid
   | succ fuel ih =>
     unfold weakenAncestorPre
     split
-    · exact keys
+    · exact valid
     · cases cursor with
-      | none => exact keys
+      | none => exact valid
       | some index =>
-        cases current : tree.nodes.get index with
-        | none => simpa only [current] using keys
+        cases found : tree.nodes.get index with
+        | none => simpa only [found] using valid
         | some node =>
-          simp only [current]
+          simp only [found]
+          have next := weaken tree index node found valid
           split
-          · exact ih _ _ _ keys
-          · exact keys
+          · exact ih _ _ _ next
+          · exact next
+
+/-- Range writes and ancestor bookkeeping retain a structural invariant when
+each update preserves it. The same property holds on partial failure. -/
+theorem childSegmentsFrame (keep : BorrowTree → Prop)
+    (relocate : ∀ current locations, keep current → keep {current with locations := locations})
+    (weaken : ∀ current index node strongest, current.nodeAt index = some node → keep current →
+      keep (BorrowTree.ZeroProtection.weakened current index node strongest))
+    (offset : Size) (child : UniIndex) (parent : Option UniIndex) (held : Bool)
+    (segments : List (RangeMapSegment Tree.LocationState)) (tree : BorrowTree)
+    (sifa : IdempotentForeignAccess) (valid : keep tree) :
+    childSegmentsPre offset child parent held keep (fun _ => keep) segments tree sifa := by
+  induction segments generalizing tree sifa with
+  | nil =>
+    cases parent with
+    | none => exact valid
+    | some index =>
+      simp only [childSegmentsPre, finishChildPre, weakenAncestorsPre]
+      split
+      · exact valid
+      · exact ancestor_frame keep index sifa
+          (fun current index node found => weaken current index node sifa found) _ _ _ tree valid
+  | cons segment rest ih =>
+    simp only [childSegmentsPre, childSegmentPre]
+    split
+    · exact valid
+    · split
+      · exact valid
+      · split
+        · exact valid
+        · split
+          · exact valid
+          · split
+            · exact relocate _ _ valid
+            · exact ih _ _ (relocate _ _ valid)
 
 private theorem segment_keys (mapping : UniKeyMap BorTag) (offset : Size)
     (child : UniIndex) (parent : Option UniIndex) (held : Bool)
     (segments : List (RangeMapSegment Tree.LocationState)) (tree : BorrowTree)
     (sifa : IdempotentForeignAccess) (keys : tree.tagMapping = mapping) :
     childSegmentsPre offset child parent held (fun t => t.tagMapping = mapping)
-      (fun _ t => t.tagMapping = mapping) segments tree sifa := by
-  induction segments generalizing tree sifa with
-  | nil =>
-    cases parent with
-    | none => exact keys
-    | some index =>
-      simp only [childSegmentsPre, finishChildPre, weakenAncestorsPre]
-      split
-      · exact keys
-      · exact ancestor_keys mapping index sifa _ _ _ tree keys
-  | cons segment rest ih =>
-    simp only [childSegmentsPre, childSegmentPre]
-    split
-    · exact keys
-    · split
-      · exact keys
-      · split
-        · exact keys
-        · split
-          · exact keys
-          · split
-            · exact keys
-            · exact ih _ _ keys
+      (fun _ t => t.tagMapping = mapping) segments tree sifa :=
+  childSegmentsFrame (fun t => t.tagMapping = mapping) (fun _ _ h => h)
+    (fun _ _ _ _ _ h => h) offset child parent held segments tree sifa keys
 
 /-- Once the key is inserted, later child-attachment and SIFA work retain
 that exact map, including on partial failure. -/

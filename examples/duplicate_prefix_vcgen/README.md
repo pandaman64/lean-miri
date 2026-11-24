@@ -198,6 +198,9 @@ The optional `RetagFrozenChild` target checks actual child insertion and
 the resulting range and permission frame under its concrete fresh-tag premises.
 The `ConcreteFrozenReborrow` and `ExclusiveTypedRetag` targets connect the
 concrete forest rights with the actual typed reborrow and final location state.
+`TypedSharedReborrow` checks the actual shared reborrow under its structural
+and pointer premises. `RootTwoPhaseComplete` checks the mutable reference
+assignment at the selected root instruction and its resulting permissions.
 
 After the standalone example script builds `SourceDomain.olean`, the
 optional `ExclusiveCopyStep` target verifies the actual positive copy

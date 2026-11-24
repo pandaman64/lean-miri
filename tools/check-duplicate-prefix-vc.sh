@@ -26,7 +26,8 @@ lean -j1 --root=examples/duplicate_prefix_vcgen \
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/MutableSliceRetag.olean" examples/duplicate_prefix_vcgen/MutableSliceRetag.lean
 lean -j1 examples/duplicate_prefix_vcgen/SymbolicCopyAccess.lean
-lean -j1 examples/duplicate_prefix_vcgen/RootMutableReborrow.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/RootMutableReborrow.olean" examples/duplicate_prefix_vcgen/RootMutableReborrow.lean
 lean -j1 examples/duplicate_prefix_vcgen/ZeroProtector.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/ZeroTail.olean" examples/duplicate_prefix_vcgen/ZeroTail.lean

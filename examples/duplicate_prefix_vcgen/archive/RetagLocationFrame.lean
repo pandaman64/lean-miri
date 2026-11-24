@@ -12,25 +12,25 @@ open DuplicatePrefix.GeneralRangeMapOrigins DuplicatePrefix.RetagRangeFrame
 
 /-- The old rows still supply each byte. Installing a child may change its
 own permission. Both bookkeeping stages may change SIFA in any row. -/
-def ByteFrame (initial : DedupRangeMap LocationTree) (child : UniIndex)
+def ByteFrameWith (grant : Tree.LocationState → Prop) (initial : DedupRangeMap LocationTree) (child : UniIndex)
     (point : UInt64) (location : LocationTree) : Prop :=
   (∃ prior, ValueAt initial point prior ∧
     ∀ index, index ≠ child → storedPermission location index = storedPermission prior index) ∧
   (∀ state, location.perms.get child = some state →
-    MutableReferenceRights.Granted state .LocalAccess true)
+    grant state)
 
-private theorem set_child_preserves (initial : DedupRangeMap LocationTree) (child : UniIndex)
+private theorem set_child_preserves {grant : Tree.LocationState → Prop} (initial : DedupRangeMap LocationTree) (child : UniIndex)
     (point : UInt64) (location : LocationTree) (state : Tree.LocationState)
-    (grant : MutableReferenceRights.Granted state .LocalAccess true)
-    (ready : ByteFrame initial child point location) :
-    ByteFrame initial child point {location with perms := location.perms.insert child state} := by
+    (granted : grant state)
+    (ready : ByteFrameWith grant initial child point location) :
+    ByteFrameWith grant initial child point {location with perms := location.perms.insert child state} := by
   obtain ⟨⟨prior, atByte, frame⟩, _⟩ := ready
   refine ⟨⟨prior, atByte, ?_⟩, ?_⟩
   · intro index different
     simpa only [storedPermission, Sparse.get_other _ _ _ _ different] using frame index different
   · intro actual found
     have same := Option.some.inj ((Sparse.get_same location.perms child state).symm.trans found)
-    simpa only [← same] using grant
+    simpa only [← same] using granted
 
 private theorem weakening_shape (tree : BorrowTree) (index : UniIndex) (node : TreeNode)
     (strongest : IdempotentForeignAccess) :
@@ -38,11 +38,13 @@ private theorem weakening_shape (tree : BorrowTree) (index : UniIndex) (node : T
       tree.locations.entries.map (·.range) := by
   simp [weakened, DedupRangeMap.modifyAll, Array.map_map, Function.comp_def]
 
-private theorem weakening_byteFrame (initial : DedupRangeMap LocationTree) (child : UniIndex)
+private theorem weakening_byteFrame {grant : Tree.LocationState → Prop} (stable : ∀ old new : Tree.LocationState,
+      old.permission = new.permission → old.accessed = new.accessed → grant old → grant new)
+    (initial : DedupRangeMap LocationTree) (child : UniIndex)
     (tree : BorrowTree) (index : UniIndex) (node : TreeNode)
     (strongest : IdempotentForeignAccess)
-    (ready : EachByte tree.locations (ByteFrame initial child)) :
-    EachByte (weakened tree index node strongest).locations (ByteFrame initial child) := by
+    (ready : EachByte tree.locations (ByteFrameWith grant initial child)) :
+    EachByte (weakened tree index node strongest).locations (ByteFrameWith grant initial child) := by
   intro point position valid lo hi
   have inside : position < tree.locations.entries.size := by
     simpa [weakened, DedupRangeMap.modifyAll] using valid
@@ -60,30 +62,34 @@ private theorem weakening_byteFrame (initial : DedupRangeMap LocationTree) (chil
     | none => simp [earlier] at childPermission
     | some state =>
       have pair := Option.some.inj (by simpa only [earlier, Option.map_some] using childPermission)
-      exact (MutableReferenceRights.sifa_irrelevant state current (congrArg Prod.fst pair)
-        (congrArg Prod.snd pair) .LocalAccess true).mpr (fresh state earlier)
+      exact stable state current (congrArg Prod.fst pair).symm
+        (congrArg Prod.snd pair).symm (fresh state earlier)
 
 /-- Allocation size and partition geometry accompany the byte frame. -/
-def Framed (initial : DedupRangeMap LocationTree) (child : UniIndex) (current : BorrowTree) : Prop :=
+def FramedWith (grant : Tree.LocationState → Prop) (initial : DedupRangeMap LocationTree) (child : UniIndex) (current : BorrowTree) : Prop :=
   current.locations.size = initial.size ∧ current.locations.WellFormed ∧
-    EachByte current.locations (ByteFrame initial child)
+    EachByte current.locations (ByteFrameWith grant initial child)
 
-private theorem weakening_framed (initial : DedupRangeMap LocationTree) (child : UniIndex)
+private theorem weakening_framed {grant : Tree.LocationState → Prop} (stable : ∀ old new : Tree.LocationState,
+      old.permission = new.permission → old.accessed = new.accessed → grant old → grant new)
+    (initial : DedupRangeMap LocationTree) (child : UniIndex)
     (current : BorrowTree) (index : UniIndex) (node : TreeNode) (sifa : IdempotentForeignAccess)
-    (haveFrame : Framed initial child current) :
-    Framed initial child (weakened current index node sifa) := by
+    (haveFrame : FramedWith grant initial child current) :
+    FramedWith grant initial child (weakened current index node sifa) := by
   let next := weakened current index node sifa
   have shape := weakening_shape current index node sifa
   have sameSize : next.locations.size = current.locations.size := by
     rw [DuplicatePrefix.GeneralRangeMapState.size_from_ranges next.locations, shape,
       ← DuplicatePrefix.GeneralRangeMapState.size_from_ranges]
   exact ⟨sameSize.trans haveFrame.1, (partition_eq shape).mpr haveFrame.2.1,
-    weakening_byteFrame initial child current index node sifa haveFrame.2.2⟩
+    weakening_byteFrame stable initial child current index node sifa haveFrame.2.2⟩
 
-private theorem ancestors_framed (initial : DedupRangeMap LocationTree) (child start : UniIndex)
+private theorem ancestors_framed {grant : Tree.LocationState → Prop} (stable : ∀ old new : Tree.LocationState,
+      old.permission = new.permission → old.accessed = new.accessed → grant old → grant new)
+    (initial : DedupRangeMap LocationTree) (child start : UniIndex)
     (strongest : IdempotentForeignAccess) (fuel steps : Nat) (cursor : Option UniIndex)
-    (current : BorrowTree) (ready : Framed initial child current) :
-    weakenAncestorPre start strongest (Framed initial child) (fun _ _ => True)
+    (current : BorrowTree) (ready : FramedWith grant initial child current) :
+    weakenAncestorPre start strongest (FramedWith grant initial child) (fun _ _ => True)
       fuel steps cursor current := by
   induction fuel generalizing steps cursor current with
   | zero => trivial
@@ -98,21 +104,23 @@ private theorem ancestors_framed (initial : DedupRangeMap LocationTree) (child s
         | none => simp [found]
         | some node =>
           simp only [found]
-          have next := weakening_framed initial child current index node strongest ready
+          have next := weakening_framed stable initial child current index node strongest ready
           split
           · exact ih _ _ _ next
           · exact next
 
-private theorem segments_framed (initial : DedupRangeMap LocationTree)
+private theorem segments_framed {grant : Tree.LocationState → Prop} (stable : ∀ old new : Tree.LocationState,
+      old.permission = new.permission → old.accessed = new.accessed → grant old → grant new)
+    (initial : DedupRangeMap LocationTree)
     (offset : Size) (child : UniIndex) (parent : Option UniIndex) (held : Bool)
     (segments : List (RangeMapSegment Tree.LocationState)) (current : BorrowTree)
     (minimum : IdempotentForeignAccess)
     (fit : ∀ segment ∈ segments, ∀ start,
       Size.add (Size.ofBytes segment.range.start) offset = .ok start →
       start.bytes.toNat + (segment.range.stop - segment.range.start).toNat ≤ initial.size.bytes.toNat)
-    (insideRights : ∀ segment ∈ segments, MutableReferenceRights.Granted segment.data .LocalAccess true)
-    (ready : Framed initial child current) :
-    childSegmentsPre offset child parent held (Framed initial child) (fun _ _ => True)
+    (insideRights : ∀ segment ∈ segments, grant segment.data)
+    (ready : FramedWith grant initial child current) :
+    childSegmentsPre offset child parent held (FramedWith grant initial child) (fun _ _ => True)
       segments current minimum := by
   induction segments generalizing current minimum with
   | nil =>
@@ -124,7 +132,7 @@ private theorem segments_framed (initial : DedupRangeMap LocationTree)
       by_cases write : (minimum == .Write) = true
       · simpa only [write, ↓reduceIte] using ready
       · simp only [ite_eq_right write]
-        exact ancestors_framed _ _ _ _ _ _ _ _ ready
+        exact ancestors_framed stable _ _ _ _ _ _ _ _ ready
   | cons segment rest ih =>
     simp only [childSegmentsPre, childSegmentPre]
     by_cases initialPermission : (!segment.data.permission.isInitial) = true
@@ -144,18 +152,78 @@ private theorem segments_framed (initial : DedupRangeMap LocationTree)
               fun _ row => {row with perms := row.perms.insert child segment.data}
             have within := fit segment List.mem_cons_self start checked
             rw [← ready.1] at within
-            have updated := modify_of_bounded current.locations start length modify (ByteFrame initial child)
+            have updated := modify_of_bounded current.locations start length modify (ByteFrameWith grant initial child)
               ready.2.1 within ready.2.2
               (fun _ point row _ _ old => set_child_preserves initial child point row segment.data
                 (insideRights segment List.mem_cons_self) old)
             change (match (current.locations.modifyRange start length modify).outcome with
               | .error _ => True
-              | .ok () => childSegmentsPre offset child parent held (Framed initial child)
+              | .ok () => childSegmentsPre offset child parent held (FramedWith grant initial child)
                 (fun _ _ => True) rest {current with locations := (current.locations.modifyRange start length modify).state} _)
             rw [updated.1]
             exact ih _ _ (fun seg mem => fit seg (.tail _ mem))
               (fun seg mem => insideRights seg (.tail _ mem))
               ⟨updated.2.2.1.trans ready.1, updated.2.1, updated.2.2.2⟩
+
+/-- Actual successful concrete child insertion preserves every old byte's
+permission and preserves a local exclusive right for every materialized
+new child byte. Missing child states use the separately preserved default. -/
+theorem newChild_framed_with {grant : Tree.LocationState → Prop} (stable : ∀ old new : Tree.LocationState,
+      old.permission = new.permission → old.accessed = new.accessed → grant old → grant new)
+    (tree : BorrowTree) (offset : Size)
+    (parentTag tag : Miri.Memory.BorTag) (parent child : UniIndex)
+    (mapping : UniKeyMap Miri.Memory.BorTag) (inside : DedupRangeMap Tree.LocationState)
+    (outside : Permission) (held : Bool)
+    (mapped : tree.tagMapping.insert tag = .Inserted mapping child)
+    (parentFound : tree.indexOfTag parentTag = some parent)
+    (parentNode : TreeNode) (present : tree.nodeAt parent = some parentNode)
+    (vacant : tree.nodeAt child = none)
+    (well : tree.locations.WellFormed)
+    (freshRows : ∀ position (valid : position < tree.locations.entries.size),
+      tree.locations.entries[position].data.perms.get child = none)
+    (fit : ∀ segment ∈ inside.iterAll.toList, ∀ start,
+      Size.add (Size.ofBytes segment.range.start) offset = .ok start →
+      start.bytes.toNat + (segment.range.stop - segment.range.start).toNat ≤ tree.locations.size.bytes.toNat)
+    (insideRights : ∀ segment ∈ inside.iterAll.toList, grant segment.data)
+    (complete : (tree.newChild offset (.concrete parentTag) tag inside outside held).outcome = .ok ()) :
+    FramedWith grant tree.locations child (tree.newChild offset (.concrete parentTag) tag inside outside held).tree := by
+  have distinct : parent ≠ child := by
+    intro equal
+    rw [equal, vacant] at present
+    contradiction
+  have start : EachByte tree.locations (ByteFrameWith grant tree.locations child) := by
+    intro point position valid lower upper
+    refine ⟨⟨_, ⟨position, valid, UInt64.le_iff_toNat_le.mp lower, UInt64.lt_iff_toNat_lt.mp upper, rfl⟩,
+      fun _ _ => rfl⟩, ?_⟩
+    intro state found
+    rw [freshRows position valid] at found
+    contradiction
+  have pre : insertChildPre tree offset (.concrete parentTag) tag inside outside held
+      (FramedWith grant tree.locations child) (fun _ _ => True) := by
+    have parentLookup : tree.tagMapping.get parentTag = some parent := parentFound
+    have parentNodeLookup : tree.nodes.get parent = some parentNode := present
+    unfold insertChildPre
+    simp only [mapped, parentLookup, Option.map_some]
+    by_cases valid : (!outside.isInitial) = true
+    · simp [valid]
+    · rw [ite_eq_right valid]
+      by_cases unique : outside.isUnique = true
+      · simp [unique]
+      · rw [ite_eq_right unique]
+        cases strength : outside.strongestIdempotentForeignAccess held with
+        | ImpossibleProtectedReservedIM => trivial
+        | Access defaultSifa =>
+          simp only [finishInsertedChildPre, Sparse.get_other _ _ _ _ distinct, parentNodeLookup]
+          exact segments_framed stable _ _ _ _ _ _ _ _ fit insideRights ⟨rfl, well, start⟩
+  have post := (insertChildPre_iff tree offset (.concrete parentTag) tag inside outside held
+    (FramedWith grant tree.locations child) (fun _ _ => True)).mp pre
+  simpa only [childResultPre, complete] using post
+
+/-- Per-byte attachment frame for a child granted mutable access. -/
+def ByteFrame := ByteFrameWith (fun state => MutableReferenceRights.Granted state .LocalAccess true)
+
+/-- Allocation partition and per-byte attachment frame for a mutable child. -/
+def Framed := FramedWith (fun state => MutableReferenceRights.Granted state .LocalAccess true)
 
 /-- Actual successful concrete child insertion preserves every old byte's
 permission and preserves a local exclusive right for every materialized
@@ -177,36 +245,12 @@ theorem newChild_framed (tree : BorrowTree) (offset : Size)
     (insideRights : ∀ segment ∈ inside.iterAll.toList, MutableReferenceRights.Granted segment.data .LocalAccess true)
     (complete : (tree.newChild offset (.concrete parentTag) tag inside outside held).outcome = .ok ()) :
     Framed tree.locations child (tree.newChild offset (.concrete parentTag) tag inside outside held).tree := by
-  have distinct : parent ≠ child := by
-    intro equal
-    rw [equal, vacant] at present
-    contradiction
-  have start : EachByte tree.locations (ByteFrame tree.locations child) := by
-    intro point position valid lower upper
-    refine ⟨⟨_, ⟨position, valid, UInt64.le_iff_toNat_le.mp lower, UInt64.lt_iff_toNat_lt.mp upper, rfl⟩,
-      fun _ _ => rfl⟩, ?_⟩
-    intro state found
-    rw [freshRows position valid] at found
-    contradiction
-  have pre : insertChildPre tree offset (.concrete parentTag) tag inside outside held
-      (Framed tree.locations child) (fun _ _ => True) := by
-    have parentLookup : tree.tagMapping.get parentTag = some parent := parentFound
-    have parentNodeLookup : tree.nodes.get parent = some parentNode := present
-    unfold insertChildPre
-    simp only [mapped, parentLookup, Option.map_some]
-    by_cases valid : (!outside.isInitial) = true
-    · simp [valid]
-    · rw [ite_eq_right valid]
-      by_cases unique : outside.isUnique = true
-      · simp [unique]
-      · rw [ite_eq_right unique]
-        cases strength : outside.strongestIdempotentForeignAccess held with
-        | ImpossibleProtectedReservedIM => trivial
-        | Access defaultSifa =>
-          simp only [finishInsertedChildPre, Sparse.get_other _ _ _ _ distinct, parentNodeLookup]
-          exact segments_framed _ _ _ _ _ _ _ _ fit insideRights ⟨rfl, well, start⟩
-  have post := (insertChildPre_iff tree offset (.concrete parentTag) tag inside outside held
-    (Framed tree.locations child) (fun _ _ => True)).mp pre
-  simpa only [childResultPre, complete] using post
+  exact newChild_framed_with
+    (fun old new permission accessed granted =>
+      (MutableReferenceRights.sifa_irrelevant old new permission.symm accessed.symm .LocalAccess true).mpr granted)
+    tree offset parentTag tag parent child mapping inside outside held mapped parentFound parentNode
+    present vacant well freshRows fit insideRights complete
 
+#print axioms newChild_framed_with
+#print axioms newChild_framed
 end DuplicatePrefix.RetagLocationFrame

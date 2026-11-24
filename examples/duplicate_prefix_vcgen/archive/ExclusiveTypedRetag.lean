@@ -68,121 +68,6 @@ theorem cached_pointer_inputs {K U : Type} [DecidableEq K]
     exact RetagPointerChecks.resolve_allocation_cached pointers before storage.id tag base
       storage.relativeStart.bytes width cached
 
-/-- The live typed mutable reborrow in the read-associated frozen profile
-hands the actual new tag's exclusive rights to its caller. The argument
-extent, live cache entry, compiler/pointer leaves, tag allocator and initial
-byte ownership are input facts. The associated tree read and child
-constructor are discharged here from the same initial ownership. -/
-theorem reborrow_exclusive [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budget : Nat)
-    (place : MPlaceTy Provenance) (size : Size) (tag parentTag : BorTag)
-    (location : RetagPipeline.ResolvedLocation) (before pointed resolved logged : State)
-    (frame : BorrowFrame) (frameLedger : FrameState) (borrow : MachineHooks.BorrowState)
-    (entry : LocalAllocation Provenance BorrowTree K) (parent root : UniIndex)
-    (parentNode : TreeNode)
-    (check : hooks.checkPtrAccess place.mplace.ptr size before = .ok () pointed)
-    (resolve : hooks.resolveAllocation place.mplace.ptr pointed = .ok (some location) resolved)
-    (log : hooks.logCreation place size readPolicy tag (some location) resolved = .ok () logged)
-    (parentProvenance : location.parentProvenance = .concrete parentTag)
-    (current : logged.stack.currentFrame? = some frame)
-    (ledger : frame.extra.borrowTracker = some frameLedger)
-    (tracked : logged.machine.borrowTracker = some borrow)
-    (live : logged.machine.memory.live[location.allocId]? = some entry)
-    (mutable : entry.allocation.mutability = .Mut)
-    (imprecise : hooks.preciseInteriorMut = pure false)
-    (freeze : hooks.typeIsFreeze place.layout.ty = pure true)
-    (nonempty : size.bytes ≠ 0)
-    (ensure : let registered := withStrongProtector logged location tag frame frameLedger borrow
-      hooks.ensureTreeExtra location.allocId registered = .ok () registered)
-    (raceOff : logged.machine.dataRace = none)
-    (coherent : CoherentForest entry.allocation.extra)
-    (parentStored : entry.allocation.extra.nodeAt parent = some parentNode)
-    (roots : entry.allocation.extra.roots = #[root])
-    (parentFound : entry.allocation.extra.indexOfTag parentTag = some parent)
-    (depth : BorrowTree.ZeroProtection.ParentDepth entry.allocation.extra.nodes)
-    (rank : depth.depth parent < entry.allocation.extra.nodes.size)
-    (tagFresh : entry.allocation.extra.indexOfTag tag = none)
-    (fresh : ∀ index node, entry.allocation.extra.nodeAt index = some node → node.tag ≠ tag)
-    (room : entry.allocation.extra.tagMapping.deassigned.back? = none →
-      entry.allocation.extra.tagMapping.mapping.size ≤ 4294967295)
-    (aligned : entry.allocation.extra.tagMapping.deassigned.back? = none →
-      entry.allocation.extra.tagMapping.mapping.size = entry.allocation.extra.nodes.size)
-    (reuse : ∀ index, entry.allocation.extra.tagMapping.deassigned.back? = some index →
-      index.toNat < entry.allocation.extra.nodes.size ∧ entry.allocation.extra.nodeAt index = none)
-    (clean : ∀ index, entry.allocation.extra.nodeAt index = none →
-      ∀ position (valid : position < entry.allocation.extra.locations.entries.size),
-        entry.allocation.extra.locations.entries[position].data.perms.get index = none)
-    (bounds : location.baseOffset.bytes.toNat + size.bytes.toNat ≤ entry.allocation.extra.locations.size.bytes.toNat)
-    (owners : OwnedOn (fun location => LocationRights entry.allocation.extra location
-      borrow.global.protectedTags parent) location.baseOffset.bytes (location.baseOffset.bytes + size.bytes)
-      entry.allocation.extra.locations) :
-    ∃ (after : State) (tree : BorrowTree) (child : UniIndex),
-      TypedRetag.reborrow hooks budget place size readPolicy tag before =
-        .ok (some (.concrete location.allocId tag)) after ∧
-      after.machine.memory.live[location.allocId]? =
-        some {entry with allocation := entry.allocation.setExtra tree} ∧
-      after.machine.borrowTracker = some (registeredTracker borrow tag) ∧
-      after.stack.currentFrame? =
-        some {frame with extra := {frame.extra with borrowTracker := some (frameLedger.addProtector location.allocId tag)}} ∧
-      tree.locations.size = entry.allocation.extra.locations.size ∧ tree.locations.WellFormed ∧
-      tree.indexOfTag tag = some child ∧
-      (∃ node, tree.nodeAt child = some node ∧ node.tag = tag) ∧
-      ∀ point : UInt64, location.baseOffset.bytes.toNat ≤ point.toNat →
-        point.toNat < (location.baseOffset.bytes + size.bytes).toNat →
-        ∀ row, ValueAt tree.locations point row →
-          OwnsByte tree row (registeredTracker borrow tag).global.protectedTags child := by
-  let tree := entry.allocation.extra
-  let inside := DedupRangeMap.new size readState
-  let active := registeredTracker borrow tag
-  let tags := active.global.protectedTags
-  let registered := withStrongProtector logged location tag frame frameLedger borrow
-  let read := tree.performNormalAccessRange parentTag location.baseOffset size .Read tags
-    .VisitChildrenOfAccessed
-  let raced := withTree registered location.allocId entry read.tree
-  let child := read.tree.newChild location.baseOffset (.concrete parentTag) tag inside (.ReservedFrz false) true
-  let updated := {entry with allocation := entry.allocation.setExtra read.tree}
-  let after := withTree raced location.allocId updated child.tree
-  have rights := grants_during_registration tree borrow.global.protectedTags parent tag
-    location.baseOffset.bytes (location.baseOffset.bytes + size.bytes) fresh owners
-  have laws := uniform_segments location.baseOffset size tree.locations.size readState bounds (.inl rfl)
-  obtain ⟨readOk, childOk, capacity, well, index, key, node, owned⟩ :=
-    concrete_frozen_reborrow tree tags parentTag tag parent root location.baseOffset size inside
-      coherent parentNode parentStored roots parentFound depth rank tagFresh fresh room aligned reuse clean
-      (fun segment mem => (laws segment mem).1) (fun segment mem => (laws segment mem).2) bounds rights
-  have parentAccess : (tree.performBorrowAccessRange location.parentProvenance location.baseOffset size .Read tags
-      .VisitChildrenOfAccessed).status = .Completed := by
-    rw [parentProvenance]
-    exact readOk
-  have checkedChild : ((tree.performBorrowAccessRange location.parentProvenance
-      location.baseOffset size .Read tags .VisitChildrenOfAccessed).tree.newChild
-        location.baseOffset location.parentProvenance tag inside readPolicy.outsidePermission
-        readPolicy.protector.isSome).outcome = .ok () := by
-    rw [parentProvenance]
-    exact childOk
-  have race : retagRace location.allocId .Read location.baseOffset size raced = .ok () raced :=
-    retagRace_disabled location.allocId .Read location.baseOffset size raced raceOff
-  have raceForOperation : retagRace location.allocId .Read location.baseOffset size
-      (withTree registered location.allocId entry
-        (tree.performBorrowAccessRange location.parentProvenance location.baseOffset size .Read tags
-          .VisitChildrenOfAccessed).tree) = .ok () raced := by
-    rw [parentProvenance]
-    exact race
-  have execution := uniform_live_reborrow hooks budget place size readPolicy tag location
-    before pointed resolved logged raced frame frameLedger borrow readState entry .Read check resolve log
-    rfl current ledger tracked live mutable imprecise freeze rfl rfl nonempty ensure
-    parentAccess raceForOperation checkedChild
-  have actual : TypedRetag.reborrow hooks budget place size readPolicy tag before =
-      .ok (some (.concrete location.allocId tag)) after := by
-    simpa only [parentProvenance, after, updated, child, read, tree, tags, active, inside,
-      BorrowTree.performNormalAccessRange, readPolicy, Option.isSome_some] using execution
-  refine ⟨after, child.tree, index, actual, ?_, rfl, ?_, capacity, well, key, node, ?_⟩
-  · exact withTree_live raced location.allocId updated child.tree
-  · simp [after, raced, registered, withTree, withStrongProtector, GlobalState.addProtector, Stack.currentFrame?]
-  · intro point lo hi row member
-    have next := owned point lo hi row member
-    have same : tags.insert tag .StrongProtector = tags :=
-      strong_insert_repeat borrow.global.protectedTags tag
-    simpa only [same] using next
-
 /-- Package the actual live write-back and the child's per-byte grant as
 the source-domain resource consumed by a subsequent helper. Allocation bytes,
 address-relative extent and initialization are the original physical witnesses. -/
@@ -257,6 +142,209 @@ theorem region_from_cached_reborrow (before after : State) (length : UInt64)
       exact ⟨state, lookup, fun path => (localOwns_iff _ _).mpr (localRight path),
         fun path => (foreignCompatible_iff _ _).mpr (foreignRight path)⟩ }
   exact ⟨next, rfl, rfl, rfl, ⟨region⟩⟩
+
+/-- The live typed mutable reborrow in the read-associated frozen profile
+hands the actual new tag's exclusive rights to its caller. The argument
+extent, live cache entry, compiler/pointer leaves, tag allocator and initial
+byte ownership are input facts. The associated tree read and child
+constructor are discharged here from the same initial ownership. -/
+theorem reborrow_exclusive_region [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budget : Nat)
+    (place : MPlaceTy Provenance) (size : Size) (tag parentTag : BorTag)
+    (location : RetagPipeline.ResolvedLocation) (before pointed resolved logged : State)
+    (frame : BorrowFrame) (frameLedger : FrameState) (borrow : MachineHooks.BorrowState)
+    (entry : LocalAllocation Provenance BorrowTree K) (parent root : UniIndex)
+    (parentNode : TreeNode)
+    (check : hooks.checkPtrAccess place.mplace.ptr size before = .ok () pointed)
+    (resolve : hooks.resolveAllocation place.mplace.ptr pointed = .ok (some location) resolved)
+    (log : hooks.logCreation place size readPolicy tag (some location) resolved = .ok () logged)
+    (parentProvenance : location.parentProvenance = .concrete parentTag)
+    (current : logged.stack.currentFrame? = some frame)
+    (ledger : frame.extra.borrowTracker = some frameLedger)
+    (tracked : logged.machine.borrowTracker = some borrow)
+    (live : logged.machine.memory.live[location.allocId]? = some entry)
+    (mutable : entry.allocation.mutability = .Mut)
+    (imprecise : hooks.preciseInteriorMut = pure false)
+    (freeze : hooks.typeIsFreeze place.layout.ty = pure true)
+    (nonempty : size.bytes ≠ 0)
+    (ensure : let registered := withStrongProtector logged location tag frame frameLedger borrow
+      hooks.ensureTreeExtra location.allocId registered = .ok () registered)
+    (raceOff : logged.machine.dataRace = none)
+    (coherent : CoherentForest entry.allocation.extra)
+    (parentStored : entry.allocation.extra.nodeAt parent = some parentNode)
+    (roots : entry.allocation.extra.roots = #[root])
+    (parentFound : entry.allocation.extra.indexOfTag parentTag = some parent)
+    (depth : BorrowTree.ZeroProtection.ParentDepth entry.allocation.extra.nodes)
+    (rank : depth.depth parent < entry.allocation.extra.nodes.size)
+    (tagFresh : entry.allocation.extra.indexOfTag tag = none)
+    (fresh : ∀ index node, entry.allocation.extra.nodeAt index = some node → node.tag ≠ tag)
+    (room : entry.allocation.extra.tagMapping.deassigned.back? = none →
+      entry.allocation.extra.tagMapping.mapping.size ≤ 4294967295)
+    (aligned : entry.allocation.extra.tagMapping.deassigned.back? = none →
+      entry.allocation.extra.tagMapping.mapping.size = entry.allocation.extra.nodes.size)
+    (reuse : ∀ index, entry.allocation.extra.tagMapping.deassigned.back? = some index →
+      index.toNat < entry.allocation.extra.nodes.size ∧ entry.allocation.extra.nodeAt index = none)
+    (clean : ∀ index, entry.allocation.extra.nodeAt index = none →
+      ∀ position (valid : position < entry.allocation.extra.locations.entries.size),
+        entry.allocation.extra.locations.entries[position].data.perms.get index = none)
+    (bounds : location.baseOffset.bytes.toNat + size.bytes.toNat ≤ entry.allocation.extra.locations.size.bytes.toNat)
+    (owners : OwnedOn (fun location => LocationRights entry.allocation.extra location
+      borrow.global.protectedTags parent) location.baseOffset.bytes (location.baseOffset.bytes + size.bytes)
+      entry.allocation.extra.locations) :
+    ∃ (after : State) (tree : BorrowTree) (child : UniIndex),
+      TypedRetag.reborrow hooks budget place size readPolicy tag before =
+        .ok (some (.concrete location.allocId tag)) after ∧
+      after.machine.memory.live[location.allocId]? =
+        some {entry with allocation := entry.allocation.setExtra tree} ∧
+      after.machine.borrowTracker = some (registeredTracker borrow tag) ∧
+      after.stack.currentFrame? =
+        some {frame with extra := {frame.extra with borrowTracker := some (frameLedger.addProtector location.allocId tag)}} ∧
+      tree.locations.size = entry.allocation.extra.locations.size ∧ CoherentForest tree ∧
+      tree.roots = #[root] ∧ tree.indexOfTag tag = some child ∧
+      (∃ node, tree.nodeAt child = some node ∧ node.tag = tag) ∧
+      (∀ point : UInt64, location.baseOffset.bytes.toNat ≤ point.toNat →
+        point.toNat < (location.baseOffset.bytes + size.bytes).toNat →
+        ∀ row, ValueAt tree.locations point row →
+          OwnsByte tree row (registeredTracker borrow tag).global.protectedTags child) ∧
+      (∀ storage : InitializedRegion logged size.bytes,
+        storage.id = location.allocId → storage.relativeStart = location.baseOffset → storage.entry = entry →
+        ∃ next : InitializedRegion after size.bytes,
+          next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
+          next.entry = {storage.entry with allocation := storage.entry.allocation.setExtra tree} ∧
+          Nonempty (ExclusiveRegion after size.bytes next tag)) := by
+  let tree := entry.allocation.extra
+  let inside := DedupRangeMap.new size readState
+  let active := registeredTracker borrow tag
+  let tags := active.global.protectedTags
+  let registered := withStrongProtector logged location tag frame frameLedger borrow
+  let read := tree.performNormalAccessRange parentTag location.baseOffset size .Read tags
+    .VisitChildrenOfAccessed
+  let raced := withTree registered location.allocId entry read.tree
+  let child := read.tree.newChild location.baseOffset (.concrete parentTag) tag inside (.ReservedFrz false) true
+  let updated := {entry with allocation := entry.allocation.setExtra read.tree}
+  let after := withTree raced location.allocId updated child.tree
+  have rights := grants_during_registration tree borrow.global.protectedTags parent tag
+    location.baseOffset.bytes (location.baseOffset.bytes + size.bytes) fresh owners
+  have laws := uniform_segments location.baseOffset size tree.locations.size readState bounds (.inl rfl)
+  obtain ⟨readOk, childOk, capacity, childCoherent, childRoots, index, key, node, owned⟩ :=
+    coherent_frozen_reborrow_with_mode tree tags parentTag tag parent root location.baseOffset size inside true
+      coherent parentNode parentStored roots parentFound depth rank tagFresh fresh room aligned reuse clean
+      (fun segment mem => (laws segment mem).1) (fun segment mem => (laws segment mem).2) bounds rights
+  have parentAccess : (tree.performBorrowAccessRange location.parentProvenance location.baseOffset size .Read tags
+      .VisitChildrenOfAccessed).status = .Completed := by
+    rw [parentProvenance]
+    exact readOk
+  have checkedChild : ((tree.performBorrowAccessRange location.parentProvenance
+      location.baseOffset size .Read tags .VisitChildrenOfAccessed).tree.newChild
+        location.baseOffset location.parentProvenance tag inside readPolicy.outsidePermission
+        readPolicy.protector.isSome).outcome = .ok () := by
+    rw [parentProvenance]
+    exact childOk
+  have race : retagRace location.allocId .Read location.baseOffset size raced = .ok () raced :=
+    retagRace_disabled location.allocId .Read location.baseOffset size raced raceOff
+  have raceForOperation : retagRace location.allocId .Read location.baseOffset size
+      (withTree registered location.allocId entry
+        (tree.performBorrowAccessRange location.parentProvenance location.baseOffset size .Read tags
+          .VisitChildrenOfAccessed).tree) = .ok () raced := by
+    rw [parentProvenance]
+    exact race
+  have execution := uniform_live_reborrow hooks budget place size readPolicy tag location
+    before pointed resolved logged raced frame frameLedger borrow readState entry .Read check resolve log
+    rfl current ledger tracked live mutable imprecise freeze rfl rfl nonempty ensure
+    parentAccess raceForOperation checkedChild
+  have actual : TypedRetag.reborrow hooks budget place size readPolicy tag before =
+      .ok (some (.concrete location.allocId tag)) after := by
+    simpa only [parentProvenance, after, updated, child, read, tree, tags, active, inside,
+      BorrowTree.performNormalAccessRange, readPolicy, Option.isSome_some] using execution
+  have selectedLive : after.machine.memory.live[location.allocId]? =
+      some {entry with allocation := entry.allocation.setExtra child.tree} :=
+    withTree_live raced location.allocId updated child.tree
+  have byteGrant : ∀ point : UInt64, location.baseOffset.bytes.toNat ≤ point.toNat →
+      point.toNat < (location.baseOffset.bytes + size.bytes).toNat →
+      ∀ row, ValueAt child.tree.locations point row →
+        OwnsByte child.tree row (registeredTracker borrow tag).global.protectedTags index := by
+    intro point lo hi row member
+    have next := owned point lo hi row member
+    have same : tags.insert tag .StrongProtector = tags :=
+      strong_insert_repeat borrow.global.protectedTags tag
+    simpa only [childProtections, Bool.true_eq, ↓reduceIte, same] using next
+  refine ⟨after, child.tree, index, actual, selectedLive, rfl, ?_, capacity, childCoherent,
+    childRoots, key, node, byteGrant, ?_⟩
+  · simp [after, raced, registered, withTree, withStrongProtector, GlobalState.addProtector, Stack.currentFrame?]
+  · intro storage sameId sameOffset sameEntry
+    apply region_from_cached_reborrow logged after size.bytes storage child.tree tag index (registeredTracker borrow tag)
+      ?_ rfl childCoherent key node ?_ ?_
+    · simpa only [sameId, sameEntry] using selectedLive
+    · rw [sameOffset, capacity]
+      exact bounds
+    · simpa only [sameOffset] using byteGrant
+
+/-- The reborrow's cached byte and permission update, projected from its
+coherent returned region. -/
+theorem reborrow_exclusive [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budget : Nat)
+    (place : MPlaceTy Provenance) (size : Size) (tag parentTag : BorTag)
+    (location : RetagPipeline.ResolvedLocation) (before pointed resolved logged : State)
+    (frame : BorrowFrame) (frameLedger : FrameState) (borrow : MachineHooks.BorrowState)
+    (entry : LocalAllocation Provenance BorrowTree K) (parent root : UniIndex)
+    (parentNode : TreeNode)
+    (check : hooks.checkPtrAccess place.mplace.ptr size before = .ok () pointed)
+    (resolve : hooks.resolveAllocation place.mplace.ptr pointed = .ok (some location) resolved)
+    (log : hooks.logCreation place size readPolicy tag (some location) resolved = .ok () logged)
+    (parentProvenance : location.parentProvenance = .concrete parentTag)
+    (current : logged.stack.currentFrame? = some frame)
+    (ledger : frame.extra.borrowTracker = some frameLedger)
+    (tracked : logged.machine.borrowTracker = some borrow)
+    (live : logged.machine.memory.live[location.allocId]? = some entry)
+    (mutable : entry.allocation.mutability = .Mut)
+    (imprecise : hooks.preciseInteriorMut = pure false)
+    (freeze : hooks.typeIsFreeze place.layout.ty = pure true)
+    (nonempty : size.bytes ≠ 0)
+    (ensure : let registered := withStrongProtector logged location tag frame frameLedger borrow
+      hooks.ensureTreeExtra location.allocId registered = .ok () registered)
+    (raceOff : logged.machine.dataRace = none)
+    (coherent : CoherentForest entry.allocation.extra)
+    (parentStored : entry.allocation.extra.nodeAt parent = some parentNode)
+    (roots : entry.allocation.extra.roots = #[root])
+    (parentFound : entry.allocation.extra.indexOfTag parentTag = some parent)
+    (depth : BorrowTree.ZeroProtection.ParentDepth entry.allocation.extra.nodes)
+    (rank : depth.depth parent < entry.allocation.extra.nodes.size)
+    (tagFresh : entry.allocation.extra.indexOfTag tag = none)
+    (fresh : ∀ index node, entry.allocation.extra.nodeAt index = some node → node.tag ≠ tag)
+    (room : entry.allocation.extra.tagMapping.deassigned.back? = none →
+      entry.allocation.extra.tagMapping.mapping.size ≤ 4294967295)
+    (aligned : entry.allocation.extra.tagMapping.deassigned.back? = none →
+      entry.allocation.extra.tagMapping.mapping.size = entry.allocation.extra.nodes.size)
+    (reuse : ∀ index, entry.allocation.extra.tagMapping.deassigned.back? = some index →
+      index.toNat < entry.allocation.extra.nodes.size ∧ entry.allocation.extra.nodeAt index = none)
+    (clean : ∀ index, entry.allocation.extra.nodeAt index = none →
+      ∀ position (valid : position < entry.allocation.extra.locations.entries.size),
+        entry.allocation.extra.locations.entries[position].data.perms.get index = none)
+    (bounds : location.baseOffset.bytes.toNat + size.bytes.toNat ≤ entry.allocation.extra.locations.size.bytes.toNat)
+    (owners : OwnedOn (fun location => LocationRights entry.allocation.extra location
+      borrow.global.protectedTags parent) location.baseOffset.bytes (location.baseOffset.bytes + size.bytes)
+      entry.allocation.extra.locations) :
+    ∃ (after : State) (tree : BorrowTree) (child : UniIndex),
+      TypedRetag.reborrow hooks budget place size readPolicy tag before =
+        .ok (some (.concrete location.allocId tag)) after ∧
+      after.machine.memory.live[location.allocId]? =
+        some {entry with allocation := entry.allocation.setExtra tree} ∧
+      after.machine.borrowTracker = some (registeredTracker borrow tag) ∧
+      after.stack.currentFrame? =
+        some {frame with extra := {frame.extra with borrowTracker := some (frameLedger.addProtector location.allocId tag)}} ∧
+      tree.locations.size = entry.allocation.extra.locations.size ∧ tree.locations.WellFormed ∧
+      tree.indexOfTag tag = some child ∧
+      (∃ node, tree.nodeAt child = some node ∧ node.tag = tag) ∧
+      ∀ point : UInt64, location.baseOffset.bytes.toNat ≤ point.toNat →
+        point.toNat < (location.baseOffset.bytes + size.bytes).toNat →
+        ∀ row, ValueAt tree.locations point row →
+          OwnsByte tree row (registeredTracker borrow tag).global.protectedTags child := by
+  obtain ⟨after, tree, child, executed, cached, borrowAfter, frameAfter, sizeAfter, forest,
+      _, found, node, rights, _⟩ :=
+    reborrow_exclusive_region hooks budget place size tag parentTag location before pointed resolved logged
+      frame frameLedger borrow entry parent root parentNode check resolve log parentProvenance current ledger
+      tracked live mutable imprecise freeze nonempty ensure raceOff coherent parentStored roots parentFound
+      depth rank tagFresh fresh room aligned reuse clean bounds owners
+  exact ⟨after, tree, child, executed, cached, borrowAfter, frameAfter, sizeAfter, forest.ranges,
+    found, node, rights⟩
 
 /-- Carry a proved exclusive reborrow through the actual FnEntry pointer
 retag. The machine allocates the tag and passes the original address,

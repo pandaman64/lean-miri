@@ -1,3 +1,4 @@
+import duplicate_prefix.RetagGraphFrame
 import duplicate_prefix.VacantRetagRead
 import duplicate_prefix.ExclusiveRetagRead
 import duplicate_prefix.ExclusiveFrozenEntry
@@ -55,11 +56,11 @@ private theorem owned_byte {tree : BorrowTree} {protectors : ProtectedTags} {sou
 
 /-- Execute the real read and new-child operations of a frozen mutable
 reborrow, from the same original allocation ownership and vacancy invariant.
-The returned grant concerns the fresh, strongly protected child. -/
-theorem concrete_frozen_reborrow
+The returned grant concerns the fresh child under the requested protector mode. -/
+theorem coherent_frozen_reborrow_with_mode
     (tree : BorrowTree) (protectors : ProtectedTags)
     (parentTag tag : BorTag) (parent root : UniIndex)
-    (offset length : Size) (inside : DedupRangeMap LocationState)
+    (offset length : Size) (inside : DedupRangeMap LocationState) (held : Bool)
     (coherent : CoherentForest tree) (parentNode : TreeNode)
     (parentStored : tree.nodeAt parent = some parentNode)
     (roots : tree.roots = #[root]) (parentFound : tree.indexOfTag parentTag = some parent)
@@ -75,20 +76,20 @@ theorem concrete_frozen_reborrow
         tree.locations.entries[position].data.perms.get index = none)
     (span : ∀ segment ∈ inside.iterAll.toList, segment.range.start ≤ segment.range.stop ∧
       offset.bytes.toNat + segment.range.stop.toNat ≤ tree.locations.size.bytes.toNat)
-    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenEntryState segment.data)
+    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenChildState held segment.data)
     (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
     (owners : OwnedOn (fun location => LocationRights tree location protectors parent)
       offset.bytes (offset.bytes + length.bytes) tree.locations) :
     let read := tree.performNormalAccessRange parentTag offset length .Read protectors .VisitChildrenOfAccessed
-    let result := read.tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) true
+    let result := read.tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) held
     read.status = .Completed ∧ result.outcome = .ok () ∧
-      result.tree.locations.size = tree.locations.size ∧ result.tree.locations.WellFormed ∧
+      result.tree.locations.size = tree.locations.size ∧ CoherentForest result.tree ∧ result.tree.roots = #[root] ∧
       ∃ child, result.tree.indexOfTag tag = some child ∧
         (∃ node, result.tree.nodeAt child = some node ∧ node.tag = tag) ∧
         ∀ point : UInt64, offset.bytes.toNat ≤ point.toNat →
           point.toNat < (offset.bytes + length.bytes).toNat →
           ∀ location, ValueAt result.tree.locations point location →
-            OwnsByte result.tree location (protectors.insert tag .StrongProtector) child := by
+            OwnsByte result.tree location (childProtections protectors tag held) child := by
   let read := tree.performNormalAccessRange parentTag offset length .Read protectors .VisitChildrenOfAccessed
   let archivedDepth : GeneralBorrowExposure.ParentDepth tree.nodes :=
     ⟨depth.depth, depth.bounded, depth.parent⟩
@@ -107,7 +108,7 @@ theorem concrete_frozen_reborrow
       0 tree.locations.size.bytes tree.locations := by
     intro pos valid _ _ _ index vacant
     exact clean index vacant pos valid
-  obtain ⟨readOk, readCoherent, readHead, readFound, _, readSize, readOwners⟩ :=
+  obtain ⟨readOk, readCoherent, readHead, readFound, readRoots, readSize, readOwners⟩ :=
     retag_read_ownership tree protectors parentTag parent root offset length offset.bytes
       (offset.bytes + length.bytes) coherent parentNode parentStored roots parentFound owners scopedClean
       bounds (Nat.le_refl _) (Nat.le_refl _)
@@ -150,7 +151,7 @@ theorem concrete_frozen_reborrow
     rw [sameMap] at selected
     simpa only [sameNodes, BorrowTree.nodeAt] using reuse index selected
   obtain ⟨mapping, child, inserted, done, key, stored, capacity, partition, rights⟩ :=
-    install_frozen_entry read.tree offset protectors parentTag tag parent parentNode inside readCoherent
+    install_frozen_entry_with_mode read.tree offset protectors parentTag tag parent parentNode inside held readCoherent
       readFound readHead readTagFresh readFresh (by simpa only [sameMap] using room)
       (by simpa only [sameMap, sameNodes] using aligned) reuseRead readDepth readRank
       (fun index vacant position valid => cleanAll position valid index vacant)
@@ -159,7 +160,92 @@ theorem concrete_frozen_reborrow
         rw [exactSize]
         exact span) frozen offset.bytes (offset.bytes + length.bytes)
       (fun _ start stop _ inside => owned_byte readOwners start stop inside)
-  exact ⟨readOk, done, capacity.trans readSize, partition, child, key, stored, rights⟩
+  obtain ⟨selectedMap, selected, selectedTag, selectedBound, selectedVacant⟩ :=
+    select_slot read.tree tag readTagFresh (by simpa only [sameMap] using room)
+      (by simpa only [sameMap, sameNodes] using aligned) reuseRead
+  obtain ⟨childCoherent, childRoots⟩ :=
+    frozen_child_coherent_with_mode read.tree offset parentTag tag parent selected selectedMap inside held
+      selectedTag readFound parentNode readHead selectedVacant selectedBound readCoherent readDepth readRank
+      done partition
+  exact ⟨readOk, done, capacity.trans readSize, childCoherent, childRoots.trans readRoots,
+    child, key, stored, rights⟩
+
+/-- Frozen constructors preserve the range partition and transfer byte grants. -/
+theorem concrete_frozen_reborrow_with_mode
+    (tree : BorrowTree) (protectors : ProtectedTags)
+    (parentTag tag : BorTag) (parent root : UniIndex)
+    (offset length : Size) (inside : DedupRangeMap LocationState) (held : Bool)
+    (coherent : CoherentForest tree) (parentNode : TreeNode)
+    (parentStored : tree.nodeAt parent = some parentNode)
+    (roots : tree.roots = #[root]) (parentFound : tree.indexOfTag parentTag = some parent)
+    (depth : BorrowTree.ZeroProtection.ParentDepth tree.nodes) (rank : depth.depth parent < tree.nodes.size)
+    (tagFresh : tree.indexOfTag tag = none)
+    (fresh : ∀ index node, tree.nodeAt index = some node → node.tag ≠ tag)
+    (room : tree.tagMapping.deassigned.back? = none → tree.tagMapping.mapping.size ≤ 4294967295)
+    (aligned : tree.tagMapping.deassigned.back? = none → tree.tagMapping.mapping.size = tree.nodes.size)
+    (reuse : ∀ index, tree.tagMapping.deassigned.back? = some index →
+      index.toNat < tree.nodes.size ∧ tree.nodeAt index = none)
+    (clean : ∀ index, tree.nodeAt index = none →
+      ∀ position (valid : position < tree.locations.entries.size),
+        tree.locations.entries[position].data.perms.get index = none)
+    (span : ∀ segment ∈ inside.iterAll.toList, segment.range.start ≤ segment.range.stop ∧
+      offset.bytes.toNat + segment.range.stop.toNat ≤ tree.locations.size.bytes.toNat)
+    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenChildState held segment.data)
+    (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
+    (owners : OwnedOn (fun location => LocationRights tree location protectors parent)
+      offset.bytes (offset.bytes + length.bytes) tree.locations) :
+    let read := tree.performNormalAccessRange parentTag offset length .Read protectors .VisitChildrenOfAccessed
+    let result := read.tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) held
+    read.status = .Completed ∧ result.outcome = .ok () ∧
+      result.tree.locations.size = tree.locations.size ∧ result.tree.locations.WellFormed ∧
+      ∃ child, result.tree.indexOfTag tag = some child ∧
+        (∃ node, result.tree.nodeAt child = some node ∧ node.tag = tag) ∧
+        ∀ point : UInt64, offset.bytes.toNat ≤ point.toNat →
+          point.toNat < (offset.bytes + length.bytes).toNat →
+          ∀ location, ValueAt result.tree.locations point location →
+            OwnsByte result.tree location (childProtections protectors tag held) child := by
+  obtain ⟨readOk, done, capacity, forest, _, child, key, node, rights⟩ :=
+    coherent_frozen_reborrow_with_mode tree protectors parentTag tag parent root offset length inside held
+      coherent parentNode parentStored roots parentFound depth rank tagFresh fresh room aligned reuse
+      clean span frozen bounds owners
+  exact ⟨readOk, done, capacity, forest.ranges, child, key, node, rights⟩
+
+theorem concrete_frozen_reborrow
+    (tree : BorrowTree) (protectors : ProtectedTags)
+    (parentTag tag : BorTag) (parent root : UniIndex)
+    (offset length : Size) (inside : DedupRangeMap LocationState)
+    (coherent : CoherentForest tree) (parentNode : TreeNode)
+    (parentStored : tree.nodeAt parent = some parentNode)
+    (roots : tree.roots = #[root]) (parentFound : tree.indexOfTag parentTag = some parent)
+    (depth : BorrowTree.ZeroProtection.ParentDepth tree.nodes) (rank : depth.depth parent < tree.nodes.size)
+    (tagFresh : tree.indexOfTag tag = none)
+    (fresh : ∀ index node, tree.nodeAt index = some node → node.tag ≠ tag)
+    (room : tree.tagMapping.deassigned.back? = none → tree.tagMapping.mapping.size ≤ 4294967295)
+    (aligned : tree.tagMapping.deassigned.back? = none → tree.tagMapping.mapping.size = tree.nodes.size)
+    (reuse : ∀ index, tree.tagMapping.deassigned.back? = some index →
+      index.toNat < tree.nodes.size ∧ tree.nodeAt index = none)
+    (clean : ∀ index, tree.nodeAt index = none →
+      ∀ position (valid : position < tree.locations.entries.size),
+        tree.locations.entries[position].data.perms.get index = none)
+    (span : ∀ segment ∈ inside.iterAll.toList, segment.range.start ≤ segment.range.stop ∧
+      offset.bytes.toNat + segment.range.stop.toNat ≤ tree.locations.size.bytes.toNat)
+    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenEntryState segment.data)
+    (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
+    (owners : OwnedOn (fun location => LocationRights tree location protectors parent)
+      offset.bytes (offset.bytes + length.bytes) tree.locations) :
+    let read := tree.performNormalAccessRange parentTag offset length .Read protectors .VisitChildrenOfAccessed
+    let result := read.tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) true
+    read.status = .Completed ∧ result.outcome = .ok () ∧
+      result.tree.locations.size = tree.locations.size ∧ result.tree.locations.WellFormed ∧
+      ∃ child, result.tree.indexOfTag tag = some child ∧
+        (∃ node, result.tree.nodeAt child = some node ∧ node.tag = tag) ∧
+        ∀ point : UInt64, offset.bytes.toNat ≤ point.toNat →
+          point.toNat < (offset.bytes + length.bytes).toNat →
+          ∀ location, ValueAt result.tree.locations point location →
+            OwnsByte result.tree location (protectors.insert tag .StrongProtector) child :=
+  concrete_frozen_reborrow_with_mode tree protectors parentTag tag parent root offset length inside true
+    coherent parentNode parentStored roots parentFound depth rank tagFresh fresh room aligned reuse clean
+    span frozen bounds owners
 
 #print axioms concrete_frozen_reborrow
 end DuplicatePrefix.ArchiveForestProjection
