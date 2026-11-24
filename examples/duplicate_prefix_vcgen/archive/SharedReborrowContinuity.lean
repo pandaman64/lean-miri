@@ -91,6 +91,11 @@ structure SharedChildFrame (original read after : BorrowTree) (parent child : Un
   olderExposure : ∀ query, query ≠ child →
     (after.nodeAt query).map TreeNode.isExposed = (original.nodeAt query).map TreeNode.isExposed
   olderTags : ∀ query, query ≠ tag → after.indexOfTag query = original.indexOfTag query
+  appended : original.tagMapping.deassigned = #[] →
+    original.tagMapping.mapping.size = original.nodes.size →
+    after.tagMapping.deassigned = #[] ∧
+    after.tagMapping.mapping.size = original.tagMapping.mapping.size + 1 ∧
+    after.nodes.size = original.nodes.size + 1
 
 private theorem under_read (original read : BorrowTree) (source index : UniIndex)
     (same : read = {original with locations := read.locations}) :
@@ -149,7 +154,7 @@ theorem SharedChildFrame.releaseLineage {original read after : BorrowTree}
     rw [← sameTag]
     exact unheld index data present oldParent oldForeign
 
-private theorem ownership_from_bytes (table : DedupRangeMap LocationTree)
+theorem ownership_from_bytes (table : DedupRangeMap LocationTree)
     (lower upper : UInt64) (well : table.WellFormed) (property : LocationTree → Prop)
     (owned : ∀ point : UInt64, lower.toNat ≤ point.toNat → point.toNat < upper.toNat →
       ∀ row, ValueAt table point row → property row) :
@@ -409,7 +414,7 @@ theorem concrete_shared_readable_reborrow_with_frame
       have values := Option.some.inj same
       exact ⟨previous, rfl, (congrArg Prod.fst values).symm, congrArg (fun v => v.2.2) values⟩
   have footprint : SharedChildFrame tree read.tree result.tree parent child tag offset length inside := by
-    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro index data distinct found
       obtain ⟨previous, existsBefore, tag, permission⟩ := oldNodes index data distinct found
       exact ⟨previous, by
@@ -457,6 +462,36 @@ theorem concrete_shared_readable_reborrow_with_frame
         mapping child different selected
       change result.tree.indexOfTag query = read.tree.indexOfTag query at ran
       simpa only [BorrowTree.indexOfTag, sameMap] using ran
+    · intro empty alignedOriginal
+      have emptyRead : read.tree.tagMapping.deassigned = #[] := by rw [sameMap]; exact empty
+      obtain ⟨pool, mapSize, indexSize⟩ :=
+        inserted_append read.tree.tagMapping tag mapping child emptyRead readTagFresh selected
+      have endIndex : child.toNat = read.tree.nodes.data.size := by
+        rw [indexSize, sameMap, alignedOriginal, sameNodes]
+        rfl
+      have metadata := newChild_keyMap read.tree offset (.concrete parentTag) tag inside .Frozen held
+        mapping child selected
+      have graph := newChild_graph_initial read.tree offset parentTag tag parent child mapping inside
+        .Frozen held .Read rfl rfl rfl selected readFound parentNode readHead vacant complete
+      let initial := initialChildNode tag parent .Frozen .Read
+      have graphSize := congrArg
+        (fun data : Array UniIndex × Nat × (UniIndex → Option (Option UniIndex × Array UniIndex)) => data.2.1) graph
+      simp only [graphView, initialChildAttached] at graphSize
+      have different := BorrowTree.ZeroProtection.Append.parent_not_fresh read.tree.nodes child parent parentNode endIndex readHead
+      have retained := (BorrowTree.ZeroProtection.Append.append_get_other read.tree.nodes child parent initial endIndex different).trans readHead
+      have grown : (BorrowTree.ZeroProtection.Append.attachedNodes read.tree.nodes child parent parentNode initial).size =
+          read.tree.nodes.size + 1 := by
+        unfold BorrowTree.ZeroProtection.Append.attachedNodes
+        rw [BorrowTree.ZeroProtection.insert_existing_size (read.tree.nodes.insert child initial) parent parentNode _ retained,
+          BorrowTree.ZeroProtection.Append.append_size _ _ _ endIndex]
+      refine ⟨?_, ?_, ?_⟩
+      · change result.tree.tagMapping.deassigned = #[]
+        rw [metadata]
+        exact pool
+      · change result.tree.tagMapping.mapping.size = tree.tagMapping.mapping.size + 1
+        rw [metadata, ← sameMap]
+        exact mapSize
+      · exact graphSize.trans (grown.trans (by rw [sameNodes]))
   refine ⟨readOk, complete, frameWith.1.trans readSize, coherentAfter, sameRoots.trans
     ((congrArg BorrowTree.roots frame).trans roots), child, key, childStored, footprint, ?_⟩
   intro point lower upper location indexed

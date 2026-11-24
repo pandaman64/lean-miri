@@ -1188,10 +1188,12 @@ vector-clock backend.
   topology independently of execution. The exact emitted VC is proved for
   zero-count calls under the stated Shallow and protector premises, both for
   a physical root destination and for a nested local Boolean destination.
+  The emitted VC is also proved for nonempty slices and counts above half
+  the length under the nested cached destination and dense tag-table premises.
   Separate proofs connect exclusive Tree Borrows permissions to reborrow and
-  the positive copy helper's return. The whole-function proof still needs the
-  uniform derivation from lawful call entry, the nonzero path across the
-  remaining calls, and closure of the positive and too-large-count returns.
+  the positive copy helper's return. The common all-count proof still needs to
+  join the successful copy path and close the zero-length nonzero-count cases
+  and the physical return variants.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

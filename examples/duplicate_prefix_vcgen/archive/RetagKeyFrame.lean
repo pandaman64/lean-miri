@@ -216,4 +216,37 @@ theorem newChild_old_key (tree : BorrowTree) (offset : Size) (source : Provenanc
   exact inserted_lookup_other tree.tagMapping tag query mapping index different inserted
 
 #print axioms newChild_old_key
+theorem inserted_append (table : UniKeyMap BorTag) (tag : BorTag)
+    (mapping : UniKeyMap BorTag) (index : UniIndex)
+    (empty : table.deassigned = #[]) (fresh : table.get tag = none)
+    (inserted : table.insert tag = .Inserted mapping index) :
+    mapping.deassigned = #[] ∧ mapping.mapping.size = table.mapping.size + 1 ∧
+      index.toNat = table.mapping.size := by
+  have noKey : table.mapping.find? (fun pair => pair.1 == tag) = none := by
+    unfold UniKeyMap.get at fresh
+    cases found : table.mapping.find? (fun pair => pair.1 == tag) with
+    | none => rfl
+    | some pair => simp [found] at fresh
+  have unchanged : (table.mapping.filter fun pair => pair.1 != tag) = table.mapping := by
+    apply Array.filter_eq_self.mpr
+    intro pair member
+    have different := Array.find?_eq_none.mp noKey pair member
+    simp [bne, different]
+  unfold UniKeyMap.insert at inserted
+  have noReuse : table.deassigned.back? = none := by simp [empty]
+  cases next : UniIndex.ofNat? table.mapping.size with
+  | none => simp [noReuse,next,Id.run,pure] at inserted
+  | some nextIndex =>
+    simp [noReuse,next,fresh,unchanged,Id.run,bind,pure] at inserted
+    obtain ⟨rfl, rfl⟩ := inserted
+    refine ⟨empty, by simp, ?_⟩
+    unfold UniIndex.ofNat? at next
+    split at next
+    · rename_i fits
+      have eq := Option.some.inj next
+      rw [← eq]
+      simp [UniIndex.toNat, Nat.mod_eq_of_lt (show table.mapping.size < 2^32 by omega)]
+    · contradiction
+
+#print axioms inserted_append
 end Miri.Verification.MutableRetagFootprint

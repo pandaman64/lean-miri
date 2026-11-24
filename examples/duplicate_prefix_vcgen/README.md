@@ -218,6 +218,35 @@ checks length, protector release, and the root rejection return.
 `VerifyRejectionGenerated.lean` links a checked root-to-post-length trace
 to the emitted safety VC.
 
+[RootRejectionPrepared.lean](RootRejectionPrepared.lean) proves the emitted VC
+from the prepared entry for a nonempty slice and every count above half its
+length, under the stated nested cached Boolean destination and dense
+Tree Borrows tag-table conditions. Its trace includes the shared reborrow,
+actual length call, false return, and protector release.
+[VerifyRejectedCanonical.lean](VerifyRejectedCanonical.lean) applies that
+proof to the canonical profile with the same supplements.
+
+After generating the client artifacts as above, use a fresh overlay to check
+this complete rejection branch.
+
+```sh
+out="$PWD/scratch/duplicate-prefix-vcgen"
+archive="$PWD/scratch/duplicate-prefix-rejection"
+LEAN_PATH="$out" python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
+  --output "$archive" --target RootNonzeroShared --target GeneratedSafetyOfTrace \
+  --target LenFrameGrant --target LenRuntimeProfile --target TightParentDepth \
+  --target SliceLenCompleteCurrent --target ReleaseFromHolderRights \
+  --target RootZeroCompletePrefix --target RootRejectedPrefix --target ActiveStackRelease
+export LEAN_PATH="$out:$archive:$PWD/.lake/build/lib/lean"
+source_dir=examples/duplicate_prefix_vcgen
+for module in ReturnPreOfEffects RootZeroShallowReturn RootRejectedAfterLen \
+    RejectionEntryAfterLength RetainedRootAfterLength RejectionFromEnteredLength \
+    ProtectedTagFresh RejectionFromLenCall RootRejectionPrepared CanonicalCallDomain; do
+  lean -j1 --root="$source_dir" -o "$out/$module.olean" "$source_dir/$module.lean"
+done
+lean -j1 "$source_dir/VerifyRejectedCanonical.lean"
+```
+
 The `EmptyIntegerLength` archive target checks the actual shared-reference
 assignment, protected argument-validation callback, nested metadata call, and
 length return for a non-null integer-address empty slice. The length is zero.

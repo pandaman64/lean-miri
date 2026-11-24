@@ -163,6 +163,9 @@ LOCAL = {
     "EmptyRootLenCall",
     "EmptySharedReference",
     "SliceLenExtended",
+    "GeneratedSafetyOfTrace",
+    "RootNonzeroShared",
+    "UnprotectedSharedRights",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 ALLOWED = {"propext", "Quot.sound", "Classical.choice"}
