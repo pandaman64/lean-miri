@@ -233,6 +233,27 @@ LOCAL = {
     "RootPositiveToCachedCaller",
     "ScopedReleaseMaterialization",
     "SharedKeyResources",
+    "CopyHolderRelease",
+    "DuplicatePrefixPhysicalContexts",
+    "PhysicalBoolGhostClear",
+    "PhysicalBoolGhostPointer",
+    "PhysicalBoolGhostRead",
+    "PhysicalBoolGhostWindow",
+    "PhysicalBoolWindowActual",
+    "PhysicalBoolWindowPrimitive",
+    "PhysicalBoolWindowValidateActual",
+    "PhysicalBoolWindowValidation",
+    "PhysicalBoolWindowWrite",
+    "PhysicalSlotReleaseRights",
+    "RootActualPhysicalReturn",
+    "RootWindowPhysicalReturn",
+    "S04ReturnAllocationClear",
+    "S04ReturnPostStorage",
+    "S04ReturnProvenanceClear",
+    "S04ReturnResolvedWindowMemory",
+    "S04ReturnResolvedWindowPointer",
+    "S04ReturnWindowScalar",
+    "S04SingleByteInit",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 CLIENT_IMPORTS = re.compile(rb"^import ([A-Za-z][A-Za-z0-9_]*)(?:\.([A-Za-z0-9_]+))?\s*$", re.MULTILINE)
@@ -350,6 +371,12 @@ def install_clients(output, targets, generated, input_file):
 
 
 def install_graph(output, archive_targets, client_targets, generated, input_file):
+    if not client_targets and generated is None:
+        archive = install_sources(output, archive_targets or CHECKED)
+        return {
+            "duplicate_prefix." + name: {"duplicate_prefix." + parent for parent in parents}
+            for name, parents in archive.items()
+        }
     client_targets = list(client_targets)
     clients = install_clients(output, client_targets, generated, input_file)
     targets = set(archive_targets or (CHECKED if not clients else ()))

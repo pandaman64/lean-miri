@@ -118,6 +118,17 @@ plan for an empty argument's dormant protector, and
 physical return-slot release from bytewise ownership. These release lemmas
 supply individual cases of the all-count argument.
 
+### Zero count with either return destination
+
+[VerifyZeroPhysicalCanonical.lean](VerifyZeroPhysicalCanonical.lean) proves
+`DuplicatePrefix.CanonicalCallDomain.zeroCount` for every admitted slice
+length, with either a root physical Boolean destination or a nested cached
+Boolean destination. The proof starts from the prepared caller rights and
+uses the actual protector release and return. It also needs the pinned
+compiler control profile and the validation budget in the theorem statement.
+Use `--client VerifyZeroPhysicalCanonical` in the checker command below to
+rebuild this proof.
+
 ### All counts for a nonempty slice with a cached Boolean return
 
 [VerifyAllCountCanonical.lean](VerifyAllCountCanonical.lean) proves

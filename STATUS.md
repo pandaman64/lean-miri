@@ -1186,8 +1186,9 @@ vector-clock backend.
   slice frame can still fail a Tree Borrows write with a live incompatible
   protector. The concrete slice domain now states bytewise permissions and
   topology independently of execution. The exact emitted VC is proved for
-  zero-count calls under the stated Shallow and protector premises, both for
-  a physical root destination and for a nested local Boolean destination.
+  zero-count calls of any admitted slice length under the stated Shallow and
+  caller-rights premises, for either a physical root Boolean destination or a
+  nested cached Boolean destination.
   The emitted VC is also proved for every `UInt64` count of a nonempty
   initialized slice under the canonical compiler profile, nested cached
   Boolean return, and dense tag-table capacity premises.
