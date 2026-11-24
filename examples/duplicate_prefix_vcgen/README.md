@@ -159,6 +159,8 @@ LEAN_PATH="$out:$archive:$PWD/.lake/build/lib/lean" \
 
 The optional `RetagFrozenChild` target checks actual child insertion and
 the resulting range and permission frame under its concrete fresh-tag premises.
+The `ConcreteFrozenReborrow` and `ExclusiveTypedRetag` targets connect the
+concrete forest rights with the actual typed reborrow and final location state.
 
 After the standalone example script builds `SourceDomain.olean`, the
 optional `ExclusiveCopyStep` target verifies the actual positive copy
@@ -166,6 +168,8 @@ instruction and its byte update from the prepared tree permissions.
 `--target CopyHelperCurrentCall` checks the current positive copy-helper
 path from basic block 7 through the actual return to the caller, with
 the stated machine, frame and Tree Borrows premises.
+`--target ExclusiveCopyCurrentCall` derives the needed Tree Borrows access
+from the prepared exclusive region and checks the same return and byte update.
 
 ```sh
 LEAN_PATH="$PWD/scratch/duplicate-prefix-vcgen" \

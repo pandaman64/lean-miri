@@ -3583,3 +3583,139 @@
 @@ -425 +425 @@
 -    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
 +    (present : ambient.machine.memory.live[id]? = some entry)
+--- a/examples/duplicate_prefix/GeneralBorrowOwnership.lean
++++ b/examples/duplicate_prefix/GeneralBorrowOwnership.lean
+@@ -91,6 +91,7 @@
+       Pointwise (tree.performAccess anchor kind mode).tree writable (GeneralBorrowAnchor.relation tree anchor) := by
+   let schedule := tree.topology.traverse anchor mode (sourceNormalSkipped tree kind)
+   have data := GeneralBorrowTraversal.traversal_data tree.topology forest anchor valid mode (sourceNormalSkipped tree kind)
++  rw [performAccess_as_schedule]
+   apply events_preserve schedule.2 schedule.1 kind tree writable (GeneralBorrowAnchor.relation tree anchor) owned data.1
+   · intro event member
+     have eventValid : event.node < tree.locationStates.size := by rw [aligned]; exact (data.2 event member).1
+--- a/examples/duplicate_prefix/GeneralBorrowRangePreserves.lean
++++ b/examples/duplicate_prefix/GeneralBorrowRangePreserves.lean
+@@ -27,8 +27,9 @@
+       cases ownerKind with
+       | Read => exact allowed rfl
+       | Write => simp [writable] at notWritable)
+-  have storage : GeneralBorrowStorage.SameStorage tree (tree.performAccess anchor kind mode).tree :=
+-    GeneralBorrowStorage.events_storage
++  have storage : GeneralBorrowStorage.SameStorage tree (tree.performAccess anchor kind mode).tree := by
++    rw [performAccess_as_schedule]
++    exact GeneralBorrowStorage.events_storage
+       (tree.topology.traverse anchor mode (sourceNormalSkipped tree kind)).2
+       (tree.topology.traverse anchor mode (sourceNormalSkipped tree kind)).1 kind tree
+   refine ⟨?_,?_,?_,?_⟩
+@@ -93,7 +94,7 @@
+     (mode : ChildrenVisitMode) (position : Nat)
+     (empty : (tree.performAccess anchor kind mode).tree.locationStates[position]? = some none) :
+     tree.locationStates[position]? = some none :=
+-  events_none_before _ _ kind tree position empty
++  events_none_before _ _ kind tree position (by simpa only [performAccess_as_schedule] using empty)
+
+ /-- The real optional-value insertion's lookup law, including vector extension.
+ Extending absent slots introduces only None, so other indices are unaffected. -/
+@@ -266,6 +267,76 @@
+   rw [Array.getElem?_mapIdx,Array.getElem?_eq_getElem bounded]
+   simp only [Option.map_some,converted]
+
++/-- The ordered visitor cannot change a location slot absent from its schedule. -/
++private theorem events_keep_slot (items : List TraversalEvent) (root : Nat)
++    (kind : AccessKind) (tree : NormalTreeState) (query : Nat)
++    (unvisited : ∀ item ∈ items, item.node ≠ query) :
++    (sourceNormalEvents tree root kind items).tree.locationStates[query]? = tree.locationStates[query]? := by
++  induction items generalizing tree with
++  | nil => rfl
++  | cons event rest ih =>
++    have before : event.node ≠ query := unvisited event (by simp)
++    have after : ∀ item ∈ rest, item.node ≠ query := fun item mem => unvisited item (.tail _ mem)
++    cases present : tree.stateAt event.node with
++    | none =>
++      unfold_storage_events
++      simp only [present]
++    | some state =>
++      cases record : state.recordNewAccess kind event.relatedness with
++      | DebugAssertion =>
++        unfold_storage_events
++        simp only [present, record]
++      | Recorded recorded =>
++        cases access : recorded.performAccess kind event.relatedness (tree.protectedNodes.contains event.node) <;>
++          by_cases valid : event.node < tree.locationStates.size
++        all_goals unfold_storage_events
++        all_goals simp only [present, record, access, valid, ↓reduceDIte, LocationState.AccessResult.resultingState]
++        all_goals first
++          | rfl
++          | rw [ih _ after]; simp only [Array.getElem?_set, ite_eq_right before]
++          | simp only [Array.getElem?_set, ite_eq_right before]
++
++/-- Normal access can materialize permissions only at stored nodes. This
++preserves lack of stale permission entries at both reused and append slots. -/
++theorem normal_no_stale (tree : BorrowTree) (location : LocationTree)
++    (protectors : ProtectedTags) (source query : UniIndex) (kind : AccessKind)
++    (mode : ChildrenVisitMode) (depth : ParentDepth tree.nodes)
++    (children : GeneralBorrowGraph.ChildNodes tree)
++    (sourceNode : TreeNode) (sourcePresent : tree.nodeAt source = some sourceNode)
++    (vacant : tree.nodeAt query = none) (fresh : location.perms.get query = none) :
++    (tree.performNormalAccessAt location source kind protectors mode).location.perms.get query = none := by
++  let initial := source_normal_projection tree location protectors
++  let schedule := initial.topology.traverse source.toNat mode (sourceNormalSkipped initial kind)
++  have omitted : ∀ event ∈ schedule.2, event.node ≠ query.toNat := by
++    intro event member equal
++    obtain ⟨index, node, converted, indexEq, present⟩ :=
++      GeneralBorrowGraph.visited_present tree location protectors depth children source sourceNode sourcePresent kind mode event member
++    have identity : index = query := by
++      rw [equal, index_self] at converted
++      exact Option.some.inj converted.symm
++    subst index
++    rw [vacant] at present
++    contradiction
++  have same : (initial.performAccess source.toNat kind mode).tree.locationStates[query.toNat]? =
++      initial.locationStates[query.toNat]? := by
++    rw [performAccess_as_schedule]
++    exact events_keep_slot schedule.2 schedule.1 kind initial query.toNat omitted
++  have original : initial.locationStates[query.toNat]?.getD none = none := by
++    by_cases valid : query.toNat < initial.locationStates.size
++    · rw [Array.getElem?_eq_getElem valid, projection_cell tree location protectors query.toNat query valid
++        (index_self query), fresh]
++      rfl
++    · rw [Array.getElem?_eq_none (by omega)]
++      rfl
++  rw [normal_location_perms]
++  unfold writeStates
++  simp only [Id.run, bind, pure, Std.Legacy.Range.forIn_eq_forIn_range',
++    Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
++  change (forIn (List.range' 0 (initial.performAccess source.toNat kind mode).tree.locationStates.size)
++    location (writeScan (initial.performAccess source.toNat kind mode).tree.locationStates)).perms.get query = none
++  rw [writeList_get, same, original, fresh]
++  split <;> rfl
++
+ private theorem normal_ext (before after : NormalTreeState)
+     (topology : before.topology = after.topology) (defaults : before.defaultStates = after.defaultStates)
+     (protectedNodes : before.protectedNodes = after.protectedNodes)
+@@ -289,8 +360,10 @@
+   let initial := source_normal_projection tree location protections
+   let normal := initial.performAccess anchor.toNat kind mode
+   let next := (tree.performNormalAccessAt location anchor kind protections mode).location
+-  have storage : GeneralBorrowStorage.SameStorage initial normal.tree :=
+-    GeneralBorrowStorage.events_storage
++  have storage : GeneralBorrowStorage.SameStorage initial normal.tree := by
++    dsimp only [normal]
++    rw [performAccess_as_schedule]
++    exact GeneralBorrowStorage.events_storage
+       (initial.topology.traverse anchor.toNat mode (sourceNormalSkipped initial kind)).2
+       (initial.topology.traverse anchor.toNat mode (sourceNormalSkipped initial kind)).1 kind initial
+   have afterSize : normal.tree.locationStates.size = tree.nodes.data.size :=
+@@ -408,8 +481,10 @@
+     (GeneralBorrowGraph.parents_closed tree location protections depth) anchor.toNat root.toNat owned.anchorValid
+     ⟨anchor,anchorNode,rfl,anchorPresent⟩
+     (fun index _ present parentless => GeneralBorrowGraph.unique_root tree location protections root roots covered index present parentless)
+-  have normalRoot : (tree.performNormalAccessAt location anchor kind protections mode).access.root = root.toNat :=
+-    (GeneralBorrowStorage.events_root _ _ kind (source_normal_projection tree location protections)).trans pathRoot
++  have normalRoot : (tree.performNormalAccessAt location anchor kind protections mode).access.root = root.toNat := by
++    change ((source_normal_projection tree location protections).performAccess anchor.toNat kind mode).root = root.toNat
++    rw [performAccess_as_schedule]
++    exact (GeneralBorrowStorage.events_root _ _ kind (source_normal_projection tree location protections)).trans pathRoot
+   have converted : UniIndex.ofNat? (tree.performNormalAccessAt location anchor kind protections mode).access.root = some root := by
+     rw [normalRoot]
+     exact index_self root

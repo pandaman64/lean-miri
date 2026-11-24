@@ -74,17 +74,28 @@ theorem uniform_segments (offset size capacity : Size) (state : Tree.LocationSta
     subst segment
     exact ⟨⟨by simp, bounded⟩, valid⟩
 
-private theorem segments_safe (offset : Size) (child parent : UniIndex)
+/-- The initial frozen permission agrees with the source protection policy
+and recorded SIFA. A reserved child can be protected or unprotected. -/
+def FrozenChildState (held : Bool) (state : Tree.LocationState) : Prop :=
+  state = ⟨.ReservedFrz false, true, if held then .None else .Read⟩ ∨
+    state = ⟨.Unique, true, .None⟩
+
+private theorem reserved_sifa (held : Bool) :
+    Permission.strongestIdempotentForeignAccess (.ReservedFrz false) held =
+      .Access (if held then .None else .Read) := by
+  cases held <;> rfl
+
+private theorem segments_safe (offset : Size) (child parent : UniIndex) (held : Bool)
     (segments : List (RangeMapSegment Tree.LocationState)) (current : BorrowTree)
     (minimum : IdempotentForeignAccess)
     (span : ∀ segment ∈ segments, segment.range.start ≤ segment.range.stop ∧
       offset.bytes.toNat + segment.range.stop.toNat ≤ current.locations.size.bytes.toNat)
-    (frozen : ∀ segment ∈ segments, FrozenEntryState segment.data)
+    (frozen : ∀ segment ∈ segments, FrozenChildState held segment.data)
     (well : current.locations.WellFormed)
     (graph : ParentDepth current.nodes)
     (parentLive : ∃ node, current.nodes.get parent = some node)
     (rank : graph.depth parent < current.nodes.size) :
-    childSegmentsPre offset child (some parent) true (fun _ => True) (fun _ _ => False)
+    childSegmentsPre offset child (some parent) held (fun _ => True) (fun _ _ => False)
       segments current minimum := by
   induction segments generalizing current minimum with
   | nil =>
@@ -96,6 +107,7 @@ private theorem segments_safe (offset : Size) (child parent : UniIndex)
     rw [completed]
     trivial
   | cons segment rest ih =>
+    have unique : Permission.strongestIdempotentForeignAccess .Unique held = .Access .None := rfl
     obtain ⟨ordered, fits⟩ := span segment List.mem_cons_self
     obtain ⟨start, checked, bounds⟩ := selected_size offset segment.range current.locations.size ordered fits
     let length := Size.ofBytes (segment.range.stop - segment.range.start)
@@ -103,7 +115,7 @@ private theorem segments_safe (offset : Size) (child parent : UniIndex)
       fun _ row => {row with perms := row.perms.insert child segment.data}
     have updated := modify_of_bounded current.locations start length modify (fun _ _ => True)
       well bounds (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ _ => trivial)
-    have recursive : ∀ sifa, childSegmentsPre offset child (some parent) true
+    have recursive : ∀ sifa, childSegmentsPre offset child (some parent) held
         (fun _ => True) (fun _ _ => False) rest
         {current with locations := (current.locations.modifyRange start length modify).state} sifa := by
       intro sifa
@@ -115,25 +127,25 @@ private theorem segments_safe (offset : Size) (child parent : UniIndex)
     rcases material with permission | permission
     all_goals
       simp only [childSegmentsPre, childSegmentPre, permission, Permission.isInitial,
-        Permission.strongestIdempotentForeignAccess, Bool.not_true, Bool.false_eq_true,
+        reserved_sifa, unique, Bool.not_true, Bool.false_eq_true,
         ↓reduceIte, bne_self_eq_false, checked]
       simp only [modify, length, permission] at updated recursive
       rw [updated.1]
       exact recursive _
 
-private theorem segments_in_attachedTree (offset : Size) (child parent : UniIndex)
+private theorem segments_in_attachedTree (offset : Size) (child parent : UniIndex) (held : Bool)
     (inside : DedupRangeMap Tree.LocationState) (tree : BorrowTree)
     (mapping : UniKeyMap BorTag) (nodes : UniValMap TreeNode)
     (span : ∀ segment ∈ inside.iterAll.toList, segment.range.start ≤ segment.range.stop ∧
       offset.bytes.toNat + segment.range.stop.toNat ≤ tree.locations.size.bytes.toNat)
-    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenEntryState segment.data)
+    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenChildState held segment.data)
     (well : tree.locations.WellFormed)
     (graph : ParentDepth nodes) (parentLive : ∃ node, nodes.get parent = some node)
     (rank : graph.depth parent < nodes.size) :
-    childSegmentsPre offset child (some parent) true (fun _ => True) (fun _ _ => False) inside.iterAll.toList
-      {tree with tagMapping := mapping, nodes := nodes} .None := by
-  exact segments_safe offset child parent inside.iterAll.toList
-    {tree with tagMapping := mapping, nodes := nodes} .None span frozen well graph parentLive rank
+    childSegmentsPre offset child (some parent) held (fun _ => True) (fun _ _ => False) inside.iterAll.toList
+      {tree with tagMapping := mapping, nodes := nodes} (if held then .None else .Read) := by
+  exact segments_safe offset child parent held inside.iterAll.toList
+    {tree with tagMapping := mapping, nodes := nodes} (if held then .None else .Read) span frozen well graph parentLive rank
 
 /-- Allocate an available tag from the actual mapping, without assuming the
 result of its insertion. Existing holes can be reused or the table extended. -/
@@ -174,7 +186,7 @@ theorem select_slot (tree : BorrowTree) (tag : BorTag)
 
 private theorem constructor_pre (tree : BorrowTree) (offset : Size)
     (parentTag tag : BorTag) (parent child : UniIndex) (mapping : UniKeyMap BorTag)
-    (inside : DedupRangeMap Tree.LocationState) (parentNode : TreeNode)
+    (inside : DedupRangeMap Tree.LocationState) (parentNode : TreeNode) (held : Bool)
     (mapped : tree.tagMapping.insert tag = .Inserted mapping child)
     (parentFound : tree.indexOfTag parentTag = some parent)
     (present : tree.nodeAt parent = some parentNode)
@@ -182,16 +194,16 @@ private theorem constructor_pre (tree : BorrowTree) (offset : Size)
     (next : BorrowTree → Prop) (failure : BorrowTree.ChildInsertError → BorrowTree → Prop)
     (tail : let node : TreeNode := {
         tag, parent := some parent, children := #[], defaultInitialPermission := .ReservedFrz false,
-        defaultInitialSifa := .None, isExposed := false }
-      childSegmentsPre offset child (some parent) true next failure inside.iterAll.toList
+        defaultInitialSifa := if held then .None else .Read, isExposed := false }
+      childSegmentsPre offset child (some parent) held next failure inside.iterAll.toList
         {tree with tagMapping := mapping, nodes := Append.attachedNodes tree.nodes child parent parentNode node}
-        .None) :
-    insertChildPre tree offset (.concrete parentTag) tag inside (.ReservedFrz false) true next failure := by
+        (if held then .None else .Read)) :
+    insertChildPre tree offset (.concrete parentTag) tag inside (.ReservedFrz false) held next failure := by
   have distinct := Reuse.parent_not_vacant tree.nodes child parent parentNode vacant present
   have parentLookup : tree.tagMapping.get parentTag = some parent := parentFound
   have found : tree.nodes.get parent = some parentNode := present
-  have defaultSifa : Permission.strongestIdempotentForeignAccess (.ReservedFrz false) true =
-      .Access .None := rfl
+  have defaultSifa : Permission.strongestIdempotentForeignAccess (.ReservedFrz false) held =
+      .Access (if held then .None else .Read) := reserved_sifa held
   unfold insertChildPre
   simp only [mapped, parentLookup, Option.map_some, Permission.isInitial, Bool.not_true,
     Bool.false_eq_true, ↓reduceIte, Permission.isUnique, defaultSifa, finishInsertedChildPre,
@@ -209,12 +221,12 @@ private theorem completed_from_pre (result : BorrowTree.ChildInsertResult)
     rfl
 
 set_option maxHeartbeats 1200000 in
-/-- Actual concrete FnEntry child construction succeeds for bounded frozen
+/-- Actual concrete frozen child construction succeeds for bounded frozen
 segments and an acyclic allocator-selected vacant node. This includes both
 the append and reusable-slot branches and all actual segmented writes. -/
-theorem newChild_frozen_completes (tree : BorrowTree) (offset : Size)
+theorem newChild_frozen_completes_with_mode (tree : BorrowTree) (offset : Size)
     (parentTag tag : BorTag) (parent child : UniIndex)
-    (mapping : UniKeyMap BorTag) (inside : DedupRangeMap Tree.LocationState)
+    (mapping : UniKeyMap BorTag) (inside : DedupRangeMap Tree.LocationState) (held : Bool)
     (mapped : tree.tagMapping.insert tag = .Inserted mapping child)
     (parentFound : tree.indexOfTag parentTag = some parent)
     (parentNode : TreeNode) (present : tree.nodeAt parent = some parentNode)
@@ -223,11 +235,11 @@ theorem newChild_frozen_completes (tree : BorrowTree) (offset : Size)
     (graph : ParentDepth tree.nodes) (rank : graph.depth parent < tree.nodes.size)
     (span : ∀ segment ∈ inside.iterAll.toList, segment.range.start ≤ segment.range.stop ∧
       offset.bytes.toNat + segment.range.stop.toNat ≤ tree.locations.size.bytes.toNat)
-    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenEntryState segment.data) :
-    (tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) true).outcome = .ok () := by
+    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenChildState held segment.data) :
+    (tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) held).outcome = .ok () := by
   let added : TreeNode := {
     tag, parent := some parent, children := #[], defaultInitialPermission := .ReservedFrz false,
-    defaultInitialSifa := .None, isExposed := false }
+    defaultInitialSifa := if held then .None else .Read, isExposed := false }
   have distinct : parent ≠ child := Reuse.parent_not_vacant tree.nodes child parent parentNode vacant present
   have lookup : (tree.nodes.insert child added).get parent = some parentNode :=
     (Sparse.get_other tree.nodes child parent added distinct).trans present
@@ -245,17 +257,70 @@ theorem newChild_frozen_completes (tree : BorrowTree) (offset : Size)
       exact ⟨Append.attached_depth _ graph child parent parentNode added endSlot present rfl,
         Append.attached_parent_strict _ graph child parent parentNode added endSlot present rfl⟩
   obtain ⟨certificate, parentRank⟩ := height
-  have tail := segments_in_attachedTree offset child parent inside tree mapping attached
+  have tail := segments_in_attachedTree offset child parent held inside tree mapping attached
     span frozen well certificate attachParent parentRank
   have provePre := constructor_pre tree offset parentTag tag parent child mapping inside
-    parentNode mapped parentFound present vacant (fun _ => True) (fun _ _ => False) tail
+    parentNode held mapped parentFound present vacant (fun _ => True) (fun _ _ => False) tail
   have post := (insertChildPre_iff tree offset (.concrete parentTag) tag inside
-    (.ReservedFrz false) true (fun _ => True) (fun _ _ => False)).mp provePre
+    (.ReservedFrz false) held (fun _ => True) (fun _ _ => False)).mp provePre
   exact completed_from_pre _ post
+
+theorem newChild_frozen_completes (tree : BorrowTree) (offset : Size)
+    (parentTag tag : BorTag) (parent child : UniIndex)
+    (mapping : UniKeyMap BorTag) (inside : DedupRangeMap Tree.LocationState)
+    (mapped : tree.tagMapping.insert tag = .Inserted mapping child)
+    (parentFound : tree.indexOfTag parentTag = some parent)
+    (parentNode : TreeNode) (present : tree.nodeAt parent = some parentNode)
+    (vacant : tree.nodeAt child = none) (validSlot : child.toNat ≤ tree.nodes.size)
+    (well : tree.locations.WellFormed)
+    (graph : ParentDepth tree.nodes) (rank : graph.depth parent < tree.nodes.size)
+    (span : ∀ segment ∈ inside.iterAll.toList, segment.range.start ≤ segment.range.stop ∧
+      offset.bytes.toNat + segment.range.stop.toNat ≤ tree.locations.size.bytes.toNat)
+    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenEntryState segment.data) :
+    (tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) true).outcome = .ok () :=
+  newChild_frozen_completes_with_mode tree offset parentTag tag parent child mapping inside true
+    mapped parentFound parentNode present vacant validSlot well graph rank span frozen
 
 /-- Bounded frozen permissions and the concrete tag allocator's consistency
 give both actual insertion success and the byte-level frame. No completed
 retag or range operation is an input premise. -/
+theorem newChild_frozen_frame_with_mode (tree : BorrowTree) (offset : Size)
+    (parentTag tag : BorTag) (parent : UniIndex) (parentNode : TreeNode)
+    (inside : DedupRangeMap Tree.LocationState) (held : Bool)
+    (parentFound : tree.indexOfTag parentTag = some parent)
+    (present : tree.nodeAt parent = some parentNode)
+    (tagFresh : tree.indexOfTag tag = none)
+    (room : tree.tagMapping.deassigned.back? = none → tree.tagMapping.mapping.size ≤ 4294967295)
+    (appendAligned : tree.tagMapping.deassigned.back? = none →
+      tree.tagMapping.mapping.size = tree.nodes.size)
+    (reuseValid : ∀ index, tree.tagMapping.deassigned.back? = some index →
+      index.toNat < tree.nodes.size ∧ tree.nodeAt index = none)
+    (well : tree.locations.WellFormed)
+    (graph : ParentDepth tree.nodes) (rank : graph.depth parent < tree.nodes.size)
+    (freshRows : ∀ index, tree.nodeAt index = none →
+      ∀ position (valid : position < tree.locations.entries.size),
+        tree.locations.entries[position].data.perms.get index = none)
+    (span : ∀ segment ∈ inside.iterAll.toList, segment.range.start ≤ segment.range.stop ∧
+      offset.bytes.toNat + segment.range.stop.toNat ≤ tree.locations.size.bytes.toNat)
+    (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenChildState held segment.data) :
+    ∃ mapping child, tree.tagMapping.insert tag = .Inserted mapping child ∧ tree.nodeAt child = none ∧
+      let result := tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) held
+      result.outcome = .ok () ∧ Framed tree.locations child result.tree := by
+  obtain ⟨mapping, child, mapped, slot, vacant⟩ :=
+    select_slot tree tag tagFresh room appendAligned reuseValid
+  have completes := newChild_frozen_completes_with_mode tree offset parentTag tag parent child mapping inside held
+    mapped parentFound parentNode present vacant slot well graph rank span frozen
+  refine ⟨mapping, child, mapped, vacant, completes, ?_⟩
+  apply newChild_framed tree offset parentTag tag parent child mapping inside (.ReservedFrz false) held
+    mapped parentFound parentNode present vacant well (freshRows child vacant) ?_ ?_ completes
+  · intro segment member start checked
+    obtain ⟨ordered, bounded⟩ := span segment member
+    obtain ⟨expected, calculated, fits⟩ := selected_size offset segment.range tree.locations.size ordered bounded
+    have same := Except.ok.inj (calculated.symm.trans checked)
+    simpa only [same] using fits
+  · intro segment member
+    rcases frozen segment member with exactState | exactState <;> rw [exactState] <;> rfl
+
 theorem newChild_frozen_frame (tree : BorrowTree) (offset : Size)
     (parentTag tag : BorTag) (parent : UniIndex) (parentNode : TreeNode)
     (inside : DedupRangeMap Tree.LocationState)
@@ -277,20 +342,8 @@ theorem newChild_frozen_frame (tree : BorrowTree) (offset : Size)
     (frozen : ∀ segment ∈ inside.iterAll.toList, FrozenEntryState segment.data) :
     ∃ mapping child, tree.tagMapping.insert tag = .Inserted mapping child ∧ tree.nodeAt child = none ∧
       let result := tree.newChild offset (.concrete parentTag) tag inside (.ReservedFrz false) true
-      result.outcome = .ok () ∧ Framed tree.locations child result.tree := by
-  obtain ⟨mapping, child, mapped, slot, vacant⟩ :=
-    select_slot tree tag tagFresh room appendAligned reuseValid
-  have completes := newChild_frozen_completes tree offset parentTag tag parent child mapping inside
-    mapped parentFound parentNode present vacant slot well graph rank span frozen
-  refine ⟨mapping, child, mapped, vacant, completes, ?_⟩
-  apply newChild_framed tree offset parentTag tag parent child mapping inside (.ReservedFrz false) true
-    mapped parentFound parentNode present vacant well (freshRows child vacant) ?_ ?_ completes
-  · intro segment member start checked
-    obtain ⟨ordered, bounded⟩ := span segment member
-    obtain ⟨expected, calculated, fits⟩ := selected_size offset segment.range tree.locations.size ordered bounded
-    have same := Except.ok.inj (calculated.symm.trans checked)
-    simpa only [same] using fits
-  · intro segment member
-    rcases frozen segment member with exactState | exactState <;> rw [exactState] <;> rfl
+      result.outcome = .ok () ∧ Framed tree.locations child result.tree :=
+  newChild_frozen_frame_with_mode tree offset parentTag tag parent parentNode inside true
+    parentFound present tagFresh room appendAligned reuseValid well graph rank freshRows span frozen
 
 end DuplicatePrefix.RetagFrozenChild

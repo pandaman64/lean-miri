@@ -10,20 +10,21 @@ open GeneralRangeMapState GeneralRangeMapOrigins SourceDomain PreparedArguments
 set_option backward.isDefEq.respectTransparency false
 set_option maxHeartbeats 1200000
 
-private theorem replaced_disjoint (predicate : A → Prop) (lower upper : UInt64)
+private theorem replaced_preserves (predicate : A → Prop) (lower upper : UInt64)
     (map : DedupRangeMap A) (position : Nat) (valid : position < map.entries.size) (data : A)
-    (before : map.entries[position].range.stop.toNat ≤ lower.toNat)
+    (updated : lower.toNat < upper.toNat →
+      map.entries[position].range.start.toNat < upper.toNat →
+      lower.toNat < map.entries[position].range.stop.toNat → predicate data)
     (owned : OwnedOn predicate lower upper map) :
     OwnedOn predicate lower upper (replaced map position valid data) := by
   intro index inside positive start stop
   have original : index < map.entries.size := by simpa only [replaced_length] using inside
   rw [replaced_range map position valid data index original] at start stop
-  have different : position ≠ index := by
-    intro same
-    subst index
-    omega
-  have prior := owned index original positive start stop
-  simpa [replaced, Array.getElem_set, different] using prior
+  by_cases same : position = index
+  · subst index
+    simpa [replaced] using updated positive start stop
+  · have prior := owned index original positive start stop
+    simpa [replaced, Array.getElem_set, same] using prior
 
 private theorem preserves_loop {A S : Type} (positions : List A)
     (step : A → S → Id (ForInStep S)) (ok : S → Prop)
@@ -39,16 +40,19 @@ private theorem preserves_loop {A S : Type} (positions : List A)
     change ok (forIn tail updated step : Id S)
     exact inductionHyp (fun i member => preserves i (.tail _ member)) updated valid
 
-/-- The actual access leaves source-independent ownership at later bytes.
-The range iterator may split and merge entries, so the invariant tracks the
-original byte data through preparation and the unchanged ranges through updates. -/
-theorem preserve_after_range (tree : BorrowTree) (tag : BorTag) (source : UniIndex)
+/-- An interval-local invariant survives range preparation and actual access
+updates when the selected byte transitions preserve its predicate. -/
+theorem preserve_range_property (tree : BorrowTree) (tag : BorTag) (source : UniIndex)
     (protectors : ProtectedTags) (kind : AccessKind) (mode : ChildrenVisitMode)
     (offset length : Size) (lower upper : UInt64) (predicate : LocationTree → Prop)
     (found : tree.indexOfTag tag = some source) (well : tree.locations.WellFormed)
     (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
-    (disjoint : (offset.bytes + length.bytes).toNat ≤ lower.toNat)
     (ownership : OwnedOn predicate lower upper tree.locations)
+    (stable : ∀ segment : RangeMapSegment LocationTree,
+      segment.range.stop.toNat ≤ (offset.bytes + length.bytes).toNat →
+      lower.toNat < upper.toNat → segment.range.start.toNat < upper.toNat →
+      lower.toNat < segment.range.stop.toNat → predicate segment.data →
+      predicate (tree.performTreeAccessAt segment.data (some source) kind protectors mode segment.range).location)
     (authorized : TreeRangeAccess.SlotsAuthorized tree (tree.locations.iterMut offset length)
       (some source) kind protectors mode) :
     let run := tree.performBorrowAccessRange (.concrete tag) offset length kind protectors mode
@@ -57,6 +61,8 @@ theorem preserve_after_range (tree : BorrowTree) (tag : BorTag) (source : UniInd
       run.tree = {tree with locations := run.tree.locations} := by
   let prepared := tree.locations.iterMut offset length
   have info := GeneralRangeMapOriginPrepare.iter_mut tree.locations offset length well bounds
+  have initialOwned := refines_owned_on tree.locations prepared.state predicate lower upper
+    info.1.wellFormed info.2.1 ownership
   let ok (current : BorrowTree.RangeVerification.Progress) : Prop :=
     current.2.2 = .Completed ∧
       current.1.entries.size = prepared.state.entries.size ∧
@@ -90,11 +96,18 @@ theorem preserve_after_range (tree : BorrowTree) (tag : BorTag) (source : UniInd
         (Array.getElem?_eq_getElem bounded).trans (congrArg some stored)
       simpa only [Array.getElem?_map, Array.getElem?_eq_getElem inTable,
         lookup, Option.map_some, Option.some.injEq] using eq
-    have before : table.entries[position].range.stop.toNat ≤ lower.toNat := by
-      have selectedBounds := info.2.2 cursor inSegments
-      rw [segmentExact] at selectedBounds
+    have selectedBounds := info.2.2 cursor inSegments
+    rw [segmentExact] at selectedBounds
+    have updateKeeps : lower.toNat < upper.toNat →
+        table.entries[position].range.start.toNat < upper.toNat →
+        lower.toNat < table.entries[position].range.stop.toNat →
+        predicate (tree.performTreeAccessAt segment.data (some source) kind protectors mode segment.range).location := by
       rw [sameRange]
-      exact Nat.le_trans selectedBounds.2 disjoint
+      intro positive start stop
+      have before : predicate prepared.state.entries[position].data := by
+        apply initialOwned position bounded positive <;> simpa only [stored] using ‹_›
+      have owned : predicate segment.data := by simpa only [stored] using before
+      exact stable segment selectedBounds.2 positive start stop owned
     have mutations := setAtPos_exact table position inTable
       (tree.performTreeAccessAt segment.data (some source) kind protectors mode segment.range).location
     refine ⟨_, rfl, ?_⟩
@@ -102,11 +115,9 @@ theorem preserve_after_range (tree : BorrowTree) (tag : BorTag) (source : UniInd
       completed, Option.getD_none, ok]
     exact ⟨True.intro, (replaced_length table position inTable _).trans currentSize,
       (replaced_ranges table position inTable _).trans currentRanges,
-      replaced_disjoint predicate lower upper table position inTable _ before currentOwned,
+      replaced_preserves predicate lower upper table position inTable _ updateKeeps currentOwned,
       replaced_wellFormed table position inTable _ currentWell,
       (replaced_size table position inTable _).trans currentCapacity⟩
-  have initialOwned := refines_owned_on tree.locations prepared.state predicate lower upper
-    info.1.wellFormed info.2.1 ownership
   have initial : ok (prepared.state, #[], .Completed) :=
     ⟨rfl, rfl, rfl, initialOwned, info.1.wellFormed, congrArg Size.ofBytes info.1.capacity⟩
   have final := preserves_loop (List.range' 0 prepared.positions.size)
@@ -118,6 +129,25 @@ theorem preserve_after_range (tree : BorrowTree) (tag : BorTag) (source : UniInd
     Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size, Nat.sub_zero,
     Nat.add_sub_cancel, Nat.div_one, BorrowTree.RangeVerification.cursor_equation]
   exact ⟨final.1, final.2.2.2.1, final.2.2.2.2.1, final.2.2.2.2.2, rfl⟩
+
+/-- The actual access leaves source-independent ownership at later bytes. -/
+theorem preserve_after_range (tree : BorrowTree) (tag : BorTag) (source : UniIndex)
+    (protectors : ProtectedTags) (kind : AccessKind) (mode : ChildrenVisitMode)
+    (offset length : Size) (lower upper : UInt64) (predicate : LocationTree → Prop)
+    (found : tree.indexOfTag tag = some source) (well : tree.locations.WellFormed)
+    (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
+    (disjoint : (offset.bytes + length.bytes).toNat ≤ lower.toNat)
+    (ownership : OwnedOn predicate lower upper tree.locations)
+    (authorized : TreeRangeAccess.SlotsAuthorized tree (tree.locations.iterMut offset length)
+      (some source) kind protectors mode) :
+    let run := tree.performBorrowAccessRange (.concrete tag) offset length kind protectors mode
+    run.status = .Completed ∧ OwnedOn predicate lower upper run.tree.locations ∧
+      run.tree.locations.WellFormed ∧ run.tree.locations.size = tree.locations.size ∧
+      run.tree = {tree with locations := run.tree.locations} := by
+  apply preserve_range_property tree tag source protectors kind mode offset length lower upper predicate
+    found well bounds ownership _ authorized
+  intro segment selectedStop _ _ intersects _
+  omega
 
 private theorem ancestor_transport {before after : BorrowTree}
     (same : before.nodes = after.nodes) {root source : UniIndex}

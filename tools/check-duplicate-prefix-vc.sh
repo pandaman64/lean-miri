@@ -23,7 +23,8 @@ lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/SourceDomain.olean" examples/duplicate_prefix_vcgen/SourceDomain.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/MutableSliceRights.olean" examples/duplicate_prefix_vcgen/MutableSliceRights.lean
-lean -j1 examples/duplicate_prefix_vcgen/MutableSliceRetag.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/MutableSliceRetag.olean" examples/duplicate_prefix_vcgen/MutableSliceRetag.lean
 lean -j1 examples/duplicate_prefix_vcgen/SymbolicCopyAccess.lean
 lean -j1 examples/duplicate_prefix_vcgen/ZeroProtector.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \

@@ -152,6 +152,28 @@ theorem exclusive_access {K U : Type} {before : MachineHooks.State K U}
   have sumFits := Nat.lt_of_le_of_lt bounds (UInt64.toNat_lt _)
   simpa only [UInt64.toNat_add, Nat.mod_eq_of_lt sumFits] using endsInside
 
+/-- The one-root location callback only commits the normal visitor's
+location, including when the normal visit reports an error. -/
+theorem single_root_location (tree : BorrowTree) (location : LocationTree)
+    (protectors : ProtectedTags) (source root : UniIndex)
+    (kind : AccessKind) (range : ByteRange)
+    (coherent : CoherentForest tree) (sourceNode : TreeNode)
+    (sourcePresent : tree.nodeAt source = some sourceNode) (roots : tree.roots = #[root]) :
+    (tree.performTreeAccessAt location (some source) kind protectors .VisitChildrenOfAccessed range).location =
+      (tree.performNormalAccessAt location source kind protectors .VisitChildrenOfAccessed).location := by
+  have rootIndex := normal_root tree location protectors source root kind coherent sourceNode sourcePresent roots
+  unfold BorrowTree.performTreeAccessAt
+  cases outcome : (tree.performNormalAccessAt location source kind protectors .VisitChildrenOfAccessed).outcome with
+  | error error => simp only [Id.run, outcome]; rfl
+  | ok _ =>
+    by_cases completed :
+        (tree.performNormalAccessAt location source kind protectors .VisitChildrenOfAccessed).access.status = .Completed
+    · simp only [Id.run, outcome, completed, rootIndex, roots, ↓reduceIte, Std.Legacy.Range.forIn_eq_forIn_range',
+        Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, Array.size_singleton, List.range',
+        List.forIn_cons, List.forIn_nil, Array.getElem?_singleton, bind, Bind.bind, pure, Pure.pure]
+      simp [beq_iff_eq]
+    · simp [Id.run, outcome, completed]; rfl
+
 #print axioms bounded_range
 #print axioms exclusive_access
 end DuplicatePrefix.ArchiveForestProjection
