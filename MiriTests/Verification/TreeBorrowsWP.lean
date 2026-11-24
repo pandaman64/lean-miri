@@ -177,6 +177,67 @@ example :
   miri_tree_range_wp
   exact wildcardReadAuthorized
 
+/-- The added foreign candidate on a non-main root leaves both relatedness
+possibilities open. The maximum-tag filter removes the local possibility. -/
+example (count : Nat) (positive : count ≠ 0) :
+    ExposedCache.counterRelatedness count count true false = some .EitherAccess ∧
+      ExposedCache.counterRelatedness count count true true = some .ForeignAccess ∧
+      ExposedCache.counterRelatedness count count false true = none := by
+  simp [ExposedCache.counterRelatedness, beq_iff_eq, positive]
+
+/-- A positive root counter and zero local counter make a frozen read foreign
+and prune the node's whole subtree, for arbitrary tags and protector map. -/
+example (tree : BorrowTree) (location : LocationTree) (root index : UniIndex)
+    (node : TreeNode) (tags : ProtectedTags) (rootCounter : UInt16)
+    (found : tree.nodes.get index = some node)
+    (rootCount : location.exposedCache.nodes.get root = some ⟨0, rootCounter⟩)
+    (localCount : location.exposedCache.nodes.get index = none)
+    (nonzero : rootCounter.toNat ≠ 0)
+    (frozen : location.perms.get index = some ⟨.Frozen, false, .None⟩) :
+    BorrowTree.RangeVerification.wildcardNodePre tree root none .Read tags false
+      ⟨location, false, .Completed, #[(index, false)]⟩
+      (fun after => after.stack = #[] ∧ after.location = location) := by
+  have related : BorrowTree.wildcardRelatedness location.exposedCache root index .Read false false =
+      some .ForeignAccess := by
+    rw [BorrowTree.wildcardRelatedness_eq_counters]
+    simp [ExposedCache.counterRelatedness, rootCount, localCount, beq_iff_eq, nonzero]
+  have stackHead : (#[(index, false)] : Array (UniIndex × Bool)).back? = some (index, false) := rfl
+  simp [BorrowTree.RangeVerification.wildcardNodePre, BorrowTree.prepareWildcardNode, Id.run,
+    stackHead, found, related, frozen, BorrowTree.exactRelatedness?, Tree.LocationState.skipIfKnownNoop,
+    AccessRelatedness.isForeign, Permission.isDisabled, Permission.isFrozen, pure, Pure.pure]
+
+private def thirdTag : BorTag := ⟨3, by decide⟩
+private def threeRoots :=
+  (((twoRoots.newChild Size.ZERO .wildcard thirdTag permissions .Frozen false).tree).exposeTag
+    {} thirdTag).tree
+private def threeRootSlots := threeRoots.locations.iterMut Size.ZERO bytes
+private def threeRootLocation := (threeRootSlots.segments[0]'(by cbv)).data
+private def firstByte : ByteRange := ⟨0, 1⟩
+
+/-- The same rule applies to three roots and uses the initial slot's own cache. -/
+example :
+    BorrowTree.RangeVerification.locationContract threeRoots threeRootLocation none .Read {}
+      .VisitChildrenOfAccessed firstByte
+      (fun result => result.status.getD .Completed = .Completed) := by
+  rw [wildcardRootsComplete_iff]
+  cbv
+
+private def missingRoot : UniIndex := ⟨9⟩
+private def brokenRoots : BorrowTree := { threeRoots with roots := #[⟨0⟩, missingRoot, ⟨2⟩] }
+
+private def brokenRootLocation : LocationTree :=
+  { threeRootLocation with perms := threeRootLocation.perms.insert ⟨0⟩ ⟨.Unique, false, .None⟩ }
+
+/-- A missing middle root reports its typed error and retains the local
+access recorded by the first root. -/
+example :
+    BorrowTree.RangeVerification.locationContract brokenRoots brokenRootLocation none .Read {}
+      .VisitChildrenOfAccessed firstByte (fun result =>
+        result.status = some (.WildcardFailure firstByte (.MissingNode missingRoot)) ∧
+          result.location = threeRootLocation) := by
+  rw [BorrowTree.RangeVerification.locationContract_wildcard_eq]
+  cbv
+
 private def afterReadTwoRoots := (accessSuccessor twoRoots .wildcard Size.ZERO twoBytes .Read {}
   .VisitChildrenOfAccessed).1
 private def writeSlots := afterReadTwoRoots.locations.iterMut bytes bytes

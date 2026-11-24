@@ -42,6 +42,32 @@ theorem slotCompleteForSingleRoot (tree : BorrowTree) (location : LocationTree) 
     List.forIn_cons, List.forIn_nil, Array.getElem?_singleton, bind, Bind.bind, pure, Pure.pure]
   simp [beq_iff_eq]
 
+/-- A wildcard slot succeeds exactly when the ordered checks starting from
+its prepared permissions and cache all succeed. -/
+theorem wildcardRootsComplete_iff (tree : BorrowTree) (location : LocationTree)
+    (kind : AccessKind) (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode) (range : ByteRange) :
+    RangeVerification.locationContract tree location none kind tags mode range
+        (fun result => result.status.getD .Completed = .Completed) ↔
+      RangeVerification.otherRootsContract tree none kind tags mode range none none
+        (fun _ => True) (fun _ _ => False) (List.range' 0 tree.roots.size) location := by
+  rw [RangeVerification.locationContract_wildcard_eq]
+  -- The failure branch receives only wildcard errors from the ordered roots.
+  generalize List.range' 0 tree.roots.size = positions
+  induction positions generalizing location with
+  | nil => simp
+  | cons position rest ih =>
+    simp only [RangeVerification.otherRootsContract]
+    split
+    · exact ih location
+    · exact iff_true_intro rfl
+    · apply Iff.of_eq
+      congr 1
+      funext result
+      by_cases complete : result.status = .Completed
+      · simp only [complete, ↓reduceIte]
+        exact propext (ih result.location)
+      · simp [complete]
+
 /-- With two wildcard roots, success checks the first root and then the
 second root on its updated location. Neither root receives a concrete tag bound. -/
 theorem wildcardTwoRootsComplete_iff (tree : BorrowTree) (location : LocationTree)
@@ -547,6 +573,6 @@ The ordered commit fold remains available through the successor lemmas. -/
 macro "miri_tree_range_wp" : tactic =>
   `(tactic| simp only [rangeComplete_iff_authorized, accessSuccessor_locationAt,
     accessSuccessPre_true_iff, accessPre_successPre_iff, wp_access_successPre_iff,
-    wp_read_write_successPre_iff, wildcardTwoRootsComplete_iff])
+    wp_read_write_successPre_iff, wildcardRootsComplete_iff])
 
 end Miri.Verification.TreeRangeAccess
