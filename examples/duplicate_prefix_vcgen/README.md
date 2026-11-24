@@ -176,6 +176,10 @@ lean -j1 --root=examples/duplicate_prefix_vcgen \
 lean -j1 examples/duplicate_prefix_vcgen/VerifyZeroGenerated.lean
 ```
 
+`--target RootRejectedPrefix` checks the too-large-count path after the
+length call, including the division guard, comparison, false result, and
+selection of `Return`, for any surrounding frames under its stated premises.
+
 The optional `RetagFrozenChild` target checks actual child insertion and
 the resulting range and permission frame under its concrete fresh-tag premises.
 The `ConcreteFrozenReborrow` and `ExclusiveTypedRetag` targets connect the

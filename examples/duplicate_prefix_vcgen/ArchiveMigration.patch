@@ -3719,3 +3719,213 @@
    have converted : UniIndex.ofNat? (tree.performNormalAccessAt location anchor kind protections mode).access.root = some root := by
      rw [normalRoot]
      exact index_self root
+--- a/examples/duplicate_prefix/RootFalseConstant.lean
++++ b/examples/duplicate_prefix/RootFalseConstant.lean
+@@ -9 +9 @@
+-def constant : ConstOperand := ⟨⟨32⟩,none,.Val (.Scalar (.Int 0 1)) 0⟩
++def constant : ConstOperand := ⟨⟨34⟩,none,.Val (.Scalar (.Int 0 1)) 0⟩
+@@ -37 +37 @@
+-    (.Scalar (.Int 0 1)) 0 ⟨32⟩ (some RootCompilerFacts.boolLayout) (.scalar (.fromBool false))
++    (.Scalar (.Int 0 1)) 0 ⟨34⟩ (some RootCompilerFacts.boolLayout) (.scalar (.fromBool false))
+--- a/examples/duplicate_prefix/RootDivisionCheckTwo.lean
++++ b/examples/duplicate_prefix/RootDivisionCheckTwo.lean
+@@ -9 +9 @@
+-def constant : ConstOperand := ⟨⟨31⟩,none,.Val (.Scalar (.Int 2 8)) 5⟩
++def constant : ConstOperand := ⟨⟨33⟩,none,.Val (.Scalar (.Int 2 8)) 4⟩
+@@ -15 +15 @@
+-    valueToOpWithLayout PreparedReflection.actual.compiler.runtime queries (.Scalar (.Int 2 8)) 5
++    valueToOpWithLayout PreparedReflection.actual.compiler.runtime queries (.Scalar (.Int 2 8)) 4
+@@ -17,0 +18,4 @@
++  have layout : PreparedReflection.actual.compiler.runtime.lookup 4 = .ok RootCompilerFacts.usizeLayout := by
++    with_unfolding_all exact RootCompilerFacts.usize_layout_eq
++  unfold valueToOpWithLayout
++  rw [layout]
+@@ -37 +41 @@
+-    (.Scalar (.Int 2 8)) 5 ⟨31⟩ none (.scalar (.fromScalarInt (.ofUInt64 2)))
++    (.Scalar (.Int 2 8)) 4 ⟨33⟩ none (.scalar (.fromScalarInt (.ofUInt64 2)))
+--- a/examples/duplicate_prefix/RootDivisionCheckZero.lean
++++ b/examples/duplicate_prefix/RootDivisionCheckZero.lean
+@@ -9 +9 @@
+-def constant : ConstOperand := ⟨⟨12⟩,none,.Val (.Scalar (.Int 0 8)) 5⟩
++def constant : ConstOperand := ⟨⟨12⟩,none,.Val (.Scalar (.Int 0 8)) 4⟩
+@@ -15 +15 @@
+-    valueToOpWithLayout PreparedReflection.actual.compiler.runtime queries (.Scalar (.Int 0 8)) 5
++    valueToOpWithLayout PreparedReflection.actual.compiler.runtime queries (.Scalar (.Int 0 8)) 4
+@@ -37 +37 @@
+-    (.Scalar (.Int 0 8)) 5 ⟨12⟩ (some RootCompilerFacts.usizeLayout) (.scalar (.fromScalarInt (.ofUInt64 0)))
++    (.Scalar (.Int 0 8)) 4 ⟨12⟩ (some RootCompilerFacts.usizeLayout) (.scalar (.fromScalarInt (.ofUInt64 0)))
+--- a/examples/duplicate_prefix/RootDivisor.lean
++++ b/examples/duplicate_prefix/RootDivisor.lean
+@@ -9 +9 @@
+-def constant : ConstOperand := ⟨⟨31⟩,none,.Val (.Scalar (.Int 2 8)) 5⟩
++def constant : ConstOperand := ⟨⟨33⟩,none,.Val (.Scalar (.Int 2 8)) 4⟩
+@@ -15 +15 @@
+-    valueToOpWithLayout PreparedReflection.actual.compiler.runtime queries (.Scalar (.Int 2 8)) 5
++    valueToOpWithLayout PreparedReflection.actual.compiler.runtime queries (.Scalar (.Int 2 8)) 4
+@@ -37 +37 @@
+-    (.Scalar (.Int 2 8)) 5 ⟨31⟩ (some RootCompilerFacts.usizeLayout) (.scalar (.fromScalarInt (.ofUInt64 2)))
++    (.Scalar (.Int 2 8)) 4 ⟨33⟩ (some RootCompilerFacts.usizeLayout) (.scalar (.fromScalarInt (.ofUInt64 2)))
+--- a/examples/duplicate_prefix/RootGuardFacts.lean
++++ b/examples/duplicate_prefix/RootGuardFacts.lean
+@@ -2 +2,2 @@
+-import duplicate_prefix.PointerAddFacts
++import duplicate_prefix.RootLocalStages
++import duplicate_prefix.RootScalarQueries
+@@ -23 +24 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 10 = .ok 5 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 10 = .ok 4 := by
+@@ -27,0 +29,18 @@
++theorem compute_local (framesBefore : Array CompilerFrameContext.ActualFrame)
++    (frame : CompilerFrameContext.ActualFrame)
++    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
++    (localId : Miri.MIR.LocalId) (ty : TyId) (layout : LocalLayout)
++    (normalized : CompilerFrameContext.localType PreparedReflection.actual.compiler frame localId = .ok ty)
++    (lookup : PreparedReflection.actual.compiler.runtime.lookup ty = .ok layout) :
++    CompilerFrameContext.computeLocalLayout PreparedReflection.actual.compiler localId
++      (Storage.withCurrent framesBefore frame machine) =
++    .ok layout (Storage.withCurrent framesBefore frame machine) := by
++  unfold CompilerFrameContext.computeLocalLayout
++  simp only [MachineHooks.currentFrame,Storage.withCurrent,Stack.currentFrame?,Array.back?_push,
++    bind,EStateM.bind,get,getThe,MonadStateOf.get,EStateM.get,pure,EStateM.pure]
++  rw [normalized]
++  unfold_frame_query_lift
++  simp only [pure, EStateM.pure, bind, EStateM.bind]
++  rw [lookup]
++  rfl
++
+--- a/examples/duplicate_prefix/RootDivision.lean
++++ b/examples/duplicate_prefix/RootDivision.lean
+@@ -51 +51 @@
+-  have lookup : PreparedReflection.actual.compiler.runtime.lookup 5 = .ok RootCompilerFacts.usizeLayout := by
++  have lookup : PreparedReflection.actual.compiler.runtime.lookup 4 = .ok RootCompilerFacts.usizeLayout := by
+@@ -53 +53 @@
+-  have query := PointerAddFacts.compute_local framesBefore frame machine 10 5 RootCompilerFacts.usizeLayout
++  have query := RootGuardFacts.compute_local framesBefore frame machine 10 4 RootCompilerFacts.usizeLayout
+--- a/examples/duplicate_prefix/RootDivisionCheck.lean
++++ b/examples/duplicate_prefix/RootDivisionCheck.lean
+@@ -61 +61 @@
+-  have query := PointerAddFacts.compute_local framesBefore frame machine 13 0 RootCompilerFacts.boolLayout
++  have query := RootGuardFacts.compute_local framesBefore frame machine 13 0 RootCompilerFacts.boolLayout
+--- a/examples/duplicate_prefix/RootGreaterThan.lean
++++ b/examples/duplicate_prefix/RootGreaterThan.lean
+@@ -54 +54 @@
+-  have query := PointerAddFacts.compute_local framesBefore frame machine 8 0 RootCompilerFacts.boolLayout
++  have query := RootGuardFacts.compute_local framesBefore frame machine 8 0 RootCompilerFacts.boolLayout
+--- a/examples/duplicate_prefix/RootDivisionAssert.lean
++++ b/examples/duplicate_prefix/RootDivisionAssert.lean
+@@ -72 +72 @@
+-  have reflectedKind : block.terminator.kind = .Assert (.Move ⟨13,#[]⟩) false (.DivisionByZero (.Copy ⟨11,#[]⟩)) 4 .Continue := by with_unfolding_all rfl
++  have reflectedKind : block.terminator.kind = .Assert (.Move ⟨13,#[]⟩) false (.DivisionByZero (.Copy ⟨11,#[]⟩)) 4 .Unreachable := by with_unfolding_all rfl
+@@ -76 +76 @@
+-  have kind : block.terminator.kind = .Assert (.Move ⟨13,#[]⟩) false (.DivisionByZero (.Copy ⟨11,#[]⟩)) 4 .Continue := by
++  have kind : block.terminator.kind = .Assert (.Move ⟨13,#[]⟩) false (.DivisionByZero (.Copy ⟨11,#[]⟩)) 4 .Unreachable := by
+@@ -120 +120 @@
+-    false (.DivisionByZero (.Copy ⟨11,#[]⟩)) 4 .Continue accounted accounted RootCompilerFacts.boolLayout kind read
++    false (.DivisionByZero (.Copy ⟨11,#[]⟩)) 4 .Unreachable accounted accounted RootCompilerFacts.boolLayout kind read
+--- a/examples/duplicate_prefix/EmptyRootSafetyPrelude.lean
++++ b/examples/duplicate_prefix/EmptyRootSafetyPrelude.lean
+@@ -4 +4,2 @@
+-import duplicate_prefix.CopyHelperCleanup
++import duplicate_prefix.ZeroImmediateFacts
++import duplicate_prefix.SourceSteps
+@@ -19 +20 @@
+-    (allImmediate : CopyHelperCleanup.AllImmediate frame)
++    (allImmediate : ZeroImmediateFacts.AllImmediate frame)
+@@ -40 +41 @@
+-      CopyHelperCleanup.AllImmediate resultFrame ∧
++      ZeroImmediateFacts.AllImmediate resultFrame ∧
+@@ -75,2 +76,2 @@
+-  have all1 : CopyHelperCleanup.AllImmediate f1 := CopyHelperCleanup.all_immediate_set frame 12 _ v12 allImmediate (by intro memory;simp)
+-  have all2 : CopyHelperCleanup.AllImmediate f2 := CopyHelperCleanup.all_immediate_written f1 13 RootCompilerFacts.boolLayout
++  have all1 : ZeroImmediateFacts.AllImmediate f1 := ZeroImmediateFacts.all_immediate_set frame 12 _ v12 allImmediate (by intro memory;simp)
++  have all2 : ZeroImmediateFacts.AllImmediate f2 := ZeroImmediateFacts.all_immediate_written f1 13 RootCompilerFacts.boolLayout
+--- a/examples/duplicate_prefix/EmptyRootSafetyGuard.lean
++++ b/examples/duplicate_prefix/EmptyRootSafetyGuard.lean
+@@ -4 +4,2 @@
+-import duplicate_prefix.CopyHelperCleanup
++import duplicate_prefix.ZeroImmediateFacts
++import duplicate_prefix.SourceSteps
+@@ -19 +20 @@
+-    (allImmediate : CopyHelperCleanup.AllImmediate frame)
++    (allImmediate : ZeroImmediateFacts.AllImmediate frame)
+@@ -46 +47 @@
+-      CopyHelperCleanup.AllImmediate resultFrame ∧
++      ZeroImmediateFacts.AllImmediate resultFrame ∧
+@@ -94 +95 @@
+-  have all1 : CopyHelperCleanup.AllImmediate f1 := CopyHelperCleanup.all_immediate_written frame 10 RootCompilerFacts.usizeLayout
++  have all1 : ZeroImmediateFacts.AllImmediate f1 := ZeroImmediateFacts.all_immediate_written frame 10 RootCompilerFacts.usizeLayout
+@@ -96,2 +97,2 @@
+-  have all2 : CopyHelperCleanup.AllImmediate f2 := CopyHelperCleanup.all_immediate_set f1 11 _ v11 all1 (by intro memory;simp)
+-  have all3 : CopyHelperCleanup.AllImmediate f3 := CopyHelperCleanup.all_immediate_written f2 8 RootCompilerFacts.boolLayout
++  have all2 : ZeroImmediateFacts.AllImmediate f2 := ZeroImmediateFacts.all_immediate_set f1 11 _ v11 all1 (by intro memory;simp)
++  have all3 : ZeroImmediateFacts.AllImmediate f3 := ZeroImmediateFacts.all_immediate_written f2 8 RootCompilerFacts.boolLayout
+--- a/examples/duplicate_prefix/EmptyRootSafetyFalse.lean
++++ b/examples/duplicate_prefix/EmptyRootSafetyFalse.lean
+@@ -3 +3,2 @@
+-import duplicate_prefix.CopyHelperCleanup
++import duplicate_prefix.ZeroImmediateFacts
++import duplicate_prefix.SourceSteps
+@@ -18 +19 @@
+-    (allImmediate : CopyHelperCleanup.AllImmediate frame)
++    (allImmediate : ZeroImmediateFacts.AllImmediate frame)
+@@ -44 +45 @@
+-      CopyHelperCleanup.AllImmediate resultFrame ∧
++      ZeroImmediateFacts.AllImmediate resultFrame ∧
+@@ -102,4 +103,4 @@
+-  have all1 : CopyHelperCleanup.AllImmediate f1 := CopyHelperCleanup.all_immediate_set frame 10 _ v1 allImmediate (by intro memory;simp)
+-  have all2 : CopyHelperCleanup.AllImmediate f2 := CopyHelperCleanup.all_immediate_set f1 9 _ v2 all1 (by intro memory;simp)
+-  have all3 : CopyHelperCleanup.AllImmediate f3 := by
+-    apply CopyHelperCleanup.all_immediate_set (RootFalseAssignment.cacheReturnLayout f2 valid0) 0 _
++  have all1 : ZeroImmediateFacts.AllImmediate f1 := ZeroImmediateFacts.all_immediate_set frame 10 _ v1 allImmediate (by intro memory;simp)
++  have all2 : ZeroImmediateFacts.AllImmediate f2 := ZeroImmediateFacts.all_immediate_set f1 9 _ v2 all1 (by intro memory;simp)
++  have all3 : ZeroImmediateFacts.AllImmediate f3 := by
++    apply ZeroImmediateFacts.all_immediate_set (RootFalseAssignment.cacheReturnLayout f2 valid0) 0 _
+@@ -107 +108 @@
+-      (CopyHelperCleanup.all_immediate_cache f2 0 RootCompilerFacts.boolLayout valid0 all2)
++      (ZeroImmediateFacts.all_immediate_cache f2 0 RootCompilerFacts.boolLayout valid0 all2)
+@@ -110,2 +111,2 @@
+-  have all4 : CopyHelperCleanup.AllImmediate f4 := CopyHelperCleanup.all_immediate_set f3 8 _ v4 all3 (by intro memory;simp)
+-  have all5 : CopyHelperCleanup.AllImmediate f5 := CopyHelperCleanup.all_immediate_set f4 7 _ v5 all4 (by intro memory;simp)
++  have all4 : ZeroImmediateFacts.AllImmediate f4 := ZeroImmediateFacts.all_immediate_set f3 8 _ v4 all3 (by intro memory;simp)
++  have all5 : ZeroImmediateFacts.AllImmediate f5 := ZeroImmediateFacts.all_immediate_set f4 7 _ v5 all4 (by intro memory;simp)
+--- a/examples/duplicate_prefix/RootRejectedPrefix.lean
++++ b/examples/duplicate_prefix/RootRejectedPrefix.lean
+@@ -20 +20 @@
+-    (frame : CompilerFrameContext.ActualFrame) (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
++    (older : Array CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame) (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+@@ -35 +35 @@
+-    (all : CopyHelperCleanup.AllImmediate frame) (noClocks : frame.extra.dataRace=none)
++    (all : ZeroImmediateFacts.AllImmediate frame) (noClocks : frame.extra.dataRace=none)
+@@ -43,2 +43,2 @@
+-      SuccessfulTrace.Trace config limits (Storage.withCurrent #[] frame machine)
+-        (Storage.withCurrent #[] result (tick options remaining span (tick options remaining span (tick options remaining span machine)))) ∧
++      SuccessfulTrace.Trace config limits (Storage.withCurrent older frame machine)
++        (Storage.withCurrent older result (tick options remaining span (tick options remaining span (tick options remaining span machine)))) ∧
+@@ -50 +50 @@
+-      CopyHelperCleanup.AllImmediate result := by
++      ZeroImmediateFacts.AllImmediate result := by
+@@ -54 +54 @@
+-    EmptyRootSafetyPrelude.executes options limits remaining span source debug fuel fuelEq #[] frame machine all size
++    EmptyRootSafetyPrelude.executes options limits remaining span source debug fuel fuelEq older frame machine all size
+@@ -66 +66 @@
+-    EmptyRootSafetyGuard.executes options limits remaining span source debug fuel fuelEq #[] pframe m1 len count pa psz
++    EmptyRootSafetyGuard.executes options limits remaining span source debug fuel fuelEq older pframe m1 len count pa psz
+@@ -94 +94 @@
+-    EmptyRootSafetyFalse.reaches_return options limits remaining span source debug fuel fuelEq #[] gframe m2 ga gsz
++    EmptyRootSafetyFalse.reaches_return options limits remaining span source debug fuel fuelEq older gframe m2 ga gsz
+@@ -103 +103 @@
+-  have pt' : SuccessfulTrace.Trace config limits (Storage.withCurrent #[] frame machine) (Storage.withCurrent #[] pframe m1) := by
++  have pt' : SuccessfulTrace.Trace config limits (Storage.withCurrent older frame machine) (Storage.withCurrent older pframe m1) := by
+@@ -105 +105 @@
+-  have gt' : SuccessfulTrace.Trace config limits (Storage.withCurrent #[] pframe m1) (Storage.withCurrent #[] gframe m2) := by
++  have gt' : SuccessfulTrace.Trace config limits (Storage.withCurrent older pframe m1) (Storage.withCurrent older gframe m2) := by
+@@ -107,2 +107,2 @@
+-  have ft' : SuccessfulTrace.Trace config limits (Storage.withCurrent #[] gframe m2)
+-      (Storage.withCurrent #[] result (tick options remaining span m2)) := by
++  have ft' : SuccessfulTrace.Trace config limits (Storage.withCurrent older gframe m2)
++      (Storage.withCurrent older result (tick options remaining span m2)) := by
+--- a/examples/duplicate_prefix/BoolAssert.lean
++++ b/examples/duplicate_prefix/BoolAssert.lean
+@@ -17 +17 @@
+-  simp only [read,beq_self_eq_true,Bool.or_true,ite_true]
++  simp only [ControlFlow.evalAssert, read, beq_self_eq_true, Bool.or_true, ite_true]

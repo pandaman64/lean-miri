@@ -1,5 +1,6 @@
 import duplicate_prefix.LocalPlaces
 import Miri.Input.CompilerFrameContext
+import duplicate_prefix.ActualLocalCopy
 namespace DuplicatePrefix.ZeroImmediateFacts
 open Miri Miri.Input Miri.ABI Miri.Memory Miri.MIR Miri.Interpreter
 set_option maxRecDepth 65536
@@ -25,5 +26,14 @@ theorem all_immediate_cache (frame : CompilerFrameContext.ActualFrame) (id : MIR
   apply all_immediate_set frame id _ valid all
   intro memory
   exact all frame.locals[id] (Array.mem_iff_getElem.mpr ⟨id,valid,rfl⟩) memory
+
+theorem all_immediate_written (frame : CompilerFrameContext.ActualFrame) (id : MIR.LocalId)
+    (layout : LocalLayout) (value : Immediate Provenance) (valid : id < frame.locals.size)
+    (all : AllImmediate frame) :
+    AllImmediate (ActualLocalCopy.written frame id layout valid value) := by
+  apply all_immediate_set (LocalPlaces.cachePlaceLayout frame id layout valid) id _ _
+    (all_immediate_cache frame id layout valid all)
+  intro memory
+  simp
 
 end DuplicatePrefix.ZeroImmediateFacts
