@@ -53,13 +53,15 @@ def stateAt (tree : NormalTreeState) (node : Nat) : Option LocationState :=
   | some (some state) => some state
   | some none => tree.defaultStates[node]?
 
-private def setState (tree : NormalTreeState) (node : Nat)
+/-- Materialize a location state at a checked node index. -/
+def setState (tree : NormalTreeState) (node : Nat)
     (state : LocationState) : Option NormalTreeState :=
   if h : node < tree.locationStates.size then
     some { tree with locationStates := tree.locationStates.set node (some state) h }
   else none
 
-private def shouldSkipForeignNode (tree : NormalTreeState) (kind : AccessKind)
+/-- Query the initial location before the traversal enters a foreign subtree. -/
+def shouldSkipForeignNode (tree : NormalTreeState) (kind : AccessKind)
     (node : Nat) : Bool :=
   if node < tree.topology.nodes.size then
     -- A location state outside the topology does not participate in pruning.
@@ -69,7 +71,8 @@ private def shouldSkipForeignNode (tree : NormalTreeState) (kind : AccessKind)
         state.skipIfKnownNoop kind .ForeignAccess == .SkipSelfAndChildren
   else false
 
-private def processEvents (tree : NormalTreeState) (root : Nat)
+/-- Apply the normal access to each event in the traversal order. -/
+def processEvents (tree : NormalTreeState) (root : Nat)
     (kind : AccessKind) : List TraversalEvent → NormalAccessResult
   | [] => ⟨tree, root, [], .Completed⟩
   | event :: rest =>

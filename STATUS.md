@@ -1184,9 +1184,10 @@ vector-clock backend.
   checks symbolic copy access effects with explicit permission and policy
   premises. Its adversarial caller demonstrates that a prepared mutable
   slice frame can still fail a Tree Borrows write with a live incompatible
-  protector. The whole-function proof for all lawful callers still needs a
-  caller invariant that guarantees authority for the relevant reads and
-  writes and a proof that the actual entry and call sequence preserve it.
+  protector. The concrete slice domain now states bytewise permissions and
+  topology independently of execution. The whole-function proof still needs
+  to connect real call entry to that domain, carry it through retagging and
+  the positive copy branch, and discharge stack release and return.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

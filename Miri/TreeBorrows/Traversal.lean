@@ -109,6 +109,35 @@ def traverseWithSkip (tree : TraversalTree) (start : Nat)
     foreignRoots.flatMap (foreignPostorder tree shouldSkip tree.nodes.size)
   (root, localEvents ++ foreignEvents)
 
+private theorem foreignPostorder_notSkipped (tree : TraversalTree) (skip : Nat → Bool)
+    (fuel index : Nat) (event : TraversalEvent)
+    (visited : event ∈ tree.foreignPostorder skip fuel index) : skip event.node = false := by
+  induction fuel generalizing index with
+  | zero => simp [foreignPostorder] at visited
+  | succ fuel ih =>
+    by_cases omitted : skip index = true
+    · simp [foreignPostorder, omitted] at visited
+    · have notSkipped := Bool.eq_false_iff.mpr omitted
+      simp only [foreignPostorder, notSkipped, Bool.false_eq_true, ↓reduceIte, List.mem_append,
+        List.mem_flatMap, List.mem_singleton] at visited
+      rcases visited with ⟨child, _, reaches⟩ | atIndex
+      · exact ih child reaches
+      · subst event
+        exact notSkipped
+
+/-- Every generated foreign event passed the traversal's initial pruning
+test. Local events bypass that test. -/
+theorem traverseWithSkip_foreign_notSkipped (tree : TraversalTree)
+    (start : Nat) (mode : ChildrenVisitMode) (skip : Nat → Bool) (event : TraversalEvent)
+    (visited : event ∈ (tree.traverseWithSkip start mode skip).2)
+    (foreign : event.relatedness = .ForeignAccess) :
+    skip event.node = false := by
+  simp only [traverseWithSkip, List.mem_append, List.mem_map, List.mem_flatMap] at visited
+  rcases visited with ⟨localNode, _, equal⟩ | ⟨root, _, reaches⟩
+  · subst event
+    cases foreign
+  · exact foreignPostorder_notSkipped tree skip _ root event reaches
+
 /-- Schedule a normal access with an explicit set of foreign nodes to skip. -/
 def traverse (tree : TraversalTree) (start : Nat)
     (mode : ChildrenVisitMode) (skipNodes : List Nat) :

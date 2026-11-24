@@ -315,6 +315,11 @@ private def normalProjection (tree : BorrowTree) (location : LocationTree)
     locationStates
   }
 
+/-- The projected per-location state used by the concrete access executor. -/
+def normalView (tree : BorrowTree) (location : LocationTree)
+    (protectedTags : ProtectedTags) : Tree.NormalTreeState :=
+  normalProjection tree location protectedTags
+
 structure NormalLocationAccessResult where
   location : LocationTree
   access : Tree.NormalAccessResult

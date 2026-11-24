@@ -80,6 +80,22 @@ relevant calls and compose the current helper and return paths.
 false-result assignment, local destination copy, and canonical stack return
 under its explicit frame and call-policy premises.
 
+[LanguageGuardCall.lean](LanguageGuardCall.lean) connects the actual
+resolved helper to canonical call entry. [LanguageGuardValidity.lean](LanguageGuardValidity.lean)
+handles the guard's Boolean validity check.
+[NestedGuardDriver.lean](NestedGuardDriver.lean) links the canonical step
+to the checked before-terminator path under fixed scheduling.
+[ZeroBoolean.lean](ZeroBoolean.lean)
+checks the selected zero-branch write and read of the actual return value.
+[ZeroAssignment.lean](ZeroAssignment.lean) links the assignment to the
+canonical step. [ZeroReturn.lean](ZeroReturn.lean) checks writing back to
+the caller and resuming its continuation, given the exact stack pop.
+
+[SourceDomain.lean](SourceDomain.lean) states bytewise ownership and
+forest coherence for a prepared concrete slice. [MutableSliceRights.lean](MutableSliceRights.lean)
+uses those facts to preserve the local and foreign permissions of a fresh
+mutable child, given the concrete retag footprint.
+
 [ScopedSafetyTransfer.lean](ScopedSafetyTransfer.lean) connects separately
 proved scoped error safety and successful root preparation to the generated
 VC at the entry state.

@@ -17,13 +17,24 @@ tools/body-vc safety "$source" \
 lean -j1 -o "$out/Representative.olean" "$out/Representative.lean"
 lean -j1 examples/duplicate_prefix_vcgen/VerifyGenerated.lean
 lean -j1 examples/duplicate_prefix_vcgen/ScopedSafetyTransfer.lean
-lean -j1 examples/duplicate_prefix_vcgen/PreparedArguments.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/PreparedArguments.olean" examples/duplicate_prefix_vcgen/PreparedArguments.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/SourceDomain.olean" examples/duplicate_prefix_vcgen/SourceDomain.lean
+lean -j1 examples/duplicate_prefix_vcgen/MutableSliceRights.lean
 lean -j1 examples/duplicate_prefix_vcgen/SymbolicCopyAccess.lean
 lean -j1 examples/duplicate_prefix_vcgen/ZeroProtector.lean
 lean -j1 examples/duplicate_prefix_vcgen/ZeroTail.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/ZeroBoolean.olean" examples/duplicate_prefix_vcgen/ZeroBoolean.lean
+lean -j1 examples/duplicate_prefix_vcgen/ZeroAssignment.lean
+lean -j1 examples/duplicate_prefix_vcgen/ZeroReturn.lean
 mkdir -p "$out/empty_function"
 lean -j1 --root=examples -o "$out/empty_function/FrameExit.olean" examples/empty_function/FrameExit.lean
 lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardStack.lean
+lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardCall.lean
+lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardValidity.lean
+lean -j1 examples/duplicate_prefix_vcgen/NestedGuardDriver.lean
 
 "${BODY_VC_RUNNER:-$PWD/.lake/build/bin/native_runner}" "$out/harness.json" \
   --ui-source "$harness" --ui-flags '["-Zmiri-tree-borrows"]' \
