@@ -8218,3 +8218,23 @@
    rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
    repeat' constructor
  #print axioms language_push_control
+--- a/examples/duplicate_prefix/ExecutionPointerOffset.lean
++++ b/examples/duplicate_prefix/ExecutionPointerOffset.lean
+@@ -48,7 +48,7 @@
+     (memory : MemoryState Provenance Miri.TreeBorrows.BorrowTree K)
+     (id : AllocId) (tag : BorTag) (base offset count : UInt64)
+     (entry : LocalAllocation Provenance Miri.TreeBorrows.BorrowTree K)
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : memory.live[id]? = some entry)
+     (positive : 0 < count.toNat) (fits : count.toNat < 2^63)
+     (bounds : offset.toNat + count.toNat ≤ entry.allocation.byteSize.bytes.toNat) :
+     checkPtrAccessSigned arithmetic
+@@ -122,7 +122,7 @@
+     (pointerWidth : pointers.arithmetic = ⟨Size.ofBytes 8⟩)
+     (resolutionWiring : access.resolvePointer = TypedMemoryProviders.resolvePointer pointers)
+     (cached : state.machine.user.addresses.baseAddr.find? (fun row => row.allocId == id) = some ⟨id,base⟩)
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+     (positive : 0 < count.toNat) (fits : count.toNat < 2^63)
+     (bounds : offset.toNat + count.toNat ≤ entry.allocation.byteSize.bytes.toNat) :
+     (ExecutionScalar.hooks queries access arithmetic isRaw usize pointee dereference floats).pointerBinary
