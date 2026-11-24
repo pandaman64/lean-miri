@@ -424,4 +424,66 @@ theorem frozen_child_coherent_with_mode
     (if held then .None else .Read) rfl rfl (by cases held <;> rfl)
     mapped parentFound parentNode present vacant slot coherent rankTree rank complete well
 
+private def childExposure (tree : BorrowTree) (child : UniIndex) : Option Bool :=
+  (tree.nodeAt child).map TreeNode.isExposed
+
+private theorem weaken_keeps_exposure (tree : BorrowTree) (index child : UniIndex)
+    (node : TreeNode) (strongest : IdempotentForeignAccess)
+    (present : tree.nodeAt index = some node) :
+    childExposure (weakened tree index node strongest) child = childExposure tree child := by
+  unfold childExposure weakened BorrowTree.nodeAt
+  dsimp only
+  by_cases same : child = index
+  · subst child
+    rw [Sparse.get_same, show tree.nodes.get index = some node from present]
+    rfl
+  · rw [Sparse.get_other _ _ _ _ same]
+
+/-- Installing a bounded concrete child leaves its selected node unexposed,
+including after ancestor SIFA bookkeeping. -/
+theorem newChild_initial_unexposed
+    (tree : BorrowTree) (offset : Size) (parentTag tag : BorTag)
+    (parent child : UniIndex) (mapping : UniKeyMap BorTag) (inside : DedupRangeMap LocationState)
+    (outside : Permission) (held : Bool) (defaultSifa : IdempotentForeignAccess)
+    (initial : outside.isInitial = true) (nonunique : outside.isUnique = false)
+    (sifa : outside.strongestIdempotentForeignAccess held = .Access defaultSifa)
+    (mapped : tree.tagMapping.insert tag = .Inserted mapping child)
+    (parentFound : tree.indexOfTag parentTag = some parent)
+    (parentNode : TreeNode) (present : tree.nodeAt parent = some parentNode)
+    (vacant : tree.nodeAt child = none)
+    (complete : (tree.newChild offset (.concrete parentTag) tag inside outside held).outcome = .ok ()) :
+    let after := (tree.newChild offset (.concrete parentTag) tag inside outside held).tree
+    ∀ data, after.nodeAt child = some data → data.isExposed = false := by
+  let node := initialChildNode tag parent outside defaultSifa
+  let attached := initialChildAttached tree tag mapping child parent parentNode outside defaultSifa
+  let keep := fun now => childExposure now child = some false
+  have distinct : parent ≠ child := Reuse.parent_not_vacant tree.nodes child parent parentNode vacant present
+  have fresh : keep attached := by
+    simp only [keep, childExposure, initialChildAttached, attached, BorrowTree.nodeAt, Append.attachedNodes]
+    rw [Sparse.get_other _ _ _ _ (Ne.symm distinct), Sparse.get_same]
+    rfl
+  have tagLookup : tree.tagMapping.get parentTag = some parent := parentFound
+  have pre : insertChildPre tree offset (.concrete parentTag) tag inside outside held keep (fun _ => keep) := by
+    have repeated : childSegmentsPre offset child (some parent) held keep (fun _ => keep)
+        inside.iterAll.toList attached defaultSifa := by
+      apply childSegmentsFrame keep (fun _ _ h => h)
+        (fun current index node strongest found h => (weaken_keeps_exposure current index child node strongest found).trans h)
+      exact fresh
+    have parentLookup : tree.nodes.get parent = some parentNode := present
+    unfold insertChildPre
+    simp only [mapped, tagLookup, Option.map_some, initial, Bool.not_true,
+      Bool.false_eq_true, ↓reduceIte, nonunique, sifa, finishInsertedChildPre,
+      Sparse.get_other _ _ _ _ distinct, parentLookup]
+    exact repeated
+  have licensed := (insertChildPre_iff tree offset (.concrete parentTag) tag inside outside held
+    keep (fun _ => keep)).mp pre
+  dsimp only
+  intro data found
+  have visible : childExposure (tree.newChild offset (.concrete parentTag) tag inside outside held).tree child =
+      some false := by
+    simpa only [childResultPre, complete] using licensed
+  unfold childExposure at visible
+  rw [found] at visible
+  exact Option.some.inj visible
+
 end DuplicatePrefix.ArchiveForestProjection
