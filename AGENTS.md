@@ -32,6 +32,10 @@ logs and generated inventories under ignored scratch/ or upload them as CI artif
   data. Public import/contract APIs remain experimental. Client proofs must pin
   an immutable library revision and must not change its semantics to obtain a proof.
 * Keep WP and VC generation layered over the fixed interpreter semantics.
+  When replacing a WP with a simpler predicate, prove equality or a
+  biconditional with the original WP in Lean. State the domain assumptions
+  and the success and error postconditions in the theorem. Keep the original
+  exact rule available outside the domain of a specialized simplification.
 
 ## Changes and verification
 
