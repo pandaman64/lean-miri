@@ -49,6 +49,35 @@ def EventAllowed (tree : NormalTreeState) (kind : AccessKind) (event : Traversal
     recorded.performAccess kind event.relatedness (tree.protectedNodes.contains event.node) =
       .Success next transition
 
+/-- A located event tests the original SIFA prune assertion and permission
+transition. Recording the access changes only SIFA before the transition. -/
+theorem eventAllowed_iff (tree : NormalTreeState) (kind : AccessKind) (event : TraversalEvent)
+    (old : LocationState) (found : tree.stateAt event.node = some old) :
+    EventAllowed tree kind event ↔
+      old.skipIfKnownNoop kind event.relatedness = .Recurse ∧
+      old.resultPre kind event.relatedness (tree.protectedNodes.contains event.node)
+        (fun result => match result with | .Success .. => True | _ => False) := by
+  unfold EventAllowed
+  simp only [found, Option.some.injEq, exists_and_left, exists_eq_left', LocationState.recordNewAccess]
+  cases skip : old.skipIfKnownNoop kind event.relatedness
+  · simp only [beq_self_eq_true, ↓reduceIte, LocationState.RecordAccessResult.Recorded.injEq,
+      exists_eq_left', true_and]
+    have allowed (state : LocationState) :
+        (∃ next transition,
+          state.performAccess kind event.relatedness (tree.protectedNodes.contains event.node) =
+            .Success next transition) ↔
+        state.resultPre kind event.relatedness (tree.protectedNodes.contains event.node)
+          (fun result => match result with | .Success .. => True | _ => False) := by
+      rw [← LocationState.resultPre_iff]
+      cases state.performAccess kind event.relatedness (tree.protectedNodes.contains event.node) <;> simp
+    rw [allowed]
+    unfold LocationState.resultPre
+    dsimp only
+    generalize Miri.TreeBorrows.performAccess kind event.relatedness old.permission
+      (tree.protectedNodes.contains event.node) = outcome
+    cases outcome <;> simp [LocationState.possible]
+  · simp
+
 private theorem setState_exists (tree : NormalTreeState) (node : Nat) (old next : LocationState)
     (found : tree.stateAt node = some old) : ∃ after, tree.setState node next = some after := by
   have within : node < tree.locationStates.size := by
@@ -188,6 +217,20 @@ theorem normal_access_result (tree : BorrowTree) (location : LocationTree)
     (tree.performNormalAccessAt location start kind tags mode).access =
       (tree.normalView location tags).performAccess start.toNat kind mode := by
   rfl
+
+/-- The permission visitor for a concrete normal location access completes
+exactly when each scheduled event is permitted by the initial location. -/
+theorem concrete_normal_complete_iff (tree : BorrowTree) (location : LocationTree)
+    (tags : ProtectedTags) (start : UniIndex) (kind : AccessKind) (mode : ChildrenVisitMode)
+    (once : let view := tree.normalView location tags
+      ((view.topology.traverseWithSkip start.toNat mode
+        (view.shouldSkipForeignNode kind)).2.map (·.node)).Nodup) :
+    (tree.performNormalAccessAt location start kind tags mode).access.status = .Completed ↔
+      let view := tree.normalView location tags
+      ∀ event ∈ (view.topology.traverseWithSkip start.toNat mode (view.shouldSkipForeignNode kind)).2,
+        EventAllowed view kind event := by
+  rw [normal_access_result]
+  exact normal_complete_iff (tree.normalView location tags) start.toNat kind mode once
 
 /-- The scheduled relationship is observed in the successful normal component's
 trace. This does not require either tag to have been exposed. -/
