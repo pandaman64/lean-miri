@@ -3,6 +3,7 @@ import duplicate_prefix.PtrMetadataExecution
 
 namespace DuplicatePrefix.RootZeroShallowReturn
 open Miri Miri.ABI Miri.Input Miri.MIR Miri.Memory Miri.Interpreter
+open Miri.TreeBorrows Miri.DataStructures Miri.Concurrency
 open PtrMetadataExecution
 
 /-- The caller shape before the retained slice-length call returns to block 3. -/
@@ -76,5 +77,85 @@ def BeforeLengthReturn.rejectionEntry (frame : CompilerFrameContext.ActualFrame)
     | simp [writeFrame, Array.getElem_set, l0, l8, l9, l10, l13,
         before.live7, before.live12, before.cached11]
 
+private theorem relevanceExists (frames : Array CompilerFrameContext.ActualFrame)
+    (frame : CompilerFrameContext.ActualFrame) (thread : ThreadRecord) :
+    ∃ relevant, FrameRelevance.top ⟨frames.push frame⟩ thread.topUserRelevantFrame = some relevant := by
+  cases cached : thread.topUserRelevantFrame with
+  | some index => exact ⟨index, by simp [FrameRelevance.top]⟩
+  | none => exact ⟨frames.size, by simp [FrameRelevance.top]⟩
+
+/-- Structural release authority for the root, after a nested Len protector
+has been released. The nested pop may update the tree and relevance cache. -/
+structure RetainedRootBorrow (older : Array CompilerFrameContext.ActualFrame)
+    (caller frame : CompilerFrameContext.ActualFrame)
+    (initial final : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (root : ActiveCaller older caller frame initial) where
+  entry : LocalAllocation Provenance BorrowTree MiriMemoryKind
+  present : final.memory.live[root.id]? = some entry
+  tracker : MachineHooks.BorrowState
+  tracked : final.borrowTracker = some tracker
+  indexed : entry.allocation.extra.indexOfTag root.tag = some root.source
+  roots : entry.allocation.extra.roots = #[root.root]
+  depth : GeneralBorrowExposure.ParentDepth entry.allocation.extra.nodes
+  children : GeneralBorrowGraph.ChildNodes entry.allocation.extra
+  node : TreeNode
+  found : entry.allocation.extra.nodeAt root.source = some node
+  unexposed : node.isExposed = false
+  authorized : ∀ position < entry.allocation.extra.locations.entries.size, ∃ slot,
+    entry.allocation.extra.locations.index position = .ok slot ∧
+      ActiveRelease.ReleaseOwnership entry.allocation.extra root.source root.root tracker.global.protectedTags slot
+
+noncomputable def ActiveCaller.afterLengthReturn
+    (older : Array CompilerFrameContext.ActualFrame) (caller frame : CompilerFrameContext.ActualFrame)
+    (initial final : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (length count : UInt64) (before : BeforeLengthReturn frame count)
+    (root : ActiveCaller older caller frame initial)
+    (retained : RetainedRootBorrow older caller frame initial final root)
+    (running : ∃ thread, final.threads.activeThread? = some thread) :
+    ActiveCaller older caller
+      {writeFrame frame 11 (.scalar (.fromScalarInt (.ofUInt64 length)))
+        (by rw [before.size]; decide) with location := .mir ⟨3, 0⟩} final := by
+  let thread := Classical.choose running
+  have active := Classical.choose_spec running
+  let returned := {writeFrame frame 11 (.scalar (.fromScalarInt (.ofUInt64 length)))
+    (by rw [before.size]; decide) with location := FrameLocation.mir ⟨3, 0⟩}
+  let top := relevanceExists (older.push caller) returned thread
+  exact {
+    target := root.target
+    unwind := root.unwind
+    continuation := root.continuation
+    destinationIndex := root.destinationIndex
+    destinationBound := root.destinationBound
+    destinationSlot := root.destinationSlot
+    destinationLive := root.destinationLive
+    destinationCached := root.destinationCached
+    destination := root.destination
+    callerClocks := root.callerClocks
+    varargs := root.varargs
+    id := root.id
+    tag := root.tag
+    entry := retained.entry
+    present := retained.present
+    tracker := retained.tracker
+    tracked := retained.tracked
+    owned := root.owned
+    ownership := root.ownership
+    ownedTags := root.ownedTags
+    source := root.source
+    root := root.root
+    indexed := retained.indexed
+    roots := retained.roots
+    depth := retained.depth
+    children := retained.children
+    node := retained.node
+    found := retained.found
+    unexposed := retained.unexposed
+    authorized := retained.authorized
+    thread := thread
+    relevant := Classical.choose top
+    active := active
+    relevance := Classical.choose_spec top }
+
 #print axioms BeforeLengthReturn.rejectionEntry
+#print axioms ActiveCaller.afterLengthReturn
 end DuplicatePrefix.RootZeroShallowReturn
