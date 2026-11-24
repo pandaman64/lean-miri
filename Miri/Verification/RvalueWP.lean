@@ -402,23 +402,29 @@ private def restoreModePre (old : RetagMode) (post : State → Prop)
 /-- Enter the requested Tree Borrows mode and restore the caller's mode in
 both continuations. A missing tracker in the resulting state overrides the
 body outcome with the interpreter's invariant error. -/
-def retagModePre (mode : RetagMode) (action : RvalueM State A) (post : A → State → Prop)
-    (onError : StepError → State → Prop) (before : State) : Prop :=
+def retagModePullback (mode : RetagMode)
+    (pull : (A → State → Prop) → (StepError → State → Prop) → State → Prop)
+    (post : A → State → Prop) (onError : StepError → State → Prop) (before : State) : Prop :=
   match before.machine.borrowTracker with
-  | none => actionPre action post onError before
+  | none => pull post onError before
   | some tracker =>
     let entered := { before with machine.borrowTracker := some { tracker with retagMode := mode } }
-    actionPre action (fun value => restoreModePre tracker.retagMode (post value) onError)
+    pull (fun value => restoreModePre tracker.retagMode (post value) onError)
       (fun error => restoreModePre tracker.retagMode (onError error) onError) entered
+
+/-- Pull back an interpreter action through the canonical retag scope. -/
+def retagModePre (mode : RetagMode) (action : RvalueM State A) (post : A → State → Prop)
+    (onError : StepError → State → Prop) (before : State) : Prop :=
+  retagModePullback mode (actionPre action) post onError before
 
 theorem actionPre_withRetagMode (mode : RetagMode) (action : RvalueM State A)
     (post : A → State → Prop) (onError : StepError → State → Prop) (before : State) :
     actionPre (MachineHooks.withRetagMode mode action) post onError before =
       retagModePre mode action post onError before := by
   cases tracking : before.machine.borrowTracker with
-  | none => simp only [retagModePre, actionPre, MachineHooks.withRetagMode, tracking]
+  | none => simp only [retagModePre, retagModePullback, actionPre, MachineHooks.withRetagMode, tracking]
   | some tracker =>
-    simp only [retagModePre, actionPre, MachineHooks.withRetagMode, tracking]
+    simp only [retagModePre, retagModePullback, actionPre, MachineHooks.withRetagMode, tracking]
     let entered : State := { before with machine.borrowTracker := some { tracker with retagMode := mode } }
     generalize action entered = result
     cases result with

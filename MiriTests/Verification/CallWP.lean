@@ -281,7 +281,7 @@ theorem frameArgumentsRestoreOnError (config : Config) (limits : ExecutionMachin
       onError error
         { failed with machine.borrowTracker := some { afterTracker with retagMode := tracker.retagMode } } := by
   rw [← RvalueWP.actionPre_eq_wp, CallWP.canonicalFrameArgumentsPre]
-  simp only [RvalueWP.retagModePre, tracking, RvalueWP.actionPre, failure]
+  simp only [RvalueWP.retagModePre, RvalueWP.retagModePullback, tracking, RvalueWP.actionPre, failure]
   change (match failed.machine.borrowTracker with
     | none => onError (.invalidProgram "borrow tracker removed during retag mode scope") failed
     | some tracked => onError error
@@ -301,10 +301,80 @@ theorem closureVariadicArgumentConflict (config : Config) (limits : ExecutionMac
     wp (Call.initFrameArgumentsBody (calls config limits) () body true (some 1) args callerAbis calleeAbis)
       post onError before ↔
       onError (.invalidProgram "special closure argument conflict") queried := by
-  rw [← RvalueWP.actionPre_eq_wp, ← CallWP.frameArgumentsBodyPre_eq_actionPre]
-  simp [count, CallWP.frameArgumentsFoldPre, Call.initFrameArgumentStep, Call.require_eq,
-    RvalueWP.actionPre_bind_fun, RvalueWP.actionPre_ok foundSpan, RvalueWP.actionPre_ok setLocation,
-    RvalueWP.actionPre_ok foundLayout, RvalueWP.actionPre_throw]
+  rw [← RvalueWP.actionPre_eq_wp, ← CallWP.frameArgumentsByLocalPre_eq_body
+    (scope := CallWP.canonicalRetagPullback (ExecutionMachine.withValidation config limits) limits ())]
+  simp [count, CallWP.frameArgumentsByLocalPre, CallWP.frameArgumentStepPre, CallWP.closureSelfPre,
+    CallWP.setSpanPre_eq_actionPre, RvalueWP.actionPre_ok foundSpan, RvalueWP.actionPre_ok setLocation,
+    RvalueWP.actionPre_ok foundLayout]
+
+/-- Spread ABI validation observes the state after the tuple local was made
+live and its fields were queried. -/
+theorem spreadFieldMissingCalleeAbi (config : Config) (limits : ExecutionMachine.Limits)
+    (body : Body) (before spanRead located queried live fieldsRead : State)
+    (span : SpanRef) (layout : LocalLayout) (fieldTy : TyId)
+    (post : (Nat × Nat) → State → Prop) (onError : StepError → State → Prop)
+    (count : body.argumentCount = 1) (spread : body.spreadArgument = some 1)
+    (foundSpan : (calls config limits).localSpan body 1 before = .ok span spanRead)
+    (setLocation : Call.setSpan (calls config limits) span spanRead = .ok () located)
+    (foundLayout : (calls config limits).localLayout () 1 located = .ok layout queried)
+    (storage : (calls config limits).storageLiveDyn () 1 .none queried = .ok () live)
+    (fields : (calls config limits).tupleFields layout.ty live = .ok #[fieldTy] fieldsRead) :
+    wp (Call.initFrameArgumentsBody (calls config limits) () body false none #[] #[] #[])
+      post onError before ↔ onError (.invalidProgram "missing spread callee ABI") fieldsRead := by
+  rw [← RvalueWP.actionPre_eq_wp, ← CallWP.frameArgumentsByLocalPre_eq_body
+    (scope := CallWP.canonicalRetagPullback (ExecutionMachine.withValidation config limits) limits ())]
+  simp [count, spread, CallWP.frameArgumentsByLocalPre, CallWP.frameArgumentStepPre,
+    CallWP.setSpanPre_eq_actionPre, CallWP.spreadFieldsPre, CallWP.atPre,
+    RvalueWP.actionPre_ok foundSpan, RvalueWP.actionPre_ok setLocation, RvalueWP.actionPre_ok foundLayout,
+    RvalueWP.actionPre_ok storage, RvalueWP.actionPre_ok fields]
+
+#print axioms spreadFieldMissingCalleeAbi
+
+/-- A failed second variadic copy reports the failure state after restoring
+the entry mode, with the first variadic argument already allocated and copied. -/
+theorem variadicCopyRestoresRetagMode (config : Config) (limits : ExecutionMachine.Limits)
+    (body : Body) (firstArg arg : FnArg Provenance) (firstAbi abi : Miri.ABI.ArgAbi TyId)
+    (before spanRead located queried live evaluated forced firstAllocated firstCopied allocated failed : State)
+    (span : SpanRef) (layout : LocalLayout) (dest : RuntimeStackPlace Provenance)
+    (mplace firstVararg vararg : MPlaceTy Provenance) (tracker failedTracker : MachineHooks.BorrowState)
+    (error : StepError) (post : (Nat × Nat) → State → Prop) (onError : StepError → State → Prop)
+    (count : body.argumentCount = 1)
+    (foundSpan : (calls config limits).localSpan body 1 before = .ok span spanRead)
+    (setLocation : Call.setSpan (calls config limits) span spanRead = .ok () located)
+    (foundLayout : (calls config limits).localLayout () 1 located = .ok layout queried)
+    (storage : (calls config limits).storageLiveDyn () 1 .none queried = .ok () live)
+    (eval : (calls config limits).evalPlace () ⟨1, #[]⟩ false live = .ok dest evaluated)
+    (force : (calls config limits).forceAllocation () dest evaluated = .ok mplace forced)
+    (tracking : forced.machine.borrowTracker = some tracker)
+    (firstAlloc : (calls config limits).allocateStack () firstArg.copyFnArg.layout
+      { forced with machine.borrowTracker := some { tracker with retagMode := .None } } =
+        .ok firstVararg firstAllocated)
+    (firstCopy : (calls config limits).copyToMemory () firstArg.copyFnArg firstVararg firstAllocated =
+      .ok () firstCopied)
+    (alloc : (calls config limits).allocateStack () arg.copyFnArg.layout firstCopied = .ok vararg allocated)
+    (copy : (calls config limits).copyToMemory () arg.copyFnArg vararg allocated = .error error failed)
+    (trackedFailure : failed.machine.borrowTracker = some failedTracker) :
+    wp (Call.initFrameArgumentsBody (calls config limits) () body false (some 1) #[firstArg, arg] #[firstAbi, abi] #[])
+      post onError before ↔
+      onError error
+        { failed with machine.borrowTracker := some { failedTracker with retagMode := tracker.retagMode } } := by
+  rw [← RvalueWP.actionPre_eq_wp, ← CallWP.frameArgumentsByLocalPre_eq_body
+    (scope := CallWP.canonicalRetagPullback (ExecutionMachine.withValidation config limits) limits ())]
+  have range : List.range' 0 2 = [0, 1] := rfl
+  simp [count, range, CallWP.frameArgumentsByLocalPre, CallWP.frameArgumentStepPre, CallWP.setSpanPre_eq_actionPre,
+    CallWP.vaListPre, CallWP.collectVarargsPre, CallWP.atPre, CallWP.canonicalRetagPullback,
+    RvalueWP.actionPre_ok foundSpan, RvalueWP.actionPre_ok setLocation, RvalueWP.actionPre_ok foundLayout,
+    RvalueWP.actionPre_ok storage, RvalueWP.actionPre_ok eval, RvalueWP.actionPre_ok force,
+    RvalueWP.retagModePullback, tracking, CallWP.allocateVarargsPre,
+    RvalueWP.actionPre_ok firstAlloc, RvalueWP.actionPre_ok firstCopy, RvalueWP.actionPre_ok alloc]
+  simp only [RvalueWP.actionPre, copy]
+  change (match failed.machine.borrowTracker with
+    | none => onError (.invalidProgram "borrow tracker removed during retag mode scope") failed
+    | some tracked => onError error
+        { failed with machine.borrowTracker := some { tracked with retagMode := tracker.retagMode } }) ↔ _
+  rw [trackedFailure]
+
+#print axioms variadicCopyRestoresRetagMode
 
 #print axioms closureVariadicArgumentConflict
 

@@ -4,6 +4,7 @@ import Miri.Verification.RvalueWP
 namespace Miri.Verification.CallWP
 
 open Miri.Interpreter Miri.MIR Miri.Memory RvalueWP Std.WP
+open Miri.TreeBorrows.RetagPolicy
 
 variable {P S C E Other Extern FnABI ArgABI : Type}
 local notation "Hooks" => CallHooks P S C E Other Extern FnABI ArgABI
@@ -194,6 +195,254 @@ theorem ordinaryArgumentsPre_eq_actionPre (hooks : Hooks) (choice : C) (body : B
     funext completed
     exact ih _
 
+def atPre {A : Type} (values : Array A) (index : Nat) (error : StepError)
+    (post : A → S → Prop) (onError : Errors) : S → Prop :=
+  match values[index]? with
+  | none => onError error
+  | some value => post value
+
+private theorem atPre_eq_actionPre {A : Type} (values : Array A) (index : Nat) (message : String)
+    (post : A → S → Prop) (onError : Errors) :
+    atPre values index (.invalidProgram message) post onError =
+      actionPre (Call.at? values index message) post onError := by
+  cases found : values[index]? <;> simp [atPre, Call.at?, found, actionPre_pure_fun, actionPre_throw_fun]
+
+private theorem callerAtPre_eq_actionPre (args : Array (FnArg P)) (index : Nat)
+    (post : FnArg P → S → Prop) (onError : Errors) :
+    atPre args index (.undefinedBehavior "calling a function with fewer arguments than it requires")
+      post onError =
+    actionPre (match args[index]? with
+      | none => throw (.undefinedBehavior "calling a function with fewer arguments than it requires")
+      | some arg => pure arg) post onError := by
+  cases found : args[index]? <;> simp [atPre, found, actionPre_pure_fun, actionPre_throw_fun]
+
+/-- Closure self advances the callee cursor and consumes the caller cursor
+only when the caller's ABI includes an explicit self argument. -/
+def closureSelfPre (hooks : Hooks) (choice : C) (body : Body) (vaListArg : Option LocalId)
+    (args : Array (FnArg P)) (callerAbis calleeAbis : Array ArgABI) (localId : LocalId)
+    (indices : Nat × Nat) (post : (Nat × Nat) → S → Prop) (onError : Errors) : S → Prop :=
+  if vaListArg.isNone && body.spreadArgument != some localId then
+    atPre calleeAbis indices.2 (.invalidProgram "missing closure ABI") (fun calleeAbi =>
+      if hooks.isOneZst (hooks.argLayout calleeAbi) && hooks.argIsIgnore calleeAbi then
+        actionPre (hooks.storageLiveDyn choice localId .none) (fun _ =>
+          if callerAbis.size == calleeAbis.size then
+            atPre args indices.1 (.invalidProgram "missing closure caller argument") (fun _ =>
+              atPre callerAbis indices.1 (.invalidProgram "missing closure caller ABI") (fun callerAbi =>
+                if hooks.isOneZst (hooks.argLayout callerAbi) then
+                  if hooks.argIsIgnore callerAbi then post (indices.1 + 1, indices.2 + 1)
+                  else onError (.invalidProgram "closure caller ABI not ignored")
+                else onError (.undefinedBehavior "AbiMismatchArgument closure self")) onError) onError
+          else post (indices.1, indices.2 + 1)) onError
+      else onError (.invalidProgram "closure self ABI not ignorable 1-ZST")) onError
+  else onError (.invalidProgram "special closure argument conflict")
+
+/-- Initialize each projected field of an already-live spread local. -/
+def spreadFieldsPre (hooks : Hooks) (choice : C) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (dest : Place) (fields : Array TyId)
+    (post : (Nat × Nat) → S → Prop) (onError : Errors) :
+    List Nat → (Nat × Nat) → S → Prop
+  | [], indices => post indices
+  | idx :: rest, indices =>
+    atPre fields idx (.invalidProgram "missing spread field") (fun fieldTy =>
+      atPre calleeAbis indices.2 (.invalidProgram "missing spread callee ABI") (fun calleeAbi =>
+        atPre args indices.1
+          (.undefinedBehavior "calling a function with fewer arguments than it requires") (fun caller =>
+          atPre callerAbis indices.1 (.invalidProgram "missing spread caller ABI") (fun callerAbi =>
+            passArgumentPre hooks choice caller callerAbi calleeAbi indices.2
+              { dest with projection := #[.Field idx fieldTy] } fieldTy true
+              (spreadFieldsPre hooks choice args callerAbis calleeAbis dest fields post onError rest
+                (indices.1 + 1, indices.2 + 1)) onError) onError) onError) onError) onError
+
+private theorem spreadFieldsPre_eq (hooks : Hooks) (choice : C) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (dest : Place) (fields : Array TyId)
+    (post : (Nat × Nat) → S → Prop) (onError : Errors) (locals : List Nat) (indices : Nat × Nat) :
+    spreadFieldsPre hooks choice args callerAbis calleeAbis dest fields post onError locals indices =
+      actionPre (forIn locals indices (fun idx (callerIndex, calleeIndex) => do
+        let fieldTy ← Call.at? fields idx "missing spread field"
+        let calleeAbi ← Call.at? calleeAbis calleeIndex "missing spread callee ABI"
+        let caller ← match args[callerIndex]? with
+          | none => throw (.undefinedBehavior "calling a function with fewer arguments than it requires")
+          | some arg => pure arg
+        let callerAbi ← Call.at? callerAbis callerIndex "missing spread caller ABI"
+        Call.passArgument hooks choice caller callerAbi calleeAbi calleeIndex
+          { dest with projection := #[.Field idx fieldTy] } fieldTy true
+        pure (.yield (callerIndex + 1, calleeIndex + 1)))) post onError := by
+  induction locals generalizing indices with
+  | nil => rfl
+  | cons idx rest ih =>
+    rcases indices with ⟨callerIndex, calleeIndex⟩
+    simp only [spreadFieldsPre, List.forIn_cons, atPre_eq_actionPre, callerAtPre_eq_actionPre,
+      passArgumentPre_eq_wp, ← actionPre_eq_wp, actionPre_bind_fun, ih]
+    congr 1
+    funext fieldTy
+    congr 1
+    funext calleeAbi
+    cases args[callerIndex]? <;>
+      simp only [actionPre_bind_fun, actionPre_pure_fun, actionPre_throw_fun]
+
+/-- Check the variadic argument and ABI arrays before making any allocations. -/
+def collectVarargsPre (args : Array (FnArg P)) (callerAbis : Array ArgABI)
+    (post : Array (FnArg P × ArgABI) → S → Prop) (onError : Errors) :
+    List Nat → Array (FnArg P × ArgABI) → S → Prop
+  | [], remaining => post remaining
+  | idx :: rest, remaining =>
+    atPre args idx (.invalidProgram "missing vararg") (fun arg =>
+      atPre callerAbis idx (.invalidProgram "missing vararg ABI") (fun abi =>
+        collectVarargsPre args callerAbis post onError rest (remaining.push (arg, abi))) onError) onError
+
+private theorem collectVarargsPre_eq (args : Array (FnArg P)) (callerAbis : Array ArgABI)
+    (post : Array (FnArg P × ArgABI) → S → Prop) (onError : Errors)
+    (locals : List Nat) (remaining : Array (FnArg P × ArgABI)) :
+    collectVarargsPre args callerAbis post onError locals remaining =
+      actionPre (forIn locals remaining (fun idx remaining => do
+        let arg ← Call.at? args idx "missing vararg"
+        let abi ← Call.at? callerAbis idx "missing vararg ABI"
+        pure (.yield (remaining.push (arg, abi))))) post onError := by
+  induction locals generalizing remaining with
+  | nil => rfl
+  | cons idx rest ih =>
+    simp only [collectVarargsPre, List.forIn_cons, atPre_eq_actionPre, actionPre_bind_fun,
+      actionPre_pure_fun, ih]
+
+/-- Pullback of a call hook's retag scope. Abstract hooks may use the action
+directly. Canonical hooks can use the body pullback and expose both restorations. -/
+set_option autoImplicit false in
+structure RetagPullback (hooks : Hooks) (choice : C) where
+  pull {A : Type} (mode : RetagMode) (action : CallM S A)
+    (body : (A → S → Prop) → Errors → S → Prop) :
+    (A → S → Prop) → Errors → S → Prop
+  exact_pull {A : Type} (mode : RetagMode) (action : CallM S A)
+    (body : (A → S → Prop) → Errors → S → Prop) (exact_body : body = actionPre action) :
+    pull mode action body = actionPre (hooks.withRetagMode choice mode action)
+
+def abstractRetagPullback (hooks : Hooks) (choice : C) : RetagPullback hooks choice where
+  pull mode action _ := actionPre (hooks.withRetagMode choice mode action)
+  exact_pull _ _ _ _ := rfl
+
+def canonicalRetagPullback {K U O X Host : Type} [DecidableEq K]
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits) (choice : C) :
+    RetagPullback (ExecutionMachine.callHooks config limits) choice where
+  pull mode _ body := retagModePullback mode body
+  exact_pull mode action body exact_body := by
+    subst body
+    funext post onError before
+    exact (actionPre_withRetagMode mode action post onError before).symm
+
+/-- Allocate and copy the extra arguments in input order. The result holds
+the successful allocation prefix when it reaches the next slot. -/
+def allocateVarargsPre (hooks : Hooks) (choice : C)
+    (post : Array (MPlaceTy P) → S → Prop) (onError : Errors) :
+    List (FnArg P × ArgABI) → Array (MPlaceTy P) → S → Prop
+  | [], places => post places
+  | (arg, _) :: rest, places =>
+    let op := arg.copyFnArg
+    actionPre (hooks.allocateStack choice op.layout) (fun place =>
+      actionPre (hooks.copyToMemory choice op place) (fun _ =>
+        allocateVarargsPre hooks choice post onError rest (places.push place)) onError) onError
+
+private theorem allocateVarargsPre_eq_list (hooks : Hooks) (choice : C)
+    (post : Array (MPlaceTy P) → S → Prop) (onError : Errors) (args : List (FnArg P × ArgABI))
+    (places : Array (MPlaceTy P)) :
+    allocateVarargsPre hooks choice post onError args places =
+      actionPre (forIn args places (fun (arg, _) places => do
+        let op := arg.copyFnArg
+        let place ← hooks.allocateStack choice op.layout
+        hooks.copyToMemory choice op place
+        pure (.yield (places.push place)))) post onError := by
+  induction args generalizing places with
+  | nil => rfl
+  | cons arg rest ih =>
+    cases arg
+    simp only [allocateVarargsPre, List.forIn_cons, actionPre_bind_fun, actionPre_pure_fun, ih]
+
+theorem allocateVarargsPre_eq_actionPre (hooks : Hooks) (choice : C)
+    (args : Array (FnArg P × ArgABI)) :
+    (fun post onError => allocateVarargsPre hooks choice post onError args.toList #[]) =
+      actionPre (Call.allocateVarargs hooks choice args) := by
+  funext post onError
+  simp [Call.allocateVarargs, ← Array.forIn_toList, allocateVarargsPre_eq_list, -bind_pure_comp]
+
+/-- The variadic local is initialized before checking the remaining ABI
+records. The resulting allocations are installed before writing the key. -/
+def vaListPre (hooks : Hooks) (choice : C) (scope : RetagPullback hooks choice) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (dest : Place) (indices : Nat × Nat)
+    (post : (Nat × Nat) → S → Prop) (onError : Errors) : S → Prop :=
+  actionPre (hooks.storageLiveDyn choice dest.localId .none) (fun _ =>
+    actionPre (hooks.evalPlace choice dest false) (fun evaluated =>
+      actionPre (hooks.forceAllocation choice evaluated) (fun mplace =>
+        collectVarargsPre args callerAbis (fun remaining =>
+          if indices.2 == calleeAbis.size then
+            scope.pull .None (Call.allocateVarargs hooks choice remaining)
+              (fun success failure => allocateVarargsPre hooks choice success failure remaining.toList #[])
+              (fun varargs =>
+                actionPre hooks.getFrame (fun frame =>
+                  actionPre (hooks.setFrame { frame with vaList := varargs.map fun place =>
+                      ⟨place.mplace, localMemoryLayout place.layout⟩ }) (fun _ =>
+                    actionPre (hooks.vaListPtr choice varargs) (fun key =>
+                      actionPre (hooks.writeZeroBytes choice mplace.mplace.ptr mplace.layout.layout.size)
+                        (fun _ =>
+                          actionPre (hooks.vaListKeyField choice mplace) (fun keyPlace =>
+                            actionPre (hooks.writePointerToMemory choice key keyPlace)
+                              (fun _ => post (args.size, indices.2)) onError) onError) onError)
+                      onError) onError) onError) onError
+          else onError (.invalidProgram "excess variadic callee ABI")) onError
+          (List.range' indices.1 (args.size - indices.1)) #[]) onError) onError) onError
+
+/-- Pull back a local's entry effects in diagnostic and ABI order. -/
+def frameArgumentStepPre (hooks : Hooks) (choice : C) (scope : RetagPullback hooks choice) (body : Body)
+    (nonCapturing : Bool) (vaListArg : Option LocalId) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (zeroIndex : Nat) (indices : Nat × Nat)
+    (post : (Nat × Nat) → S → Prop) (onError : Errors) : S → Prop :=
+  let localId := zeroIndex + 1
+  let dest : Place := ⟨localId, #[]⟩
+  actionPre (hooks.localSpan body localId) (fun span =>
+    setSpanPre hooks span
+      (actionPre (hooks.localLayout choice localId) (fun layout =>
+        if nonCapturing && localId == 1 then
+          closureSelfPre hooks choice body vaListArg args callerAbis calleeAbis localId indices post onError
+        else if vaListArg == some localId then
+          vaListPre hooks choice scope args callerAbis calleeAbis dest indices post onError
+        else if body.spreadArgument == some localId then
+          actionPre (hooks.storageLiveDyn choice localId .none) (fun _ =>
+            actionPre (hooks.tupleFields layout.ty) (fun fields =>
+              spreadFieldsPre hooks choice args callerAbis calleeAbis dest fields post onError
+                (List.range' 0 fields.size) indices) onError) onError
+        else ordinaryArgumentPre hooks choice args callerAbis calleeAbis indices.1 indices.2
+          dest layout.ty (post (indices.1 + 1, indices.2 + 1)) onError) onError) onError) onError
+
+theorem frameArgumentStepPre_eq_actionPre (hooks : Hooks) (choice : C) (scope : RetagPullback hooks choice) (body : Body)
+    (nonCapturing : Bool) (vaListArg : Option LocalId) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (zeroIndex : Nat) (indices : Nat × Nat)
+    (post : ForInStep (Nat × Nat) → S → Prop) (onError : Errors) :
+    frameArgumentStepPre hooks choice scope body nonCapturing vaListArg args callerAbis calleeAbis
+      zeroIndex indices (fun next => post (.yield next)) onError =
+    actionPre (Call.initFrameArgumentStep hooks choice body nonCapturing vaListArg args callerAbis calleeAbis
+      zeroIndex indices) post onError := by
+  rcases indices with ⟨callerIndex, calleeIndex⟩
+  simp only [frameArgumentStepPre, Call.initFrameArgumentStep, setSpanPre_eq_actionPre,
+    actionPre_bind_fun]
+  congr 1
+  funext span
+  congr 1
+  funext visited
+  congr 1
+  funext layout
+  split
+  · simp only [closureSelfPre, Call.require_eq, atPre_eq_actionPre,
+      actionPre_bind_fun, actionPre_ite, actionPre_pure_fun, actionPre_throw_fun]
+  · split
+    · simp [vaListPre, Call.require_eq, collectVarargsPre_eq,
+        scope.exact_pull _ _ _ (allocateVarargsPre_eq_actionPre hooks choice _),
+        Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size, Nat.div_one,
+        actionPre_bind_fun, actionPre_ite, actionPre_pure_fun, actionPre_throw_fun, -bind_pure_comp]
+    · split
+      · simp only [Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size,
+          Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, spreadFieldsPre_eq, actionPre_bind_fun,
+          actionPre_pure_fun, Prod.eta]
+        congr 1
+      · simp [ordinaryArgumentPre_eq_wp, ← actionPre_eq_wp, actionPre_bind_fun,
+          actionPre_pure_fun, -bind_pure_comp]
+
 /-- Pull back both continuations through a list of argument initialization
 steps. Each step supplies the next pair of ABI cursors. -/
 def frameArgumentsFoldPre
@@ -222,6 +471,53 @@ private theorem frameArgumentsFoldPre_eq_actionPre
     | done => rfl
     | yield next => exact ih next
 
+/-- Traverse the argument locals, passing successful cursor updates to the
+next local and preserving each failing hook's state. -/
+def frameArgumentsByLocalPre (hooks : Hooks) (choice : C) (scope : RetagPullback hooks choice) (body : Body)
+    (nonCapturing : Bool) (vaListArg : Option LocalId) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (post : (Nat × Nat) → S → Prop) (onError : Errors) :
+    List Nat → (Nat × Nat) → S → Prop
+  | [], indices => post indices
+  | zeroIndex :: rest, indices =>
+    frameArgumentStepPre hooks choice scope body nonCapturing vaListArg args callerAbis calleeAbis
+      zeroIndex indices
+      (frameArgumentsByLocalPre hooks choice scope body nonCapturing vaListArg args callerAbis calleeAbis
+        post onError rest) onError
+
+private theorem frameArgumentsByLocalPre_eq_actionPre (hooks : Hooks) (choice : C) (scope : RetagPullback hooks choice) (body : Body)
+    (nonCapturing : Bool) (vaListArg : Option LocalId) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (post : (Nat × Nat) → S → Prop) (onError : Errors)
+    (locals : List Nat) (indices : Nat × Nat) :
+    frameArgumentsByLocalPre hooks choice scope body nonCapturing vaListArg args callerAbis calleeAbis
+      post onError locals indices =
+      actionPre (forIn locals indices
+        (Call.initFrameArgumentStep hooks choice body nonCapturing vaListArg args callerAbis calleeAbis))
+        post onError := by
+  induction locals generalizing indices with
+  | nil => rfl
+  | cons zeroIndex rest ih =>
+    rw [List.forIn_cons, actionPre_bind_fun, frameArgumentsByLocalPre]
+    rw [← frameArgumentStepPre_eq_actionPre]
+    congr 1
+    funext next
+    exact ih next
+
+/-- The frame traversal exposes the pullbacks for all argument kinds. -/
+theorem frameArgumentsByLocalPre_eq_body (hooks : Hooks) (choice : C) (scope : RetagPullback hooks choice) (body : Body)
+    (nonCapturing : Bool) (vaListArg : Option LocalId) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (post : (Nat × Nat) → S → Prop) (onError : Errors) :
+    frameArgumentsByLocalPre hooks choice scope body nonCapturing vaListArg args callerAbis calleeAbis
+      post onError (List.range' 0 body.argumentCount) (0, 0) =
+    actionPre (Call.initFrameArgumentsBody hooks choice body nonCapturing vaListArg args callerAbis calleeAbis)
+      post onError := by
+  rw [frameArgumentsByLocalPre_eq_actionPre]
+  have noChange : (fun indices : Nat × Nat => (pure (indices.1, indices.2) : CallM S (Nat × Nat))) =
+      pure := by
+    funext indices
+    cases indices
+    rfl
+  simp [Call.initFrameArgumentsBody, noChange, -bind_pure_comp]
+
 /-- The traversal's actual argument step handles ordinary, closure self,
 variadic, and spread locals. This equation exposes the full iteration
 independently of which argument arm each local selects. -/
@@ -240,6 +536,30 @@ theorem frameArgumentsBodyPre_eq_actionPre (hooks : Hooks) (choice : C) (body : 
     cases indices
     rfl
   simp [Call.initFrameArgumentsBody, noChange, -bind_pure_comp]
+
+/-- Pull back entry argument initialization under the selected retag scope. -/
+def frameArgumentsPre (hooks : Hooks) (choice : C) (scope : RetagPullback hooks choice)
+    (body : Body) (nonCapturing : Bool) (vaListArg : Option LocalId) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (post : (Nat × Nat) → S → Prop) (onError : Errors) :
+    S → Prop :=
+  scope.pull .FnEntry
+    (Call.initFrameArgumentsBody hooks choice body nonCapturing vaListArg args callerAbis calleeAbis)
+    (fun success failure =>
+      frameArgumentsByLocalPre hooks choice scope body nonCapturing vaListArg args callerAbis calleeAbis
+        success failure (List.range' 0 body.argumentCount) (0, 0))
+    post onError
+
+theorem frameArgumentsPre_eq_actionPre (hooks : Hooks) (choice : C) (scope : RetagPullback hooks choice)
+    (body : Body) (nonCapturing : Bool) (vaListArg : Option LocalId) (args : Array (FnArg P))
+    (callerAbis calleeAbis : Array ArgABI) (post : (Nat × Nat) → S → Prop) (onError : Errors) :
+    frameArgumentsPre hooks choice scope body nonCapturing vaListArg args callerAbis calleeAbis
+      post onError =
+    actionPre (Call.initFrameArguments hooks choice body nonCapturing vaListArg args callerAbis calleeAbis)
+      post onError := by
+  unfold frameArgumentsPre Call.initFrameArguments
+  rw [scope.exact_pull]
+  funext success failure
+  apply frameArgumentsByLocalPre_eq_body
 
 /-- The canonical call hook exposes the retag restoration continuations for
 every argument traversal, including closure self, variadic, and spread locals. -/
@@ -314,11 +634,12 @@ theorem finishFramePre_eq_actionPre (hooks : Hooks) (choice : C) (body : Body)
       split <;> (first | rfl | split <;> rfl)
 
 /-- Frame preflight, raw push, argument initialization, and frame completion.
-The traversal retains its scoped retag action, including the state it returns on failure. -/
+The supplied scope determines how the argument predicates restore retag mode. -/
 def initStackFramePre (hooks : Hooks) (choice : C) (fnInstance : CallInstance) (loadedBody : LoadedBody)
     (callerFnAbi : FnABI) (args : Array (FnArg P)) (withCallerLocation : Bool)
     (destination : RuntimeStackPlace P) (cont : ReturnContinuation)
-    (post : S → Prop) (onError : Errors) : S → Prop :=
+    (post : S → Prop) (onError : Errors)
+    (scope : RetagPullback hooks choice := abstractRetagPullback hooks choice) : S → Prop :=
   let enter (requiresLocation : Bool) (callerLocation : Option SpanRef) :=
     actionPre (hooks.fnAbiOfInstance choice fnInstance #[]) (fun calleeFnAbi computed =>
       if !hooks.sameConvention callerFnAbi calleeFnAbi then
@@ -347,8 +668,8 @@ def initStackFramePre (hooks : Hooks) (choice : C) (fnInstance : CallInstance) (
                     actionPre (hooks.nonCapturingClosure choice fnInstance calleeFnAbi) (fun nonCapturing afterClosure =>
                       if args.size + (if withCallerLocation then 1 else 0) != callerAbis.size then
                         onError (.invalidProgram "mismatch between caller ABI and arguments") afterClosure
-                      else actionPre (Call.initFrameArguments hooks choice body nonCapturing vaListArg
-                        args callerAbis calleeAbis)
+                      else frameArgumentsPre hooks choice scope body nonCapturing vaListArg
+                        args callerAbis calleeAbis
                         (fun indices => finishFramePre hooks choice body callerFnAbi calleeFnAbi args
                           requiresLocation calleeAbis destinationOp preamble indices post onError)
                         onError afterClosure) onError) onError afterFrame) onError) onError) onError) onError
@@ -363,14 +684,16 @@ def initStackFramePre (hooks : Hooks) (choice : C) (fnInstance : CallInstance) (
 theorem initStackFramePre_eq_wp (hooks : Hooks) (choice : C) (fnInstance : CallInstance)
     (loadedBody : LoadedBody) (callerFnAbi : FnABI) (args : Array (FnArg P)) (withCallerLocation : Bool)
     (destination : RuntimeStackPlace P) (cont : ReturnContinuation)
-    (post : S → Prop) (onError : Errors) :
+    (post : S → Prop) (onError : Errors)
+    (scope : RetagPullback hooks choice := abstractRetagPullback hooks choice) :
     initStackFramePre hooks choice fnInstance loadedBody callerFnAbi args withCallerLocation destination cont
-      post onError =
+      post onError scope =
     wp (Call.initStackFrame hooks choice fnInstance loadedBody callerFnAbi args withCallerLocation
       destination cont) (fun _ => post) onError := by
   rw [← actionPre_eq_wp]
   simp only [initStackFramePre, Call.initStackFrame, actionPre_bind_fun, actionPre_ite,
-    actionPre_pure_fun, actionPre_throw_fun, Call.require_eq, finishFramePre_eq_actionPre]
+    actionPre_pure_fun, actionPre_throw_fun, Call.require_eq, finishFramePre_eq_actionPre,
+    frameArgumentsPre_eq_actionPre]
   congr 1
   funext required queried
   cases required <;> cases withCallerLocation <;>
