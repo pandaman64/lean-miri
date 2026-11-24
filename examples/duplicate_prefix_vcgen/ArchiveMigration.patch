@@ -2207,3 +2207,162 @@
 @@ -265 +265 @@
 -    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
 +    (present : ambient.machine.memory.live[id]? = some entry)
+--- a/examples/duplicate_prefix/RootConstantStage.lean
++++ b/examples/duplicate_prefix/RootConstantStage.lean
+@@ -12 +12 @@
+-def zeroConstant : ConstOperand := ⟨⟨25⟩, none, .Val (.Scalar (.Int 0 8)) 5⟩
++def zeroConstant : ConstOperand := ⟨⟨25⟩, none, .Val (.Scalar (.Int 0 8)) 4⟩
+@@ -26 +26 @@
+-      ⟨⟨25⟩, none, .Val (.Scalar (.Int 0 8)) 5⟩ (some RootCompilerFacts.usizeLayout) none
++      ⟨⟨25⟩, none, .Val (.Scalar (.Int 0 8)) 4⟩ (some RootCompilerFacts.usizeLayout) none
+@@ -30,2 +30 @@
+-  simp only [ConstantMachine.evalOperandWithLayout, ConstantMachine.evalValueWithLayout, Option.map_none]
+-  rw [ConstantValueProof.scalar_zero]
++  with_unfolding_all rfl
+--- a/examples/duplicate_prefix/RootCopyCount.lean
++++ b/examples/duplicate_prefix/RootCopyCount.lean
+@@ -43 +43 @@
+-  have normalized : CompilerFrameContext.localType PreparedReflection.actual.compiler frame 5 = .ok 5 := by
++  have normalized : CompilerFrameContext.localType PreparedReflection.actual.compiler frame 5 = .ok 4 := by
+@@ -53 +53 @@
+-  have queried : PreparedReflection.actual.compiler.runtime.lookup 5 = .ok RootCompilerFacts.usizeLayout := by
++  have queried : PreparedReflection.actual.compiler.runtime.lookup 4 = .ok RootCompilerFacts.usizeLayout := by
+--- a/examples/duplicate_prefix/RootZeroSwitch.lean
++++ b/examples/duplicate_prefix/RootZeroSwitch.lean
+@@ -1 +0,0 @@
+-import duplicate_prefix.RootBlock0
+--- a/examples/duplicate_prefix/RootZeroCompleteState.lean
++++ b/examples/duplicate_prefix/RootZeroCompleteState.lean
+@@ -1 +1,3 @@
+-import duplicate_prefix.RootBlock0
++import duplicate_prefix.RootPrefix
++import duplicate_prefix.RootCopyCount
++import duplicate_prefix.RootEqStepSuccess
+@@ -54,3 +56,3 @@
+-    (valid : id < frame.locals.size) (all : CopyHelperCleanup.AllImmediate frame) :
+-    CopyHelperCleanup.AllImmediate (SourceSteps.liveFrame frame location id valid) :=
+-  CopyHelperCleanup.all_immediate_set frame id _ valid all (by intro memory;simp)
++    (valid : id < frame.locals.size) (all : ZeroImmediateFacts.AllImmediate frame) :
++    ZeroImmediateFacts.AllImmediate (SourceSteps.liveFrame frame location id valid) :=
++  ZeroImmediateFacts.all_immediate_set frame id _ valid all (by intro memory;simp)
+@@ -59,4 +61,4 @@
+-    (n : UInt64) (all : CopyHelperCleanup.AllImmediate frame) :
+-    CopyHelperCleanup.AllImmediate (RootCopyCount.postFrame frame valid n) := by
+-  apply CopyHelperCleanup.all_immediate_set (LocalPlaces.cachePlaceLayout frame 5 RootCompilerFacts.usizeLayout valid) 5 _ (by simpa [LocalPlaces.cachePlaceLayout] using valid)
+-    (CopyHelperCleanup.all_immediate_cache frame 5 RootCompilerFacts.usizeLayout valid all)
++    (n : UInt64) (all : ZeroImmediateFacts.AllImmediate frame) :
++    ZeroImmediateFacts.AllImmediate (RootCopyCount.postFrame frame valid n) := by
++  apply ZeroImmediateFacts.all_immediate_set (LocalPlaces.cachePlaceLayout frame 5 RootCompilerFacts.usizeLayout valid) 5 _ (by simpa [LocalPlaces.cachePlaceLayout] using valid)
++    (ZeroImmediateFacts.all_immediate_cache frame 5 RootCompilerFacts.usizeLayout valid all)
+@@ -67,4 +69,4 @@
+-    (n : UInt64) (all : CopyHelperCleanup.AllImmediate frame) :
+-    CopyHelperCleanup.AllImmediate (RootEqStepSuccess.postFrame frame valid n) := by
+-  apply CopyHelperCleanup.all_immediate_set (LocalPlaces.cachePlaceLayout frame 4 RootCompilerFacts.boolLayout valid) 4 _ (by simpa [LocalPlaces.cachePlaceLayout] using valid)
+-    (CopyHelperCleanup.all_immediate_cache frame 4 RootCompilerFacts.boolLayout valid all)
++    (n : UInt64) (all : ZeroImmediateFacts.AllImmediate frame) :
++    ZeroImmediateFacts.AllImmediate (RootEqStepSuccess.postFrame frame valid n) := by
++  apply ZeroImmediateFacts.all_immediate_set (LocalPlaces.cachePlaceLayout frame 4 RootCompilerFacts.boolLayout valid) 4 _ (by simpa [LocalPlaces.cachePlaceLayout] using valid)
++    (ZeroImmediateFacts.all_immediate_cache frame 4 RootCompilerFacts.boolLayout valid all)
+@@ -75 +77 @@
+-    (all : CopyHelperCleanup.AllImmediate frame) : CopyHelperCleanup.AllImmediate (guardFrame frame size) := by
++    (all : ZeroImmediateFacts.AllImmediate frame) : ZeroImmediateFacts.AllImmediate (guardFrame frame size) := by
+--- a/examples/duplicate_prefix/RootZeroCompleteBranch.lean
++++ b/examples/duplicate_prefix/RootZeroCompleteBranch.lean
+@@ -2 +2,2 @@
+-import duplicate_prefix.CopyHelperCleanup
++import duplicate_prefix.ZeroImmediateFacts
++import duplicate_prefix.SourceSteps
+@@ -18 +19 @@
+-    (allImmediate : CopyHelperCleanup.AllImmediate frame)
++    (allImmediate : ZeroImmediateFacts.AllImmediate frame)
+@@ -50 +51 @@
+-      CopyHelperCleanup.AllImmediate f4 ∧
++      ZeroImmediateFacts.AllImmediate f4 ∧
+@@ -112,5 +113,5 @@
+-  have all1 : CopyHelperCleanup.AllImmediate f1 :=
+-    CopyHelperCleanup.all_immediate_set frame 5 _ v5 allImmediate (by intro memory;simp)
+-  have allWritten : CopyHelperCleanup.AllImmediate written := by
+-    apply CopyHelperCleanup.all_immediate_set (RootZeroSwitch.cacheReturnLayout f1 v10) 0 _ _
+-      (CopyHelperCleanup.all_immediate_cache f1 0 RootCompilerFacts.boolLayout v10 all1)
++  have all1 : ZeroImmediateFacts.AllImmediate f1 :=
++    ZeroImmediateFacts.all_immediate_set frame 5 _ v5 allImmediate (by intro memory;simp)
++  have allWritten : ZeroImmediateFacts.AllImmediate written := by
++    apply ZeroImmediateFacts.all_immediate_set (RootZeroSwitch.cacheReturnLayout f1 v10) 0 _ _
++      (ZeroImmediateFacts.all_immediate_cache f1 0 RootCompilerFacts.boolLayout v10 all1)
+@@ -119,5 +120,5 @@
+-  have all2 : CopyHelperCleanup.AllImmediate f2 := allWritten
+-  have all3 : CopyHelperCleanup.AllImmediate f3 :=
+-    CopyHelperCleanup.all_immediate_set f2 4 _ v24 all2 (by intro memory;simp)
+-  have all4 : CopyHelperCleanup.AllImmediate f4 :=
+-    CopyHelperCleanup.all_immediate_set f3 3 _ v33 all3 (by intro memory;simp)
++  have all2 : ZeroImmediateFacts.AllImmediate f2 := allWritten
++  have all3 : ZeroImmediateFacts.AllImmediate f3 :=
++    ZeroImmediateFacts.all_immediate_set f2 4 _ v24 all2 (by intro memory;simp)
++  have all4 : ZeroImmediateFacts.AllImmediate f4 :=
++    ZeroImmediateFacts.all_immediate_set f3 3 _ v33 all3 (by intro memory;simp)
+--- a/examples/duplicate_prefix/RootZeroCompletePrefix.lean
++++ b/examples/duplicate_prefix/RootZeroCompletePrefix.lean
+@@ -1,0 +2 @@
++import duplicate_prefix.RootBlock0
+@@ -15 +16 @@
+-    (frame : CompilerFrameContext.ActualFrame) (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
++    (older : Array CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame) (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+@@ -26 +27 @@
+-    (noClocks : frame.extra.dataRace=none) (all : CopyHelperCleanup.AllImmediate frame)
++    (noClocks : frame.extra.dataRace=none) (all : ZeroImmediateFacts.AllImmediate frame)
+@@ -34,2 +35,2 @@
+-      SuccessfulTrace.Trace config limits (Storage.withCurrent #[] frame machine)
+-        (Storage.withCurrent #[] result (tick options remaining span (tick options remaining span machine))) ∧
++      SuccessfulTrace.Trace config limits (Storage.withCurrent older frame machine)
++        (Storage.withCurrent older result (tick options remaining span (tick options remaining span machine))) ∧
+@@ -41 +42 @@
+-      CopyHelperCleanup.AllImmediate result := by
++      ZeroImmediateFacts.AllImmediate result := by
+@@ -45 +46 @@
+-    options limits remaining span source debugOff #[] frame machine 0 body identity location callee size dead3 dead4 dead5
++    options limits remaining span source debugOff older frame machine 0 body identity location callee size dead3 dead4 dead5
+@@ -47 +48 @@
+-  have last : s5 = Storage.withCurrent #[] guard machine := by simpa only [guard,guardFrame] using lastEq
++  have last : s5 = Storage.withCurrent older guard machine := by simpa only [guard,guardFrame] using lastEq
+@@ -66 +67 @@
+-  have switch := RootZeroCompleteSwitch.switch_exact options limits remaining span debugOff #[] guard machine 0
++  have switch := RootZeroCompleteSwitch.switch_exact options limits remaining span debugOff older guard machine 0
+@@ -71,2 +72,2 @@
+-  have switch' : ExecutionMachine.step config limits () (Storage.withCurrent #[] guard machine) =
+-      (Storage.withCurrent #[] branch next,.ok true) := by simpa only [branch,next,tick,config,SourceControl.accounted,Storage.withCurrent,beq_self_eq_true,↓reduceIte] using switch
++  have switch' : ExecutionMachine.step config limits () (Storage.withCurrent older guard machine) =
++      (Storage.withCurrent older branch next,.ok true) := by simpa only [branch,next,tick,config,SourceControl.accounted,Storage.withCurrent,beq_self_eq_true,↓reduceIte] using switch
+@@ -78 +79 @@
+-    RootZeroCompleteBranch.branch_exact options limits remaining span source debugOff fuel fuelEq #[] branch next
++    RootZeroCompleteBranch.branch_exact options limits remaining span source debugOff fuel fuelEq older branch next
+@@ -83,2 +84,2 @@
+-  have trace : SuccessfulTrace.Trace config limits (Storage.withCurrent #[] frame machine)
+-      (Storage.withCurrent #[] result (tick options remaining span next)) :=
++  have trace : SuccessfulTrace.Trace config limits (Storage.withCurrent older frame machine)
++      (Storage.withCurrent older result (tick options remaining span next)) :=
+--- a/examples/duplicate_prefix/ScalarCopyStage.lean
++++ b/examples/duplicate_prefix/ScalarCopyStage.lean
+@@ -30 +30 @@
+-  simp [CompilerCovariance.compatible, CompilerCovariance.relation, CompilerCovariance.relationWithIndex,
++  simp [CompilerCovariance.compatible, CompilerCovariance.relation,
+@@ -74 +74 @@
+-  unfold_internal ".Miri.Interpreter.isPrimitiveReadable"
++  unfold Miri.Interpreter.isPrimitiveReadable
+@@ -76 +76 @@
+-  simp [ValidityMachine.memoryEnvironment, localMemoryLayout, repr, Miri.Interpreter.readImmediateRaw,
++  simp [ValidityMachine.memoryEnvironment, localMemoryLayout, repr, Miri.Interpreter.readImmediateRaw, Miri.Interpreter.finishImmediateRead,
+@@ -399,2 +399,2 @@
+-  unfold_internal ".PlaceMachine.commit"
+-  unfold_internal ".PlaceMachine.finish"
++  unfold PlaceMachine.commit
++  unfold PlaceMachine.finish
+--- a/examples/duplicate_prefix/RootUsizeWrite.lean
++++ b/examples/duplicate_prefix/RootUsizeWrite.lean
+@@ -50 +50 @@
+-  have typeEq : RootCompilerFacts.usizeLayout.ty = 5 := by decide +kernel
++  have typeEq : RootCompilerFacts.usizeLayout.ty = 4 := by decide +kernel
+--- a/examples/duplicate_prefix/SourceControl.lean
++++ b/examples/duplicate_prefix/SourceControl.lean
+@@ -88 +88 @@
+-  simp only [evaluation]
++  simp only [ControlFlow.evalSwitchInt, ControlFlow.selectSwitchTarget, evaluation]

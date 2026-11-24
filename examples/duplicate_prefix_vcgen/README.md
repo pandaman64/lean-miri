@@ -137,6 +137,9 @@ LEAN_PATH="$PWD/scratch/duplicate-prefix-vcgen:$PWD/scratch/duplicate-prefix-arc
 
 `--target ArchiveTraceToVC` checks the bridge from a separately proved
 returning trace to the current VC.
+`--target RootZeroCompletePrefix` checks the current zero-count root from
+entry through the selected `Return` under its stated canonical Shallow machine
+premises, with any surrounding frame array.
 `--target RootZeroComplete` selects the larger proof closure for migration work.
 
 The optional `RetagFrozenChild` target checks actual child insertion and

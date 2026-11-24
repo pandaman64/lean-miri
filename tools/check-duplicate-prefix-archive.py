@@ -27,6 +27,7 @@ LOCAL = {
     "ActiveReleaseOwned", "ActiveReleaseRange", "ActiveStackRelease", "RootCompilerCore",
     "ArchiveForestProjection", "ExclusiveConcreteRange", "ExclusiveCopyRanges", "ExclusiveCopyStep",
     "ArchiveTraceToVC", "RootLocalChecks", "HelperAbiLayouts", "RetagRangeFrame", "RetagLocationFrame", "RetagFrozenChild",
+    "ZeroImmediateFacts",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 ALLOWED = {"propext", "Quot.sound", "Classical.choice"}
