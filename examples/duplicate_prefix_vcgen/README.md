@@ -156,6 +156,12 @@ python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
   --output "$PWD/scratch/duplicate-prefix-all-count"
 ```
 
+[PreparedCallWitness.lean](PreparedCallWitness.lean) constructs a two-byte
+prepared slice with count one and a cached Boolean return. Lean checks the
+caller profile, Tree Borrows permissions and resources, and the exact emitted
+safety condition for that state. Add `--client PreparedCallWitness` to the
+checker invocation to rebuild the witness.
+
 ### Zero count with either return destination
 
 [VerifyZeroPhysicalCanonical.lean](VerifyZeroPhysicalCanonical.lean) proves

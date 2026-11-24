@@ -5119,7 +5119,9 @@
 +  simp [ControlFlow.evalCall, effect, progress]
 --- a/examples/duplicate_prefix/MetadataEvaluateCall.lean
 +++ b/examples/duplicate_prefix/MetadataEvaluateCall.lean
-@@ -1,0 +2 @@
+@@ -0,0 +1 @@
++import duplicate_prefix.SliceLenFacts
+@@ -1,0 +3 @@
 +import duplicate_prefix.RootPointerCopy
 --- a/examples/duplicate_prefix/MetadataCallTerminator.lean
 +++ b/examples/duplicate_prefix/MetadataCallTerminator.lean
