@@ -181,7 +181,10 @@ lean -j1 examples/duplicate_prefix_vcgen/RootRejectedAfterLen.lean
 
 `--target RootLenPrefix` checks the root's nonzero-count path from basic
 block 2 to the shared-slice length preparation, preserving the live pointer
-and machine state.
+and machine state. `--target RootCurrentDecision` checks the downstream
+comparison and branch from its prepared live length and count locals.
+`--target RootMutPreparation` checks the statements that lead to mutable
+slice preparation on the accepted path.
 
 `--target RootRejectedPrefix` checks the too-large-count path after the
 length call, including the division guard, comparison, false result, and
