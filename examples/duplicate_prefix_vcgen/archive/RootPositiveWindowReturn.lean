@@ -75,7 +75,7 @@ theorem released_slot_of_rights
   obtain ⟨tree, exactRelease, shape, formed, size, owners⟩ :=
     CanonicalCallDomain.physicalReleasePreservesParent slot.entry.allocation.extra tracker.global owned slot.protectedTag
       holder parent holderNode (Size.ofBytes slot.offset) holderKey present tagMatches edge unexposed coherent extent ownedTag grant
-  obtain ⟨root, roots⟩ := extent.root
+  obtain ⟨root, roots⟩ := extent.root (by decide)
   refine ⟨⟨tree,exactRelease,parent,root,parentNode,?_,?_,?_,formed,?_,owners⟩⟩
   · rw [shape]
     exact sourceNode

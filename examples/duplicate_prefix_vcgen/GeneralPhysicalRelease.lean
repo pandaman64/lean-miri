@@ -40,7 +40,7 @@ theorem physicalSlotReleaseOfRights
       start.bytes (start.bytes + 1) entry.allocation.extra.locations) :
     ∃ final, StackPopRelease.Plan tags [(id, tag)] memory final := by
   let tree := entry.allocation.extra
-  obtain ⟨root, roots⟩ := extent.root
+  obtain ⟨root, roots⟩ := extent.root (by decide)
   obtain ⟨rank, bounded, decreases⟩ := coherent.parentDepth
   let depth : GeneralBorrowExposure.ParentDepth tree.nodes := ⟨rank, bounded, by
     intro index child atIndex parent edge

@@ -43,7 +43,7 @@ theorem Admitted.zeroPhysicalPlan {program options remaining headroom span befor
       admitted.sliceProtector empty
     have sameTracker : region.tracker = tracker := Option.some.inj (region.tracked.symm.trans tracked)
     obtain ⟨holderNode, found, hidden⟩ := source
-    obtain ⟨root, roots⟩ := extent.root
+    obtain ⟨root, roots⟩ := extent.root empty
     let tree := storage.entry.allocation.extra
     have owners := ExclusiveRegion.ownsRows region extent
     rw [sameTracker] at owners

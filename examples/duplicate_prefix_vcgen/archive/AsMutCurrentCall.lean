@@ -99,11 +99,11 @@ theorem call
     code (CallEntryLocals.get_frame options limits remaining span frames caller machine) oldIndex placed evaluated
   · have canUnwind : h.abiCanUnwind HelperCompilerFacts.asMutPtrAbi = false := AsMutCallFacts.abi_flags.2.1
     simpa only [dispatchFuel, Option.any, canUnwind, Bool.false_eq_true, ite_false] using dispatched
-  · exact newIndex
-  · omega
   · change (do let state ← get; pure state.stack.frames.isEmpty : MachineHooks.M MiriMemoryKind Machine.RootUser Bool) after = _
     simp [after, Storage.withCurrent, Array.isEmpty_push, get, getThe, MonadStateOf.get, EStateM.get,
       bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+  · exact newIndex
+  · omega
 
 noncomputable def charged (options : EvalConfigurationCore.Options) (remaining : Nat)
     (span : PreparedContracts.FixedSpanQuery)

@@ -1194,7 +1194,8 @@ vector-clock backend.
   and tag capacity premises, with either supported Boolean return. Both
   appended and recycled Tree Borrows keys are covered. The combined proof
   covers integer-address, unresolved wildcard, and concretely backed empty
-  inputs. A nonzero count with a backed empty source and physical output
+  inputs, including backed empty forests with multiple roots. A nonzero
+  count with a backed empty source and physical output
   requires distinct source and output allocations. Resolving wildcard
   frames and empty source/output aliasing remain open.
 

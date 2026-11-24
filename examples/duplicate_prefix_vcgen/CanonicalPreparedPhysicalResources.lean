@@ -44,7 +44,7 @@ theorem nonemptyPhysical
     exact UInt64.lt_irrefl _ positive
   obtain ⟨storage,tag,base,loan,_,concrete,pointerNat,address,_,_,_,⟨node,found,_⟩,scope⟩ :=
     admitted.sliceProtector nonempty
-  obtain ⟨root,roots⟩ := scope.root
+  obtain ⟨root,roots⟩ := scope.root nonempty
   have live : machine.memory.live[storage.id]? = some storage.entry := storage.live
   have addr : machine.user.addresses.baseAddr.find? (fun row => row.allocId == storage.id) =
       some ⟨storage.id,base⟩ := address

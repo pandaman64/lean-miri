@@ -189,7 +189,7 @@ theorem zeroCountPhysical
     change afterTree.nodeAt source = some originalSource
     rw [treeFrame]
     exact sourceHere
-  obtain ⟨root, rootEq⟩ := extent.root
+  obtain ⟨root, rootEq⟩ := extent.root (by decide)
   have roots : window.entry.allocation.extra.roots = #[root] := by
     change afterTree.roots = #[root]
     rw [treeFrame]

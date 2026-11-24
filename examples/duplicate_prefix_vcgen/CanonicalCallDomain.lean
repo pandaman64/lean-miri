@@ -52,11 +52,12 @@ def argumentLedger (pointer : Pointer (Option Provenance)) : Array (AllocId × B
   | some (.concrete id tag) => #[(id, tag)]
   | _ => #[]
 
-/-- Initial range-map shape of a call-owned tag. The actual release still
-checks access rights after the body effects. -/
+/-- Initial range-map shape of a call-owned tag. A nonempty release may
+visit bytes and uses the single-root access proof. A dormant zero-length
+tag can be released in any coherent forest. -/
 structure ReleaseRange (tree : BorrowTree) (holder : UniIndex) (start : Size)
     (length : UInt64) : Prop where
-  root : ∃ onlyRoot, tree.roots = #[onlyRoot]
+  root : length ≠ 0 → ∃ onlyRoot, tree.roots = #[onlyRoot]
   extent : start.bytes.toNat + length.toNat ≤ tree.locations.size.bytes.toNat
   materialized : ∀ segment ∈ tree.locations.entries,
     (segment.data.perms.get holder).isSome = true →

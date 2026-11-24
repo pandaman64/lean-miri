@@ -38,7 +38,7 @@ theorem physicalReleasePreservesParent
       after.locations.size = tree.locations.size ∧
       OwnedOn (fun row => LocationRights after row (global.endCall frame).protectedTags parent)
         start.bytes (start.bytes + 1) after.locations := by
-  obtain ⟨root, roots⟩ := extent.root
+  obtain ⟨root, roots⟩ := extent.root (by decide)
   obtain ⟨after, release, shape, afterCoherent, size, parentRights⟩ :=
     PhysicalSlotReleaseRights.release tree global.protectedTags tag holder parent root node found tagMatches
       edge unexposed known coherent roots start.bytes (start.bytes + 1) extent.materializedWithin

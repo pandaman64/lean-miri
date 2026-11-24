@@ -3824,21 +3824,74 @@
 +    false (.DivisionByZero (.Copy ⟨11,#[]⟩)) 4 .Unreachable accounted accounted RootCompilerFacts.boolLayout kind read
 --- a/examples/duplicate_prefix/EmptyRootSafetyPrelude.lean
 +++ b/examples/duplicate_prefix/EmptyRootSafetyPrelude.lean
-@@ -4 +4,2 @@
+@@ -0,0 +1 @@
++import duplicate_prefix.CopyHelperCleanup
+@@ -4 +5,2 @@
 -import duplicate_prefix.CopyHelperCleanup
 +import duplicate_prefix.ZeroImmediateFacts
 +import duplicate_prefix.SourceSteps
-@@ -19 +20 @@
+@@ -11 +13 @@
+-theorem executes
++theorem executesWithCaller
+@@ -19 +21 @@
 -    (allImmediate : CopyHelperCleanup.AllImmediate frame)
 +    (allImmediate : ZeroImmediateFacts.AllImmediate frame)
-@@ -40 +41 @@
+@@ -40 +42 @@
 -      CopyHelperCleanup.AllImmediate resultFrame ∧
 +      ZeroImmediateFacts.AllImmediate resultFrame ∧
-@@ -75,2 +76,2 @@
+@@ -47 +49,2 @@
+-      resultFrame.locals[13]? = some ⟨.live (.immediate (.scalar (.fromBool false))),some RootCompilerFacts.boolLayout⟩ := by
++      resultFrame.locals[13]? = some ⟨.live (.immediate (.scalar (.fromBool false))),some RootCompilerFacts.boolLayout⟩ ∧
++      resultFrame.trackCallerArg = frame.trackCallerArg := by
+@@ -75,2 +78,2 @@
 -  have all1 : CopyHelperCleanup.AllImmediate f1 := CopyHelperCleanup.all_immediate_set frame 12 _ v12 allImmediate (by intro memory;simp)
 -  have all2 : CopyHelperCleanup.AllImmediate f2 := CopyHelperCleanup.all_immediate_written f1 13 RootCompilerFacts.boolLayout
 +  have all1 : ZeroImmediateFacts.AllImmediate f1 := ZeroImmediateFacts.all_immediate_set frame 12 _ v12 allImmediate (by intro memory;simp)
-+  have all2 : ZeroImmediateFacts.AllImmediate f2 := ZeroImmediateFacts.all_immediate_written f1 13 RootCompilerFacts.boolLayout
++  have all2 : ZeroImmediateFacts.AllImmediate f2 := CopyHelperCleanup.all_immediate_written f1 13 RootCompilerFacts.boolLayout
+@@ -83,0 +87,43 @@
++theorem executes
++    (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
++    (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
++    (source : PreparedContracts.SourceComparator)
++    (debugOff : options.place.debugAssertions = false) (fuel : Nat)
++    (validationFuel : options.limits.validation = fuel+1)
++    (framesBefore : Array CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame)
++    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
++    (allImmediate : ZeroImmediateFacts.AllImmediate frame)
++    (size : frame.locals.size = 25)
++    (temp12 : Immediate Provenance)
++    (live12 : (frame.locals[12]'(by omega)).value = .live (.immediate temp12))
++    (live13 : (frame.locals[13]'(by omega)).value = .live (.immediate .uninit))
++    (uncached13 : (frame.locals[13]'(by omega)).layout = none)
++    (body : frame.body = RootBody.reflected.body.body)
++    (identity : frame.bodyIdentity = RootBody.reflected.body.identity)
++    (callee : frame.functionInstance = RootBody.reflected.functionInstance)
++    (location : frame.location = .mir ⟨3,0⟩)
++    (noClocks : frame.extra.dataRace = none)
++    (ghostFalse : machine.user.payload.ghost = false)
++    (shallow : machine.user.payload.validation = .Shallow)
++    (unchecked : ((PreparedContracts.actualConfig options () (remaining+1) span).terminators.getControl machine.user).checkedArithmetic = false)
++    (noGc : ((PreparedContracts.actualConfig options () (remaining+1) span).terminators.getControl machine.user).gcInterval = 0)
++    (fixed : machine.threads.fixedScheduling = true) :
++    let config := PreparedContracts.actualConfig options () (remaining+1) span
++    ∃ resultFrame : CompilerFrameContext.ActualFrame,
++      SuccessfulTrace.Trace config limits (Storage.withCurrent framesBefore frame machine)
++        (Storage.withCurrent framesBefore {resultFrame with location := .mir ⟨4,0⟩}
++          (SourceControl.accounted config.terminators (Storage.withCurrent framesBefore resultFrame machine)).machine) ∧
++      ZeroImmediateFacts.AllImmediate resultFrame ∧
++      resultFrame.body = frame.body ∧ resultFrame.bodyIdentity = frame.bodyIdentity ∧
++      resultFrame.functionInstance = frame.functionInstance ∧ resultFrame.extra = frame.extra ∧
++      resultFrame.returnPlace = frame.returnPlace ∧ resultFrame.returnContinuation = frame.returnContinuation ∧
++      resultFrame.vaList=frame.vaList ∧ resultFrame.localsIdentity=frame.localsIdentity ∧
++      resultFrame.locals.size = 25 ∧
++      (∀ id, id ≠ 12 → id ≠ 13 → resultFrame.locals[id]? = frame.locals[id]?) ∧
++      resultFrame.locals[13]? = some ⟨.live (.immediate (.scalar (.fromBool false))),some RootCompilerFacts.boolLayout⟩ := by
++  obtain ⟨done,trace,direct,bodyEq,idEq,calleeEq,extraEq,placeEq,contEq,argsEq,localsId,sz,kept,guard,_⟩ :=
++    executesWithCaller options limits remaining span source debugOff fuel validationFuel framesBefore frame machine
++      allImmediate size temp12 live12 live13 uncached13 body identity callee location noClocks ghostFalse shallow unchecked noGc fixed
++  exact ⟨done,trace,direct,bodyEq,idEq,calleeEq,extraEq,placeEq,contEq,argsEq,localsId,sz,kept,guard⟩
++
++#print axioms executesWithCaller
 --- a/examples/duplicate_prefix/EmptyRootSafetyGuard.lean
 +++ b/examples/duplicate_prefix/EmptyRootSafetyGuard.lean
 @@ -4 +4,2 @@
@@ -8238,3 +8291,7 @@
      (positive : 0 < count.toNat) (fits : count.toNat < 2^63)
      (bounds : offset.toNat + count.toNat ≤ entry.allocation.byteSize.bytes.toNat) :
      (ExecutionScalar.hooks queries access arithmetic isRaw usize pointee dereference floats).pointerBinary
+--- a/examples/duplicate_prefix/MetadataCalleeLeaves.lean
++++ b/examples/duplicate_prefix/MetadataCalleeLeaves.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.ProjectionMetadataFacts

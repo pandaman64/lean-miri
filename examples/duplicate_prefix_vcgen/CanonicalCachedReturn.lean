@@ -57,7 +57,7 @@ theorem Admitted.cachedActiveCaller
   subst borrowFrame
   have singleton : owned.protectedTags = #[(storage.id, tag)] := by simp [actualLedger, argumentLedger, pointerEq]
   obtain ⟨node, found, hidden⟩ := nodeWitness
-  obtain ⟨root, roots⟩ := extent.root
+  obtain ⟨root, roots⟩ := extent.root positive
   obtain ⟨rank, bounded, decreases⟩ := region.coherent.parentDepth
   let depth : GeneralBorrowExposure.ParentDepth storage.entry.allocation.extra.nodes :=
     ⟨rank, bounded, by

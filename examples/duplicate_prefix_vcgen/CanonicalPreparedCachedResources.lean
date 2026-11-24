@@ -48,7 +48,7 @@ theorem nonemptyCached
         rfl
   obtain ⟨storage,tag,base,loan,owned,concrete,pointerNat,address,frameLedger,_,_,⟨node,found,hidden⟩,scope⟩ :=
     admitted.sliceProtector nonempty
-  obtain ⟨root,roots⟩ := scope.root
+  obtain ⟨root,roots⟩ := scope.root nonempty
   have live : machine.memory.live[storage.id]? = some storage.entry := storage.live
   have addr : machine.user.addresses.baseAddr.find? (fun row => row.allocId == storage.id) =
       some ⟨storage.id,base⟩ := address
