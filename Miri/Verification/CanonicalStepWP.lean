@@ -1,6 +1,7 @@
 import Miri.Verification.StepWP
 import Miri.Interpreter.ExecutionMachine
 import Miri.Verification.RvalueWP
+import Miri.Verification.CallWP
 import Miri.Verification.ProtectorReleaseWP
 
 /-! Specialize the driver continuations to the assembled execution machine. -/
@@ -422,7 +423,8 @@ theorem canonical_dropEffect (config : Config) (limits : Limits) (choice : C)
 attribute [spec] assertConditionEffect assertPanicEffect dropEffect
 
 /-- Control-specific guards wrap the actual typed call, drop and assert
-actions. Call dispatch remains an effect boundary for the selected callee. -/
+actions. Call continuations track the dispatch budget and the stages of frame
+replacement. -/
 def selectedTerminatorPre (config : Config) (limits : Limits) (choice : C) (term : Terminator)
     (post : State → Prop) (onError : Errors) (before : State) : Prop :=
   let hooks := ExecutionMachine.terminatorHooks config limits
@@ -430,13 +432,13 @@ def selectedTerminatorPre (config : Config) (limits : Limits) (choice : C) (term
   let calls := ExecutionMachine.callHooks checked limits
   match term.kind with
   | .Call _ _ _ target .. =>
-    wp (Call.evalCallTerminator calls choice limits.callDispatch term) (fun _ after =>
+    CallWP.callPre calls choice limits.callDispatch term (fun after =>
       if target.isSome && after.stack.frames.size == before.stack.frames.size &&
           after.stack.currentFrame?.map (·.location) == before.stack.currentFrame?.map (·.location) then
         onError (.invalidProgram "evaluating this call made no progress") after
       else post after) onError before
   | .TailCall .. =>
-    wp (Call.evalTailCallTerminator calls choice limits.callDispatch term) (fun _ after =>
+    CallWP.tailCallPre calls choice limits.callDispatch term (fun after =>
       if after.stack.frames.size != before.stack.frames.size then
         onError (.invalidProgram "tail call changed frame index") after
       else post after) onError before
@@ -460,8 +462,12 @@ theorem selectedTerminatorPre_iff (config : Config) (limits : Limits) (choice : 
         choice term (returnPre config limits choice) post onError before := by
   obtain ⟨info, kind⟩ := term
   cases kind <;> try rfl
-  case Call => exact effectWP_iff _ _ _ _
-  case TailCall => exact effectWP_iff _ _ _ _
+  case Call =>
+    simp only [selectedTerminatorPre, InstructionWP.terminatorPreWithReturn, CallWP.callPre_eq_wp]
+    exact effectWP_iff _ _ _ _
+  case TailCall =>
+    simp only [selectedTerminatorPre, InstructionWP.terminatorPreWithReturn, CallWP.tailCallPre_eq_wp]
+    exact effectWP_iff _ _ _ _
   case Drop =>
     simp only [selectedTerminatorPre, InstructionWP.terminatorPreWithReturn]
     split

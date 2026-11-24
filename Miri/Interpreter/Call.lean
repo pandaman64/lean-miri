@@ -143,6 +143,10 @@ local notation "M" => CallM S
 private def require (condition : Bool) (message : String) : M Unit :=
   unless condition do throw (.invalidProgram message)
 
+theorem require_eq (condition : Bool) (message : String) :
+    (require (S := S) condition message) = if condition then pure () else throw (.invalidProgram message) := by
+  cases condition <;> rfl
+
 private def at? (values : Array A) (index : Nat) (message : String) : CallM S A :=
   match values[index]? with
   | none => throw (.invalidProgram message)
