@@ -3929,3 +3929,62 @@
 @@ -17 +17 @@
 -  simp only [read,beq_self_eq_true,Bool.or_true,ite_true]
 +  simp only [ControlFlow.evalAssert, read, beq_self_eq_true, Bool.or_true, ite_true]
+--- a/examples/duplicate_prefix/RootUsizeAssignment.lean
++++ b/examples/duplicate_prefix/RootUsizeAssignment.lean
+@@ -1 +1,4 @@
+-import duplicate_prefix.PointerAddStatements
++import duplicate_prefix.CompilerFrameLayout
++import duplicate_prefix.ScalarLocalCopy
++import duplicate_prefix.RootBody
++import duplicate_prefix.SourceSteps
+@@ -21 +24 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame (destId kind) = .ok 5 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame (destId kind) = .ok 4 := by
+@@ -70 +73 @@
+-  have lookup : PreparedReflection.actual.compiler.runtime.lookup 5 = .ok RootCompilerFacts.usizeLayout := by
++  have lookup : PreparedReflection.actual.compiler.runtime.lookup 4 = .ok RootCompilerFacts.usizeLayout := by
+@@ -72 +75 @@
+-  have query := PointerAddFacts.compute_local framesBefore frame machine (destId kind) 5 RootCompilerFacts.usizeLayout normalized lookup
++  have query := PointerAddFacts.compute_local framesBefore frame machine (destId kind) 4 RootCompilerFacts.usizeLayout normalized lookup
+--- a/examples/duplicate_prefix/RootLenPrefixStart.lean
++++ b/examples/duplicate_prefix/RootLenPrefixStart.lean
+@@ -106 +106 @@
+-    7 2 rfl blockAt (by simp [stmt4]) (by with_unfolding_all rfl) v5
++    7 5 rfl blockAt (by simp [stmt4]) (by with_unfolding_all rfl) v5
+@@ -122 +122 @@
+-    9 5 rfl blockAt (by simp [stmt6]) (by with_unfolding_all rfl) v7
++    9 4 rfl blockAt (by simp [stmt6]) (by with_unfolding_all rfl) v7
+--- a/examples/duplicate_prefix/RootLenPrefixEnd.lean
++++ b/examples/duplicate_prefix/RootLenPrefixEnd.lean
+@@ -66 +66 @@
+-    10 5 rfl blockAt (by simp [stmt8]) (by with_unfolding_all rfl) v10
++    10 4 rfl blockAt (by simp [stmt8]) (by with_unfolding_all rfl) v10
+@@ -75 +75 @@
+-    11 5 rfl blockAt (by simp [stmt9]) (by with_unfolding_all rfl) v11
++    11 4 rfl blockAt (by simp [stmt9]) (by with_unfolding_all rfl) v11
+--- a/examples/duplicate_prefix/RootUnitAssignment.lean
++++ b/examples/duplicate_prefix/RootUnitAssignment.lean
+@@ -4 +4 @@
+-import duplicate_prefix.PointerAddFacts
++import duplicate_prefix.CompilerFrameLayout
+@@ -23 +23 @@
+-  | .initial => ⟨29⟩ | .afterGuard => ⟨34⟩ | .afterCopy => ⟨18⟩
++  | .initial => ⟨29⟩ | .afterGuard => ⟨36⟩ | .afterCopy => ⟨18⟩
+@@ -25 +25 @@
+-def constant (kind : Kind) : ConstOperand := ⟨sourceSpan kind,none,.Val .ZeroSized 2⟩
++def constant (kind : Kind) : ConstOperand := ⟨sourceSpan kind,none,.Val .ZeroSized 5⟩
+@@ -31 +31 @@
+-    valueToOpWithLayout PreparedReflection.actual.compiler.runtime queries .ZeroSized 2
++    valueToOpWithLayout PreparedReflection.actual.compiler.runtime queries .ZeroSized 5
+@@ -40 +40 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame (localIdOf kind) = .ok 2 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame (localIdOf kind) = .ok 5 := by
+@@ -72 +72 @@
+-  have lookup : PreparedReflection.actual.compiler.runtime.lookup 2 = .ok CopyHelperUnit.layout := by
++  have lookup : PreparedReflection.actual.compiler.runtime.lookup 5 = .ok CopyHelperUnit.layout := by
+@@ -74 +74 @@
+-  have query := PointerAddFacts.compute_local framesBefore frame machine (localIdOf kind) 2 CopyHelperUnit.layout
++  have query := PointerAddFacts.compute_local framesBefore frame machine (localIdOf kind) 5 CopyHelperUnit.layout
+@@ -77 +77 @@
+-    .ZeroSized 2 (sourceSpan kind) (some CopyHelperUnit.layout) .uninit CopyHelperUnit.layout
++    .ZeroSized 5 (sourceSpan kind) (some CopyHelperUnit.layout) .uninit CopyHelperUnit.layout

@@ -176,6 +176,10 @@ lean -j1 --root=examples/duplicate_prefix_vcgen \
 lean -j1 examples/duplicate_prefix_vcgen/VerifyZeroGenerated.lean
 ```
 
+`--target RootLenPrefix` checks the root's nonzero-count path from basic
+block 2 to the shared-slice length preparation, preserving the live pointer
+and machine state.
+
 `--target RootRejectedPrefix` checks the too-large-count path after the
 length call, including the division guard, comparison, false result, and
 selection of `Return`, for any surrounding frames under its stated premises.
