@@ -62,7 +62,7 @@ variable {K U : Type}
 local notation "State" => ValidityMachine.State K U
 local notation "MachineVisitor" => ValidityVisitor.Hooks Provenance State C MachineHooks.FrameExtra F A Pad
 
-private def ghostOn (before : State) : State :=
+def ghostOn (before : State) : State :=
   {before with machine := {before.machine with user := {before.machine.user with
     payload := {before.machine.user.payload with ghost := true}}}}
 
@@ -230,6 +230,44 @@ theorem validateCachedBoolean [DecidableEq K]
   · exact readable
   · exact retain _
 
+theorem validateRuntimeCachedBoolean [DecidableEq K]
+    (queries : ExecutionValidity.Leaves State C)
+    (access : ValidityMachine.Access K U)
+    (allocation : PlaceMachine.AllocationConfig K (ValidityMachine.UserState U))
+    (compiler : ValidityMachine.Compiler K U C)
+    (projection : PlaceProjectionHooks Provenance State C MachineHooks.FrameExtra)
+    (vtable : VTableHooks Provenance State C F A)
+    (discriminant : DiscriminantHooks Provenance State C (RuntimePlace Provenance))
+    (retag : TypedRetag.Hooks K (ValidityMachine.UserState U))
+    (retagBudget fuel : Nat) (value : Bool) (choice : C)
+    (older : Array (Frame Provenance LocalLayout MachineHooks.FrameExtra))
+    (caller : Frame Provenance LocalLayout MachineHooks.FrameExtra)
+    (machine : MachineHooks.MachineState K (ValidityMachine.UserState U))
+    (index : LocalId) (layout : LocalLayout) (slot : LocalState Provenance LocalLayout)
+    (atSlot : caller.locals[index]? = some slot)
+    (cached : slot.layout = some layout)
+    (stored : slot.value = .live (.immediate (.scalar (Scalar.fromBool value))))
+    (sized : layout.layout.isSized = true)
+    (inactive : machine.user.payload.ghost = false)
+    (shallow : machine.user.payload.validation = .Shallow)
+    (debugOff : compiler.debugAssertions = false)
+    (readable : isPrimitiveReadable layout.layout.backendRepr = true)
+    (retain : ∀ machine, access.retainTouched machine none = machine)
+    (name : String) :
+    let before : State := ⟨⟨older.push caller⟩, machine⟩
+    let destination : RuntimePlace Provenance := ⟨.local older.size index none caller.localsIdentity, layout⟩
+    queries.typeName choice layout.ty before = .ok name before →
+    queries.classify choice layout.ty (ghostOn before) = .ok .boolean (ghostOn before) →
+    ValidityMachine.validateRuntime (ExecutionValidity.hooks queries access allocation compiler projection vtable
+      discriminant retag retagBudget) choice (fuel + 1) destination true before = .ok () before := by
+  intro before destination typeName classified
+  have valid := validateCachedBoolean queries access allocation compiler projection vtable discriminant
+    retag retagBudget fuel value choice older caller machine index layout slot atSlot cached stored sized
+    inactive debugOff readable retain name typeName classified
+  simpa [ValidityMachine.validateRuntime, ValidityMachine.enforceValidityRecursively,
+    before, destination, shallow, show (ValidityMachine.ValidationMode.Shallow == .Deep) = false from rfl, bind, Bind.bind, pure, Pure.pure, get, getThe, MonadStateOf.get,
+    EStateM.get, EStateM.bind, EStateM.pure] using valid
+
 end DuplicatePrefix.LanguageGuardValidity
 
 #print axioms DuplicatePrefix.LanguageGuardValidity.validateCanonicalBooleanPlace
@@ -237,3 +275,5 @@ end DuplicatePrefix.LanguageGuardValidity
 #print axioms DuplicatePrefix.LanguageGuardValidity.ghostLocalBoolean
 
 #print axioms DuplicatePrefix.LanguageGuardValidity.validateCachedBoolean
+
+#print axioms DuplicatePrefix.LanguageGuardValidity.validateRuntimeCachedBoolean

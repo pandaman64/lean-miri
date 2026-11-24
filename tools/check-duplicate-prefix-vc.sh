@@ -32,16 +32,24 @@ lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/ZeroBoolean.olean" examples/duplicate_prefix_vcgen/ZeroBoolean.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/ZeroAssignment.olean" examples/duplicate_prefix_vcgen/ZeroAssignment.lean
-lean -j1 examples/duplicate_prefix_vcgen/ZeroNodes.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/ZeroNodes.olean" examples/duplicate_prefix_vcgen/ZeroNodes.lean
+lean -j1 examples/duplicate_prefix_vcgen/ZeroSuffix.lean
 lean -j1 examples/duplicate_prefix_vcgen/ZeroReturnDriver.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/ZeroReturn.olean" examples/duplicate_prefix_vcgen/ZeroReturn.lean
 mkdir -p "$out/empty_function"
 lean -j1 --root=examples -o "$out/empty_function/FrameExit.olean" examples/empty_function/FrameExit.lean
-lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardStack.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/LanguageGuardStack.olean" examples/duplicate_prefix_vcgen/LanguageGuardStack.lean
 lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardCall.lean
-lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardValidity.lean
+lean -j1 --root=examples/duplicate_prefix_vcgen \
+  -o "$out/LanguageGuardValidity.olean" examples/duplicate_prefix_vcgen/LanguageGuardValidity.lean
 lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardAssignment.lean
+lean -j1 examples/duplicate_prefix_vcgen/GuardReturnCopy.lean
+lean -j1 examples/duplicate_prefix_vcgen/GuardPointerSwitch.lean
+lean -j1 examples/duplicate_prefix_vcgen/GuardRuntimeReturn.lean
+lean -j1 examples/duplicate_prefix_vcgen/LanguageGuardReturn.lean
 lean -j1 examples/duplicate_prefix_vcgen/NestedGuardDriver.lean
 
 "${BODY_VC_RUNNER:-$PWD/.lake/build/bin/native_runner}" "$out/harness.json" \

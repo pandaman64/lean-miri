@@ -123,8 +123,9 @@ structure PreparedFrameShape (before : State)
     (frame : Frame Provenance LocalLayout MachineHooks.FrameExtra) : Prop where
   current : before.stack.currentFrame? = some frame
   localsAligned : frame.locals.size = frame.body.locals.size
-  localsUntouched : ∀ index slot, 3 ≤ index →
-    frame.locals[index]? = some slot → slot.value = .dead
+  localsUntouched : ∃ alwaysLive, CallMachine.alwaysLiveVarsAndTemps frame.body = .ok alwaysLive ∧
+    ∀ index slot, 3 ≤ index → frame.locals[index]? = some slot →
+      slot.value = if alwaysLive.contains index then .live (.immediate .uninit) else .dead
   noVarargs : frame.vaList = #[]
   destination : ReturnDestinationShape before frame.returnPlace
   continuation : match frame.returnContinuation with
@@ -140,6 +141,35 @@ structure PreparedFrameShape (before : State)
             before.machine.memory.live[id]? = some entry ∧
               (entry.allocation.extra.indexOfTag tag).isSome = true
 
+/-- The emitted body explicitly manages most temporaries. Frame entry
+implicitly initializes only these three as live, with no value yet. -/
+theorem emittedAlwaysLive :
+    (GeneratedBodySafety.input.document.bodies[0]?.map
+      (fun source => CallMachine.alwaysLiveVarsAndTemps source.mir)) = some (.ok #[6, 13, 14]) := by
+  with_unfolding_all rfl
+
+theorem PreparedFrameShape.rootExplicitTemporaries
+    {before : State} {frame : Frame Provenance LocalLayout MachineHooks.FrameExtra}
+    (shape : PreparedFrameShape before frame)
+    (emitted : GeneratedBodySafety.input.document.bodies[0]?.map (·.mir) = some frame.body)
+    {index : LocalId} {slot : LocalState Provenance LocalLayout}
+    (atSlot : frame.locals[index]? = some slot)
+    (tracked : index = 3 ∨ index = 4 ∨ index = 5) : slot.value = .dead := by
+  obtain ⟨alwaysLive, fromBody, values⟩ := shape.localsUntouched
+  have emitted := congrArg (Option.map CallMachine.alwaysLiveVarsAndTemps) emitted
+  rw [Option.map_map] at emitted
+  change (GeneratedBodySafety.input.document.bodies[0]?.map
+    (fun source => CallMachine.alwaysLiveVarsAndTemps source.mir)) =
+      some (CallMachine.alwaysLiveVarsAndTemps frame.body) at emitted
+  rw [emittedAlwaysLive] at emitted
+  simp only [Option.some.injEq] at emitted
+  have equal : alwaysLive = #[6, 13, 14] := Except.ok.inj (fromBody.symm.trans emitted.symm)
+  subst alwaysLive
+  rcases tracked with rfl | rfl | rfl
+  · simpa using values 3 slot (by decide) atSlot
+  · simpa using values 4 slot (by decide) atSlot
+  · simpa using values 5 slot (by decide) atSlot
+
 theorem PreparedConcreteSlice.entered
     {program : BodyVCGen.LoadedProgram} {addresses : U → AllocAddresses.GlobalAddressState}
     {before : State} {target : TargetDataLayout} {pointer : Pointer (Option Provenance)}
@@ -150,3 +180,7 @@ theorem PreparedConcreteSlice.entered
 end DuplicatePrefix.SourceDomain
 
 #print axioms DuplicatePrefix.SourceDomain.PreparedConcreteSlice.entered
+
+#print axioms DuplicatePrefix.SourceDomain.emittedAlwaysLive
+
+#print axioms DuplicatePrefix.SourceDomain.PreparedFrameShape.rootExplicitTemporaries

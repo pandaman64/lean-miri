@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Recheck the verified portions of the duplicate-prefix archive on current MIR."""
 import argparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 import os
 from pathlib import Path
@@ -18,9 +18,16 @@ CHECKED = (
     "Program", "Reflection", "Prepared", "RootBody", "AllocationCopy",
     "PreparedContracts", "CopyPreconditions", "MemoryCopyBridge",
     "OffsetAllocationCopy", "RetagPointerChecks", "BorrowRangeAccess",
-    "BorrowCopyRanges", "BorrowRelease", "ExistingPartition",
+    "BorrowCopyRanges", "BorrowRelease", "ExistingPartition", "ActiveStackRelease",
+    "RootCompilerCore", "RootCompilerFacts", "SpanFacts", "CallEntryFacts",
 )
-PATCH = REPO / "examples/duplicate_prefix_vcgen/ArchiveMigration.patch"
+CLIENT = REPO / "examples/duplicate_prefix_vcgen"
+PATCH = CLIENT / "ArchiveMigration.patch"
+LOCAL = {
+    "ActiveReleaseOwned", "ActiveReleaseRange", "ActiveStackRelease", "RootCompilerCore",
+    "ArchiveForestProjection", "ExclusiveConcreteRange", "ExclusiveCopyRanges", "ExclusiveCopyStep",
+    "ArchiveTraceToVC", "RootLocalChecks", "HelperAbiLayouts", "RetagRangeFrame", "RetagLocationFrame", "RetagFrozenChild",
+}
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 ALLOWED = {"propext", "Quot.sound", "Classical.choice"}
 
@@ -31,6 +38,12 @@ def archived(name):
     )
 
 
+def proof_source(name):
+    if name in LOCAL:
+        return (CLIENT / "archive" / f"{name}.lean").read_bytes()
+    return archived(name)
+
+
 def install_sources(output, targets):
     source = output / ARCHIVE_DIR
     source.mkdir(parents=True)
@@ -39,16 +52,19 @@ def install_sources(output, targets):
     def visit(name):
         if name in dependencies:
             return
-        data = archived(name)
+        data = proof_source(name)
         (source / f"{name}.lean").write_bytes(data)
         parents = sorted({item.decode() for item in IMPORTS.findall(data)})
         dependencies[name] = set(parents)
         for parent in parents:
             visit(parent)
 
-    # Apply the same checked patch to every target. Materialize its touched
-    # sources even for an explicitly selected subset.
-    for target in (*CHECKED, *targets):
+    # Load the pinned sources touched by the migration, including changes
+    # outside the selected compilation closure.
+    patch_modules = re.findall(
+        rf"^--- a/{re.escape(ARCHIVE_DIR)}/([A-Za-z0-9_]+)\.lean$", PATCH.read_text(), re.MULTILINE
+    )
+    for target in (*targets, *patch_modules, *sorted(LOCAL)):
         visit(target)
     subprocess.run(
         ["patch", "--batch", "--forward", "--fuzz=0", "-p1", "-i", str(PATCH)],
@@ -56,9 +72,11 @@ def install_sources(output, targets):
         check=True,
     )
     # Imports can change when a proof needs a supporting tactic.
-    for name in dependencies:
+    for name in tuple(dependencies):
         data = (source / f"{name}.lean").read_bytes()
         dependencies[name] = {item.decode() for item in IMPORTS.findall(data)}
+        for parent in dependencies[name]:
+            visit(parent)
     closure = set()
 
     def keep(name):
@@ -87,8 +105,10 @@ def compile_proofs(output, dependencies, library, jobs):
     objects.mkdir()
     logs = output / "logs"
     logs.mkdir()
-    env = {**os.environ, "LEAN_PATH": os.pathsep.join((str(output), str(library))),
-           "LEAN_NUM_THREADS": "1"}
+    search_paths = [str(output), str(library)]
+    if os.environ.get("LEAN_PATH"):
+        search_paths.append(os.environ["LEAN_PATH"])
+    env = {**os.environ, "LEAN_PATH": os.pathsep.join(search_paths), "LEAN_NUM_THREADS": "1"}
     lean = shutil.which("lean")
     if lean is None:
         raise SystemExit("put the pinned lean executable on PATH")
@@ -103,8 +123,11 @@ def compile_proofs(output, dependencies, library, jobs):
                 cwd=output, env=env, stdout=log, stderr=subprocess.STDOUT,
             )
         details = path.read_text(errors="replace")
-        for listed in re.findall(r"depends on axioms: \[(.*?)\]", details):
-            if set(item.strip() for item in listed.split(",")) - ALLOWED:
+        if re.search(r"declaration uses .sorry.", details):
+            return name, False
+        for listed in re.findall(r"depends on axioms: \[(.*?)\]", details, re.DOTALL):
+            axioms = {item.strip() for item in listed.split(",") if item.strip()}
+            if axioms - ALLOWED:
                 return name, False
         return name, result.returncode == 0
 
@@ -112,12 +135,17 @@ def compile_proofs(output, dependencies, library, jobs):
     checked = set()
     failed = set()
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        while remaining:
+        pending = set()
+        while remaining or pending:
             ready = sorted(name for name in remaining if dependencies[name] <= checked)
-            if not ready:
-                break
-            for name, success in pool.map(build, ready):
+            for name in ready[:jobs - len(pending)]:
                 remaining.remove(name)
+                pending.add(pool.submit(build, name))
+            if not pending:
+                break
+            completed, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in completed:
+                name, success = future.result()
                 print(f"{name}: {'checked' if success else 'failed'}", flush=True)
                 (checked if success else failed).add(name)
     print(f"{len(checked)} checked, {len(failed)} failed, {len(remaining)} blocked")

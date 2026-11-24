@@ -268,3 +268,1942 @@
 @@ -156 +156 @@
 -    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
 +    (present : state.machine.memory.live[id]? = some entry) :
+--- a/examples/duplicate_prefix/GeneralBorrowEvents.lean
++++ b/examples/duplicate_prefix/GeneralBorrowEvents.lean
+@@ -16,3 +16,10 @@
+-elab "sourceNormalSkipped" : term => return mkConst (← sourceHelper ".NormalTreeState.skippedForeignNodes")
+-elab "unfold_normal_skips" : tactic => do
+-  let name := mkIdent (← sourceHelper ".NormalTreeState.skippedForeignNodes")
++def sourceNormalSkipped (tree : NormalTreeState) (kind : AccessKind) : List Nat :=
++  (List.range tree.topology.nodes.size).filter fun node =>
++    match tree.stateAt node with
++    | none => false
++    | some state => state.skipIfKnownNoop kind .ForeignAccess == .SkipSelfAndChildren
++
++elab "actualNormalSkip" : term =>
++  return mkConst (← sourceHelper ".NormalTreeState.shouldSkipForeignNode")
++elab "unfold_actual_normal_skip" : tactic => do
++  let name := mkIdent (← sourceHelper ".NormalTreeState.shouldSkipForeignNode")
+@@ -19,0 +27,18 @@
++
++private theorem actualNormalSkip_eq (tree : NormalTreeState) (kind : AccessKind) :
++    actualNormalSkip tree kind = (sourceNormalSkipped tree kind).contains := by
++  funext node
++  unfold_actual_normal_skip
++  apply Bool.eq_iff_iff.mpr
++  by_cases bound : node < tree.topology.nodes.size
++  · simp [sourceNormalSkipped, List.mem_filter, List.mem_range, bound] <;> rfl
++  · simp [sourceNormalSkipped, List.mem_filter, List.mem_range, bound] <;> rfl
++
++theorem performAccess_as_schedule (tree : NormalTreeState) (start : Nat)
++    (kind : AccessKind) (mode : ChildrenVisitMode) :
++    tree.performAccess start kind mode =
++      let (root, events) := tree.topology.traverse start mode (sourceNormalSkipped tree kind)
++      sourceNormalEvents tree root kind events := by
++  unfold NormalTreeState.performAccess TraversalTree.traverse
++  rw [actualNormalSkip_eq]
++
+@@ -153 +178 @@
+-  unfold NormalTreeState.performAccess
++  rw [performAccess_as_schedule]
+@@ -161 +186 @@
+-  unfold_normal_skips
++  unfold sourceNormalSkipped
+--- a/examples/duplicate_prefix/GeneralBorrowExposedScopedNormal.lean
++++ b/examples/duplicate_prefix/GeneralBorrowExposedScopedNormal.lean
+@@ -70,0 +71,3 @@
++  have normalEq : normalResult = sourceNormalEvents projection schedule.1 kind schedule.2 := by
++    dsimp only [normalResult, schedule]
++    rw [performAccess_as_schedule]
+@@ -79 +82,4 @@
+-  have visited : normalResult.visited = schedule.2 := GeneralBorrowStorage.events_visited schedule.2 schedule.1 kind projection completed
++  have visited : normalResult.visited = schedule.2 := by
++    rw [normalEq]
++    apply GeneralBorrowStorage.events_visited
++    simpa only [normalEq] using completed
+@@ -92 +98 @@
+-      by simp [BorrowTree.locationStateAt,present],newPresent⟩
++      by simp [BorrowTree.locationStateAt,present], by simpa only [normalEq] using newPresent⟩
+--- a/examples/duplicate_prefix/GeneralBorrowGraph.lean
++++ b/examples/duplicate_prefix/GeneralBorrowGraph.lean
+@@ -3,0 +4 @@
++open DuplicatePrefix.GeneralBorrowEvents
+--- a/examples/duplicate_prefix/GeneralBorrowNormalLocation.lean
++++ b/examples/duplicate_prefix/GeneralBorrowNormalLocation.lean
+@@ -3,0 +4 @@
++open DuplicatePrefix.GeneralBorrowEvents
+@@ -29,0 +31,3 @@
++  have normalEq : normal = sourceNormalEvents projection schedule.1 kind schedule.2 := by
++    dsimp only [normal, schedule]
++    rw [performAccess_as_schedule]
+@@ -31 +35,4 @@
+-  have visited : normal.visited = schedule.2 := GeneralBorrowStorage.events_visited schedule.2 schedule.1 kind projection completed
++  have visited : normal.visited = schedule.2 := by
++    rw [normalEq]
++    apply GeneralBorrowStorage.events_visited
++    simpa only [normalEq] using completed
+@@ -50 +57 @@
+-      by simp [BorrowTree.locationStateAt,present],newPresent⟩
++      by simp [BorrowTree.locationStateAt,present], by simpa only [normalEq] using newPresent⟩
+--- a/examples/duplicate_prefix/GeneralBorrowPresence.lean
++++ b/examples/duplicate_prefix/GeneralBorrowPresence.lean
+@@ -84 +84 @@
+-  simp only [TraversalTree.traverse] at member
++  simp only [TraversalTree.traverse, TraversalTree.traverseWithSkip] at member
+--- a/examples/duplicate_prefix/GeneralBorrowTopology.lean
++++ b/examples/duplicate_prefix/GeneralBorrowTopology.lean
+@@ -15 +15,3 @@
+-elab "sourceForeignPostorder" : term => return mkConst (← sourceHelper ".TraversalTree.foreignPostorder")
++elab "actualForeignPostorder" : term => return mkConst (← sourceHelper ".TraversalTree.foreignPostorder")
++def sourceForeignPostorder (tree : TraversalTree) (skips : List Nat) : Nat → Nat → List TraversalEvent :=
++  actualForeignPostorder tree skips.contains
+@@ -92 +94 @@
+-  simp only [TraversalTree.traverse] at member
++  simp only [TraversalTree.traverse, TraversalTree.traverseWithSkip] at member
+--- a/examples/duplicate_prefix/GeneralBorrowTraversal.lean
++++ b/examples/duplicate_prefix/GeneralBorrowTraversal.lean
+@@ -3,0 +4 @@
++open DuplicatePrefix.GeneralBorrowEvents
+--- a/examples/duplicate_prefix/RootCompilerFacts.lean
++++ b/examples/duplicate_prefix/RootCompilerFacts.lean
+@@ -1,4 +1,4 @@
+-import duplicate_prefix.PreparedContracts
+-
+-/-! Kernel-checked immutable compiler queries for the fixed root instance.
+-No query below assumes successful execution or a memory access. -/
++import duplicate_prefix.RootCompilerCore
++import duplicate_prefix.CopyCompilerFacts
++import duplicate_prefix.HelperAbiLayouts
++
+@@ -6 +6,2 @@
+-set_option maxHeartbeats 16000000
++set_option maxHeartbeats 25000000
++set_option pp.proofs false
+@@ -9 +9,0 @@
+-noncomputable section
+@@ -12,7 +12,33 @@
+-noncomputable def rootAbiQuery := CompilerInstanceAbi.abiOfInstance
+-  PreparedReflection.actual.compiler.lifecycle.instances RootBody.reflected.functionInstance #[]
+-
+-theorem root_abi_supported : rootAbiQuery.isOk = true := by
+-  unfold rootAbiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
++private def context : CompilerFacts.Context :=
++  ⟨PreparedReflection.actual.runtime,
++    PreparedReflection.actual.compiler.lifecycle.instances.program, none⟩
++
++private def policy : SourceAbiPolicy :=
++  ⟨"x86_64", false, false, true, false, 536870912, true, false, false, false, true⟩
++
++private def definition : SourceAbiDefinition :=
++  ⟨0, ⟨#[1, 4], 0, .Safe, .Rust, false, none⟩, none, false, true, false, false, false, false⟩
++
++private theorem source_abi_query :
++    rootAbiQuery = SourceAbi.compute policy context.runtime.target
++      (SourceAbiRuntime.queries context policy) definition.signature #[] (some definition) true := by
++  unfold rootAbiQuery CompilerInstanceAbi.abiOfInstance SourceAbiRuntime.ofInstance
++  rfl
++
++private theorem queriesLookupBool :
++    (SourceAbiRuntime.queries context policy).lookup 0 = .ok boolLayout := by
++  change (PreparedReflection.actual.runtime.lookup 0).mapError toString = .ok boolLayout
++  rw [bool_layout_eq]
++  rfl
++
++private theorem queriesLookupSlice :
++    (SourceAbiRuntime.queries context policy).lookup 1 = .ok sliceLayout := by
++  change (PreparedReflection.actual.runtime.lookup 1).mapError toString = .ok sliceLayout
++  rw [slice_layout_eq]
++  rfl
++
++private theorem queriesLookupUsize :
++    (SourceAbiRuntime.queries context policy).lookup 4 = .ok usizeLayout := by
++  change (PreparedReflection.actual.runtime.lookup 4).mapError toString = .ok usizeLayout
++  rw [usize_layout_eq]
++  rfl
+@@ -25,9 +51,95 @@
+-private theorem checkedOk_eq {Error Value : Type}
+-    (value : Except Error Value) (success : value.isOk = true) :
+-    value = .ok (checkedOk value success) := by
+-  cases value with
+-  | ok value => rfl
+-  | error error => cases success
+-
+-/-- The fixed root ABI table row, linked to the actual instance lookup below. -/
+-def rootAbi : FnAbi MIR.TyId := checkedOk (PreparedReflection.actual.abiResults[43]'(by decide +kernel)) (by decide +kernel)
++def pointeeLayout : TyAndLayout MIR.TyId :=
++  checkedOk (PreparedReflection.actual.layoutResults[2]'(by decide +kernel)) (by decide +kernel)
++
++private theorem pointeeLayoutExact: (PreparedReflection.actual.runtime.lookup 2).toOption = some pointeeLayout := by
++  have observation : PreparedReflection.actual.runtime.node 2 =
++      .ok PreparedReflection.actual.runtime.source.types[2] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[2].sourceLayout.normalizedType = 2 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[2]? =
++      some PreparedReflection.actual.runtime.source.types[2] := by rfl
++  have shape : PreparedReflection.actual.runtime.source.types[2].shape =
++      .slice 3 := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[2].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.toOption, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary]
++  have fuel_eq : PreparedReflection.actual.runtime.source.types.size = 194 := rfl
++  have goFuel := congrArg (fun fuel => ConcreteTypeLayout.calculate.go
++    PreparedReflection.actual.runtime.source PreparedReflection.actual.runtime.target fuel 3) fuel_eq
++  rw [goFuel, ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have elem : PreparedReflection.actual.runtime.source.types[3]? =
++      some PreparedReflection.actual.runtime.source.types[3] := rfl
++  have eshape : PreparedReflection.actual.runtime.source.types[3].shape =
++      .uint (.known .u8) := rfl
++  have eplain : PreparedReflection.actual.runtime.source.types[3].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.toOption, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, elem, eshape, eplain]
++  try rfl
++theorem pointee_layout_eq :
++    PreparedReflection.actual.runtime.lookup 2 = .ok pointeeLayout := by
++  have h := pointeeLayoutExact
++  generalize PreparedReflection.actual.runtime.lookup 2 = result at h ⊢
++  cases result <;> simpa [Except.toOption] using h
++
++
++private theorem slicePointee :
++    (SourceAbiRuntime.queries context policy).pointeeInfo sliceLayout Size.ZERO =
++      .ok (some ⟨Size.ZERO, Align.ONE, some (.mutable false)⟩) := by
++  change SourceAbiRuntime.pointeeInfo context policy sliceLayout Size.ZERO = _
++  unfold SourceAbiRuntime.pointeeInfo
++  rw [SourceAbiRuntime.pointeeInfo.go]
++  have sliceNode : context.runtime.node sliceLayout.ty = .ok context.runtime.source.types[1] := by rfl
++  have shape : context.runtime.source.types[1].shape = .reference 2 .Mut .Erased := rfl
++  have noOptim : policy.optimize = false := rfl
++  have pointeeQuery : context.runtime.lookup 2 = .ok pointeeLayout := pointee_layout_eq
++  simp [sliceNode, shape, noOptim, Size.ZERO, pointeeQuery, bind, Bind.bind, Except.bind,
++    pure, Pure.pure, Except.pure, Except.mapError]
++  try rfl
++
++private def scalarOf (layout : TyAndLayout MIR.TyId) : Scalar :=
++  match layout.layout.backendRepr with
++  | .Scalar scalar => scalar
++  | _ => .Union (value := .Int .I8 false)
++
++private def sliceFirst : Scalar :=
++  match sliceLayout.layout.backendRepr with
++  | .ScalarPair (a := first) => first
++  | _ => .Union (value := .Int .I8 false)
++
++private def sliceSecond : Scalar :=
++  match sliceLayout.layout.backendRepr with
++  | .ScalarPair (b := second) => second
++  | _ => .Union (value := .Int .I8 false)
++
++private theorem sliceBackend :
++    sliceLayout.layout.backendRepr = .ScalarPair (a := sliceFirst) (b := sliceSecond)
++      (bOffset := Size.ofBytes 8) := rfl
++
++private theorem usizeBackend : usizeLayout.layout.backendRepr = .Scalar (scalarOf usizeLayout) := rfl
++private theorem boolBackend : boolLayout.layout.backendRepr = .Scalar (scalarOf boolLayout) := rfl
++
++private theorem sliceFirstShape :
++    sliceFirst = .Initialized (value := .Pointer AddressSpace.ZERO)
++      (validRange := ⟨1, 18446744073709551615⟩) := rfl
++
++private theorem sliceSecondShape :
++    sliceSecond = .Initialized (value := .Int .I64 false)
++      (validRange := ⟨0, 18446744073709551615⟩) := rfl
++
++private theorem usizeScalarShape :
++    scalarOf usizeLayout = .Initialized (value := .Int .I64 false)
++      (validRange := ⟨0, 18446744073709551615⟩) := rfl
++
++private theorem boolScalarShape :
++    scalarOf boolLayout = .Initialized (value := .Int .I8 false)
++      (validRange := ⟨0, 1⟩) := rfl
+@@ -36,8 +148,43 @@
+-  unfold rootAbiQuery CompilerInstanceAbi.abiOfInstance
+-  erw [Reflection.natMap_getD]
+-  decide +kernel
+-
+-theorem root_abi_shape :
+-    (rootAbi.args.map (·.layout.ty), rootAbi.ret.layout.ty,
+-      rootAbi.cVariadic, rootAbi.fixedCount.toNat, rootAbi.conv, rootAbi.canUnwind) =
+-    (#[3, 5], 0, false, 2, .Rust, true) := by decide +kernel
++  rw [source_abi_query]
++  have architecture : (policy.architecture == "x86_64") = true := rfl
++  have notRustCall : ((ExternAbi.Rust : ExternAbi) == .RustCall) = false := rfl
++  have indices : List.range' 0 2 = [0, 1] := rfl
++  simp [SourceAbi.compute, definition, architecture, notRustCall, indices,
++    SourceAbi.canonicalConvention, SourceAbi.canUnwind,
++    Bool.and_eq_true, bind, Bind.bind, Except.bind, pure, Pure.pure, Except.pure,
++    queriesLookupSlice, queriesLookupUsize, queriesLookupBool, CanonAbi.isRusticAbi]
++  have sliceNotZst : sliceLayout.layout.isZst = false := rfl
++  have usizeNotZst : usizeLayout.layout.isZst = false := rfl
++  have boolNotZst : boolLayout.layout.isZst = false := rfl
++  simp [SourceAbi.argument, sliceNotZst, usizeNotZst, boolNotZst, sliceBackend, usizeBackend, boolBackend, bind, Bind.bind, Except.bind,
++    pure, Pure.pure, Except.pure]
++  simp [SourceAbi.scalarAttributes, sliceFirstShape, sliceSecondShape, usizeScalarShape,
++    boolScalarShape, slicePointee, bind, Bind.bind, Except.bind, pure, Pure.pure, Except.pure]
++  have panicAbort : policy.panicUnwinds = false := rfl
++  simp [Scalar.isUninitValid, Align.ONE, WrappingRange.contains, ArgAttributes.new, panicAbort]
++  try rfl
++
++theorem root_abi_supported : rootAbiQuery.isOk = true := by
++  rw [root_abi_eq]
++  rfl
++
++#print axioms root_abi_eq
++private theorem neverLayoutSupported : (PreparedReflection.actual.runtime.lookup 6).isOk = true := by
++  have observation : PreparedReflection.actual.runtime.node 6 =
++      .ok PreparedReflection.actual.runtime.source.types[6] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[6].sourceLayout.normalizedType = 6 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[6]? =
++      some PreparedReflection.actual.runtime.source.types[6] := by rfl
++  have shape : PreparedReflection.actual.runtime.source.types[6].shape = .never := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[6].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.isOk, Except.toBool, get, MonadLift.monadLift, Except.map, Functor.map,
++    hrow, normalized, shape, ordinary]
++  try rfl
+@@ -47,87 +194,10 @@
+-      (PreparedReflection.actual.runtime.lookup ty).isOk).all id = true := by decide +kernel
+-
+-theorem usize_layout_supported :
+-    (PreparedReflection.actual.runtime.lookup 5).isOk = true := by decide +kernel
+-
+-def usizeLayout : TyAndLayout MIR.TyId :=
+-  checkedOk (PreparedReflection.actual.layoutResults[5]'(by decide +kernel)) (by decide +kernel)
+-
+-theorem usize_layout_eq : PreparedReflection.actual.runtime.lookup 5 = .ok usizeLayout := by decide +kernel
+-
+-theorem usize_layout_shape :
+-    (usizeLayout.ty, usizeLayout.layout.size.bytes.toNat,
+-      usizeLayout.layout.align.abi.pow2) = (5, 8, 3) := by decide +kernel
+-
+-theorem root_storage_trivial_bool :
+-    CompilerStorage.veryTriviallySized PreparedReflection.actual.runtime 0 = .ok true := by decide +kernel
+-
+-theorem root_storage_trivial_type2 :
+-    CompilerStorage.veryTriviallySized PreparedReflection.actual.runtime 2 = .ok true := by decide +kernel
+-
+-theorem root_storage_trivial_usize :
+-    CompilerStorage.veryTriviallySized PreparedReflection.actual.runtime 5 = .ok true := by decide +kernel
+-
+-theorem bool_layout_supported :
+-    (PreparedReflection.actual.runtime.lookup 0).isOk = true := by decide +kernel
+-
+-def boolLayout : TyAndLayout MIR.TyId :=
+-  checkedOk (PreparedReflection.actual.layoutResults[0]'(by decide +kernel)) (by decide +kernel)
+-
+-theorem bool_layout_eq : PreparedReflection.actual.runtime.lookup 0 = .ok boolLayout := by decide +kernel
+-
+-theorem bool_layout_shape :
+-    (boolLayout.ty, boolLayout.layout.size.bytes.toNat,
+-      boolLayout.layout.align.abi.pow2) = (0, 1, 0) := by decide +kernel
+-
+-theorem bool_layout_geometry : boolLayout.layout.size = Size.ofBytes 1 ∧
+-    boolLayout.layout.align.abi = Align.ONE := by decide +kernel
+-
+-theorem bool_primitive_layout_eq :
+-    PreparedReflection.actual.compiler.primitiveLayout "bool" = .ok boolLayout := by with_unfolding_all rfl
+-
+-theorem usize_primitive_layout_eq :
+-    PreparedReflection.actual.compiler.primitiveLayout "usize" = .ok usizeLayout := by with_unfolding_all rfl
+-
+-theorem slice_layout_supported :
+-    (PreparedReflection.actual.runtime.lookup 3).isOk = true := by decide +kernel
+-
+-def sliceLayout : TyAndLayout MIR.TyId :=
+-  checkedOk (PreparedReflection.actual.layoutResults[3]'(by decide +kernel)) (by decide +kernel)
+-
+-theorem slice_layout_eq : PreparedReflection.actual.runtime.lookup 3 = .ok sliceLayout := by decide +kernel
+-
+-theorem slice_layout_shape :
+-    (sliceLayout.ty, sliceLayout.layout.size.bytes.toNat, sliceLayout.layout.align.abi.pow2) =
+-      (3, 16, 3) := by decide +kernel
+-
+-theorem root_abi_layouts :
+-    (rootAbi.args.getD 0 rootAbi.ret).layout = sliceLayout ∧
+-    (rootAbi.args.getD 1 rootAbi.ret).layout = usizeLayout ∧
+-    rootAbi.ret.layout = boolLayout := by
+-  constructor
+-  · with_unfolding_all rfl
+-  constructor <;> with_unfolding_all rfl
+-
+-theorem root_storage_trivial_slice :
+-    CompilerStorage.veryTriviallySized PreparedReflection.actual.runtime 3 = .ok true := by decide +kernel
+-
+-theorem root_storage_trivial_never :
+-    CompilerStorage.veryTriviallySized PreparedReflection.actual.runtime 6 = .ok true := by decide +kernel
+-
+-open Lean Elab Command in
+-run_cmd do
+-  for declaration in #[``root_abi_supported, ``rootAbi, ``root_abi_eq,
+-      ``root_abi_shape, ``root_local_layouts_supported, ``usize_layout_supported,
+-      ``usize_layout_eq, ``usize_layout_shape, ``root_storage_trivial_bool,
+-      ``root_storage_trivial_type2, ``root_storage_trivial_usize,
+-      ``bool_layout_supported, ``bool_layout_eq, ``bool_layout_shape,
+-      ``bool_primitive_layout_eq, ``usize_primitive_layout_eq, ``slice_layout_supported,
+-      ``slice_layout_eq, ``slice_layout_shape, ``root_abi_layouts, ``root_storage_trivial_slice,
+-      ``root_storage_trivial_never] do
+-    for dependency in (← collectAxioms declaration) do
+-      unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
+-        throwError "{declaration} depends on unapproved axiom {dependency}"
+-
+-#print axioms root_abi_supported
+-#print axioms root_abi_eq
+-#print axioms root_abi_shape
++      (PreparedReflection.actual.runtime.lookup ty).isOk).all id = true := by
++  have locals : RootBody.reflected.body.body.locals.toList =
++    [0, 1, 4, 5, 0, 4, 6, 5, 0, 4, 4, 4, 7, 0, 6, 8, 1, 5, 5, 9, 8, 8, 8, 4, 4] := rfl
++  rw [← Array.all_toList, Array.toList_map, locals]
++  simp [bool_layout_eq, slice_layout_eq, usize_layout_eq, neverLayoutSupported,
++    HelperAbiLayouts.unit_layout_eq, HelperAbiLayouts.shared_slice_layout_eq,
++    CopyCompilerFacts.dest_pointer_layout_eq, CopyCompilerFacts.source_pointer_layout_eq,
++    Except.isOk, Except.toBool]
++  exact neverLayoutSupported
++
+@@ -135 +204,0 @@
+-end
+--- a/examples/duplicate_prefix/SpanFacts.lean
++++ b/examples/duplicate_prefix/SpanFacts.lean
+@@ -1 +1 @@
+-import duplicate_prefix.RootCompilerFacts
++import duplicate_prefix.RootCompilerCore
+@@ -55,0 +56,6 @@
++/-- The prepared root span is the actual compiler-exported DUMMY_SP. -/
++theorem actual_root_span : PreparedContracts.FixedSpanQuery := by
++  constructor
++  unfold CompilerContextSpan.rootSpan
++  rfl
++
+@@ -58 +64 @@
+-  for declaration in #[``index_of_unique_key, ``root_local0_span_index,
++  for declaration in #[``actual_root_span, ``index_of_unique_key, ``root_local0_span_index,
+--- a/examples/duplicate_prefix/CanonicalConfigFacts.lean
++++ b/examples/duplicate_prefix/CanonicalConfigFacts.lean
+@@ -2 +2 @@
+-import duplicate_prefix.RootCompilerFacts
++import duplicate_prefix.RootCompilerCore
+@@ -589 +589 @@
+-    (PreparedContracts.actualConfig options choice remaining span).lifecycle.storage.veryTriviallySized 3 =
++    (PreparedContracts.actualConfig options choice remaining span).lifecycle.storage.veryTriviallySized 1 =
+@@ -596 +596 @@
+-    (PreparedContracts.actualConfig options choice remaining span).lifecycle.storage.veryTriviallySized 2 =
++    (PreparedContracts.actualConfig options choice remaining span).lifecycle.storage.veryTriviallySized 5 =
+@@ -603 +603 @@
+-    (PreparedContracts.actualConfig options choice remaining span).lifecycle.storage.veryTriviallySized 5 =
++    (PreparedContracts.actualConfig options choice remaining span).lifecycle.storage.veryTriviallySized 4 =
+--- a/examples/duplicate_prefix/CanonicalCopy.lean
++++ b/examples/duplicate_prefix/CanonicalCopy.lean
+@@ -54 +54 @@
+-  {state with machine := {state.machine with memory := {state.machine.memory with live := (state.machine.memory.live.filter fun row => row.1 != id).push (id, ⟨kind, allocation⟩)}}}
++  {state with machine := {state.machine with memory := {state.machine.memory with live := state.machine.memory.live.insert id ⟨kind, allocation⟩}}}
+@@ -58,2 +58 @@
+-    (replaceAllocation state id kind allocation).machine.memory.live.find?
+-      (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩) := by
++    (replaceAllocation state id kind allocation).machine.memory.live[id]? = some ⟨kind, allocation⟩ := by
+@@ -80 +79 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -179,2 +178 @@
+-    have readLive : readState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, readAlloc⟩) := replace_lookup state id kind readAlloc
++    have readLive : readState.machine.memory.live[id]? = some ⟨kind, readAlloc⟩ := replace_lookup state id kind readAlloc
+@@ -203,2 +201 @@
+-    have writeLive : writeState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, writeAlloc⟩) := replace_lookup readState id kind writeAlloc
++    have writeLive : writeState.machine.memory.live[id]? = some ⟨kind, writeAlloc⟩ := replace_lookup readState id kind writeAlloc
+@@ -240 +237 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -343,2 +340 @@
+-    have readLive : readState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, readAlloc⟩) := replace_lookup state id kind readAlloc
++    have readLive : readState.machine.memory.live[id]? = some ⟨kind, readAlloc⟩ := replace_lookup state id kind readAlloc
+@@ -367,2 +363 @@
+-    have writeLive : writeState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, writeAlloc⟩) := replace_lookup readState id kind writeAlloc
++    have writeLive : writeState.machine.memory.live[id]? = some ⟨kind, writeAlloc⟩ := replace_lookup readState id kind writeAlloc
+@@ -405 +400 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -513,2 +508 @@
+-    have readLive : readState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, readAlloc⟩) := replace_lookup state id kind readAlloc
++    have readLive : readState.machine.memory.live[id]? = some ⟨kind, readAlloc⟩ := replace_lookup state id kind readAlloc
+@@ -537,2 +531 @@
+-    have writeLive : writeState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, writeAlloc⟩) := replace_lookup readState id kind writeAlloc
++    have writeLive : writeState.machine.memory.live[id]? = some ⟨kind, writeAlloc⟩ := replace_lookup readState id kind writeAlloc
+@@ -556 +549,4 @@
+-private theorem canonical_interval_initialized_success {Os R P H D O Aff B Host : Type}
++/-- The canonical copy driver for adjacent byte ranges at any allocation offset.
++Tree Borrows legality is supplied by the read and subsequent write on the
++updated tree, so callers can use their own permission invariants. -/
++theorem canonical_interval_initialized_success {Os R P H D O Aff B Host : Type}
+@@ -578 +574 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -696,2 +692 @@
+-    have readLive : readState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, readAlloc⟩) := replace_lookup state id kind readAlloc
++    have readLive : readState.machine.memory.live[id]? = some ⟨kind, readAlloc⟩ := replace_lookup state id kind readAlloc
+@@ -720,2 +715 @@
+-    have writeLive : writeState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, writeAlloc⟩) := replace_lookup readState id kind writeAlloc
++    have writeLive : writeState.machine.memory.live[id]? = some ⟨kind, writeAlloc⟩ := replace_lookup readState id kind writeAlloc
+@@ -757 +751 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -814 +808 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -874 +868 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -936 +930 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -998 +992 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -1061 +1055 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+--- a/examples/duplicate_prefix/CompleteAllocationCopy.lean
++++ b/examples/duplicate_prefix/CompleteAllocationCopy.lean
+@@ -139,0 +140,3 @@
++  have disjoint : ¬ (offset + n ≤ offset ∧ offset < offset + n + n) :=
++    fun overlap => (UInt64.not_le.mpr sourcePositive) overlap.1
++  simp only [disjoint, ↓reduceIte]
+--- a/examples/duplicate_prefix/ProvenanceAllocationCopy.lean
++++ b/examples/duplicate_prefix/ProvenanceAllocationCopy.lean
+@@ -130,0 +131,3 @@
++  have disjoint : ¬ (offset + n ≤ offset ∧ offset < offset + n + n) :=
++    fun overlap => (UInt64.not_le.mpr sourcePositive) overlap.1
++  simp only [disjoint, ↓reduceIte]
+--- a/examples/duplicate_prefix/CallEntryFacts.lean
++++ b/examples/duplicate_prefix/CallEntryFacts.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.RootCompilerFacts
+@@ -133 +134 @@
+-    RootCompilerFacts.rootAbi.canUnwind = true ∧
++    RootCompilerFacts.rootAbi.canUnwind = false ∧
+@@ -356 +357 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 1 = .ok 3 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 1 = .ok 1 := by
+@@ -365 +366 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 2 = .ok 5 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 2 = .ok 4 := by
+@@ -416 +417 @@
+-  compute_local_from_metadata _ _ _ _ 1 3 _
++  compute_local_from_metadata _ _ _ _ 1 1 _
+@@ -428 +429 @@
+-  compute_local_from_metadata _ _ _ _ 2 5 _
++  compute_local_from_metadata _ _ _ _ 2 4 _
+--- a/examples/duplicate_prefix/CopyCompilerFacts.lean
++++ b/examples/duplicate_prefix/CopyCompilerFacts.lean
+@@ -1 +1 @@
+-import duplicate_prefix.RootCompilerFacts
++import duplicate_prefix.RootCompilerCore
+@@ -20,3 +20,2 @@
+-theorem byte_layout_supported : (PreparedReflection.actual.runtime.lookup 1).isOk = true := by decide +kernel
+-theorem source_pointer_layout_supported : (PreparedReflection.actual.runtime.lookup 9).isOk = true := by decide +kernel
+-theorem dest_pointer_layout_supported : (PreparedReflection.actual.runtime.lookup 8).isOk = true := by decide +kernel
++def byteLayout : LocalLayout :=
++  checkedOk (PreparedReflection.actual.layoutResults[3]'(by decide +kernel)) (by decide +kernel)
+@@ -24,3 +23,20 @@
+-def byteLayout : LocalLayout := checkedOk (PreparedReflection.actual.layoutResults[1]'(by decide +kernel)) (by decide +kernel)
+-def sourcePointerLayout : LocalLayout := checkedOk (PreparedReflection.actual.layoutResults[9]'(by decide +kernel)) (by decide +kernel)
+-def destPointerLayout : LocalLayout := checkedOk (PreparedReflection.actual.layoutResults[8]'(by decide +kernel)) (by decide +kernel)
++private theorem byte_layout_exact :
++    (PreparedReflection.actual.runtime.lookup 3).toOption = some byteLayout := by
++  have observation : PreparedReflection.actual.runtime.node 3 =
++      .ok PreparedReflection.actual.runtime.source.types[3] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[3].sourceLayout.normalizedType = 3 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[3]? =
++      some PreparedReflection.actual.runtime.source.types[3] := by rfl
++  have shape : PreparedReflection.actual.runtime.source.types[3].shape = .uint (.known .u8) := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[3].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.toOption, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary]
++  try rfl
+@@ -28 +44,4 @@
+-theorem byte_layout_eq : PreparedReflection.actual.runtime.lookup 1 = .ok byteLayout := by decide +kernel
++theorem byte_layout_eq : PreparedReflection.actual.runtime.lookup 3 = .ok byteLayout := by
++  have h := byte_layout_exact
++  generalize PreparedReflection.actual.runtime.lookup 3 = result at h ⊢
++  cases result <;> simpa [Except.toOption] using h
+@@ -30 +49,3 @@
+-theorem source_pointer_layout_eq : PreparedReflection.actual.runtime.lookup 9 = .ok sourcePointerLayout := by decide +kernel
++theorem byte_layout_supported : (PreparedReflection.actual.runtime.lookup 3).isOk = true := by
++  rw [byte_layout_eq]
++  rfl
+@@ -32 +53,2 @@
+-theorem dest_pointer_layout_eq : PreparedReflection.actual.runtime.lookup 8 = .ok destPointerLayout := by decide +kernel
++def sourcePointerLayout : LocalLayout :=
++  checkedOk (PreparedReflection.actual.layoutResults[9]'(by decide +kernel)) (by decide +kernel)
+@@ -34 +56,64 @@
+-theorem byte_layout_shape : byteLayout.ty = 1 ∧ byteLayout.layout.size = Size.ofBytes 1 ∧
++private theorem source_pointer_layout_exact :
++    (PreparedReflection.actual.runtime.lookup 9).toOption = some sourcePointerLayout := by
++  have observation : PreparedReflection.actual.runtime.node 9 =
++      .ok PreparedReflection.actual.runtime.source.types[9] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[9].sourceLayout.normalizedType = 9 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[9]? =
++      some PreparedReflection.actual.runtime.source.types[9] := by rfl
++  have shape : PreparedReflection.actual.runtime.source.types[9].shape = .rawPointer 3 .Not := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[9].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.toOption, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary]
++  try rfl
++
++theorem source_pointer_layout_eq : PreparedReflection.actual.runtime.lookup 9 = .ok sourcePointerLayout := by
++  have h := source_pointer_layout_exact
++  generalize PreparedReflection.actual.runtime.lookup 9 = result at h ⊢
++  cases result <;> simpa [Except.toOption] using h
++
++theorem source_pointer_layout_supported : (PreparedReflection.actual.runtime.lookup 9).isOk = true := by
++  rw [source_pointer_layout_eq]
++  rfl
++
++def destPointerLayout : LocalLayout :=
++  checkedOk (PreparedReflection.actual.layoutResults[8]'(by decide +kernel)) (by decide +kernel)
++
++private theorem dest_pointer_layout_exact :
++    (PreparedReflection.actual.runtime.lookup 8).toOption = some destPointerLayout := by
++  have observation : PreparedReflection.actual.runtime.node 8 =
++      .ok PreparedReflection.actual.runtime.source.types[8] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[8].sourceLayout.normalizedType = 8 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[8]? =
++      some PreparedReflection.actual.runtime.source.types[8] := by rfl
++  have shape : PreparedReflection.actual.runtime.source.types[8].shape = .rawPointer 3 .Mut := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[8].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.toOption, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, shape, ordinary]
++  try rfl
++
++theorem dest_pointer_layout_eq : PreparedReflection.actual.runtime.lookup 8 = .ok destPointerLayout := by
++  have h := dest_pointer_layout_exact
++  generalize PreparedReflection.actual.runtime.lookup 8 = result at h ⊢
++  cases result <;> simpa [Except.toOption] using h
++
++theorem dest_pointer_layout_supported : (PreparedReflection.actual.runtime.lookup 8).isOk = true := by
++  rw [dest_pointer_layout_eq]
++  rfl
++
++theorem byte_layout_shape : byteLayout.ty = 3 ∧ byteLayout.layout.size = Size.ofBytes 1 ∧
+@@ -54 +139 @@
+-    #[2,9,8,5,2,0,2,45,9,46,8,5,5,5,9,8,5] := by rfl
++    #[5,9,8,4,5,0,5,30,9,31,8,4,4,4,9,8,4] := by rfl
+@@ -57,3 +142,4 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 1 = .ok byteLayout := by
+-  unfold CompilerFacts.layoutOf
+-  decide +kernel
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 3 = .ok byteLayout := by
++  change (PreparedReflection.actual.runtime.lookup 3).mapError toString = .ok byteLayout
++  rw [byte_layout_eq]
++  rfl
+@@ -63,2 +149,3 @@
+-  unfold CompilerFacts.layoutOf
+-  decide +kernel
++  change (PreparedReflection.actual.runtime.lookup 9).mapError toString = .ok sourcePointerLayout
++  rw [source_pointer_layout_eq]
++  rfl
+@@ -68,2 +155,3 @@
+-  unfold CompilerFacts.layoutOf
+-  decide +kernel
++  change (PreparedReflection.actual.runtime.lookup 8).mapError toString = .ok destPointerLayout
++  rw [dest_pointer_layout_eq]
++  rfl
+@@ -72,3 +160,4 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 5 = .ok RootCompilerFacts.usizeLayout := by
+-  unfold CompilerFacts.layoutOf
+-  decide +kernel
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 4 = .ok RootCompilerFacts.usizeLayout := by
++  change (PreparedReflection.actual.runtime.lookup 4).mapError toString = .ok RootCompilerFacts.usizeLayout
++  rw [RootCompilerFacts.usize_layout_eq]
++  rfl
+--- a/examples/duplicate_prefix/CopyHelperIntrinsic.lean
++++ b/examples/duplicate_prefix/CopyHelperIntrinsic.lean
+@@ -2 +2,2 @@
+-import duplicate_prefix.CopyHelperFacts
++import duplicate_prefix.CopyCompilerFacts
++import duplicate_prefix.RootMetadataQueries
+@@ -97 +98 @@
+-  have pointee : (CopyIntrinsic.statementMemory bound).pointeeType () CopyCompilerFacts.sourcePointerLayout.ty state = .ok 1 state := by
++  have pointee : (CopyIntrinsic.statementMemory bound).pointeeType () CopyCompilerFacts.sourcePointerLayout.ty state = .ok 3 state := by
+@@ -106 +107 @@
+-    have deref : CompilerFacts.builtinDeref PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 9 true = .ok (some 1) :=
++    have deref : CompilerFacts.builtinDeref PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 9 true = .ok (some 3) :=
+@@ -109,2 +110,2 @@
+-  have byteQuery : bound.casts.layoutOf () 1 state = .ok CopyCompilerFacts.byteLayout state := by
+-    change config.casts.layoutOf () 1 state = _
++  have byteQuery : bound.casts.layoutOf () 3 state = .ok CopyCompilerFacts.byteLayout state := by
++    change config.casts.layoutOf () 3 state = _
+@@ -122 +123 @@
+-    CopyCompilerFacts.byteLayout 1 sp dp cp sr dr cr sourceRepr destRepr countRepr
++    CopyCompilerFacts.byteLayout 3 sp dp cp sr dr cr sourceRepr destRepr countRepr
+--- a/examples/duplicate_prefix/CopyIntrinsic.lean
++++ b/examples/duplicate_prefix/CopyIntrinsic.lean
+@@ -63,4 +63,4 @@
+-  unfold_internal ".Miri.Interpreter.isPrimitiveReadable"
+-  unfold_internal ".PlaceMachine.commit"
+-  unfold_internal ".PlaceMachine.finish"
+-  simp [localMemoryLayout, scalarLayout, Miri.Interpreter.readImmediateRaw, retain,
++  unfold Miri.Interpreter.isPrimitiveReadable
++  unfold PlaceMachine.commit
++  unfold PlaceMachine.finish
++  simp [localMemoryLayout, scalarLayout, Miri.Interpreter.readImmediateRaw, Miri.Interpreter.finishImmediateRead, retain,
+@@ -270 +270 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -344 +344 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -398,0 +399,80 @@
++/-- The typed byte-copy intrinsic for adjacent intervals at an arbitrary
++allocation offset, using the caller's Tree Borrows permission facts. -/
++theorem canonical_interval_initialized_intrinsic {Choice Os R P H D O Aff B Host : Type}
++    (context : CanonicalCopy.Context Os R P H D O Aff B Host)
++    (state : MachineHooks.State MiriMemoryKind (User Os R P H D O Aff B Host))
++    (tracker : MachineHooks.BorrowState) (id : AllocId) (tag : BorTag)
++    (base offset n : UInt64) (kind : MemoryKind MiriMemoryKind)
++    (allocation : Allocation Provenance BorrowTree)
++    (width : context.pointers.arithmetic = ⟨Size.ofBytes 8⟩)
++    (positive : 0 < n)
++    (bounded : offset.toNat + n.toNat + n.toNat ≤ allocation.byteSize.bytes.toNat)
++    (storage : allocation.len = allocation.byteSize.bytes.toNat)
++    (maskValid : InitMaskCopy.WellFormed allocation.initializationMask)
++    (maskLen : allocation.initializationMask.len = allocation.byteSize)
++    (initialized : InitMaskCopy.InitializedOn allocation.initializationMask
++      (Size.ofBytes offset) (Size.ofBytes (offset + n)))
++    (valid : ProvenanceCopy.WellFormed allocation.provenanceMap allocation.len)
++    (storageFits : allocation.len + 64 < 18446744073709551616)
++    (mutable : allocation.mutability = .Mut)
++    (noClocks : state.machine.dataRace = none)
++    (noBackend : state.machine.user.payload.payload.user.backend = .none)
++    (tracked : state.machine.borrowTracker = some tracker)
++    (extras : (context.extras.get state.machine.user).allocations.find? (fun row => row.1 == id) =
++      some (id, { weakMemory := none, backtrace := AllocationBacktrace.get ((context.extras.get state.machine.user).allocations) (id) }))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
++    (cached : state.machine.user.addresses.baseAddr.find? (fun row => row.allocId == id) =
++      some ⟨id, base⟩)
++    (layoutOf : Choice → TyId → RvalueM (AtomicMachine.State MiriMemoryKind (EvalCoreMachine.Stored Os R P H D O Aff B Host)) LocalLayout)
++    (pointee : Choice → TyId → RvalueM (AtomicMachine.State MiriMemoryKind (EvalCoreMachine.Stored Os R P H D O Aff B Host)) TyId)
++    (choice : Choice)
++    (sourceLayout destLayout countLayout elementLayout : LocalLayout) (elementTy : TyId)
++    (sourcePrimitive destPrimitive countPrimitive : Primitive)
++    (sourceRange destRange countRange : WrappingRange)
++    (sourceRepr : sourceLayout.layout.backendRepr = .Scalar (.Initialized (value := sourcePrimitive) (validRange := sourceRange)))
++    (destRepr : destLayout.layout.backendRepr = .Scalar (.Initialized (value := destPrimitive) (validRange := destRange)))
++    (countRepr : countLayout.layout.backendRepr = .Scalar (.Initialized (value := countPrimitive) (validRange := countRange)))
++    (targetWidth : context.access.runtime.base.pointerWidth.bits = 64)
++    (pointeeQuery : pointee choice sourceLayout.ty state = .ok elementTy state)
++    (layoutQuery : layoutOf choice elementTy state = .ok elementLayout state)
++    (elementSize : elementLayout.layout.size = Size.ofBytes 1)
++    (elementAlign : elementLayout.layout.align.abi = Align.ONE)
++    (maximumBound : n ≤ context.maximum.bytes)
++    (readValid : (allocation.extra.performBorrowAccessRange (.concrete tag)
++      (Size.ofBytes offset) (Size.ofBytes n) .Read tracker.global.protectedTags .VisitChildrenOfAccessed).status = .Completed)
++    (writeValid : ((allocation.extra.performBorrowAccessRange (.concrete tag)
++      (Size.ofBytes offset) (Size.ofBytes n) .Read tracker.global.protectedTags .VisitChildrenOfAccessed).tree.performBorrowAccessRange
++        (.concrete tag) (Size.ofBytes (offset + n)) (Size.ofBytes n) .Write tracker.global.protectedTags
++        .VisitChildrenOfAccessed).status = .Completed) :
++    let readAccess := allocation.extra.performBorrowAccessRange (.concrete tag)
++      (Size.ofBytes offset) (Size.ofBytes n) .Read tracker.global.protectedTags .VisitChildrenOfAccessed
++    let readAlloc := allocation.setExtra readAccess.tree
++    let readState := CanonicalCopy.replaceAllocation state id kind readAlloc
++    let writeAccess := readAccess.tree.performBorrowAccessRange (.concrete tag)
++      (Size.ofBytes (offset + n)) (Size.ofBytes n) .Write tracker.global.protectedTags .VisitChildrenOfAccessed
++    let writeAlloc := readAlloc.setExtra writeAccess.tree
++    let writeState := CanonicalCopy.replaceAllocation readState id kind writeAlloc
++    ∃ result,
++      Intrinsics.copyWith (byteMemory context.access context.pointers context.maximum layoutOf pointee) choice
++        ⟨.immediate (.scalar (Scalar.fromPointer context.access.runtime.base (Pointer.new (.concrete id tag) (Size.ofBytes (base + offset))))), sourceLayout⟩
++        ⟨.immediate (.scalar (Scalar.fromPointer context.access.runtime.base (Pointer.new (.concrete id tag) (Size.ofBytes (base + (offset + n)))))), destLayout⟩
++        ⟨.immediate (.scalar (Scalar.fromScalarInt (ScalarInt.ofUInt64 n))), countLayout⟩ true state =
++        .ok () (CanonicalCopy.replaceAllocation writeState id kind result) ∧
++      result.byteSize = allocation.byteSize ∧ result.len = allocation.len ∧
++      result.extra = writeAccess.tree ∧
++      AllocationCopy.snapshot result = (AllocationCopy.snapshot allocation).extract 0 (offset + n).toNat ++
++        (AllocationCopy.snapshot allocation).extract offset.toNat (offset + n).toNat ++
++        (AllocationCopy.snapshot allocation).extract (offset + n + n).toNat allocation.len := by
++  obtain ⟨result, run, sizeResult, lenResult, extraResult, bytesResult⟩ :=
++    CanonicalCopy.canonical_interval_initialized_success context state tracker id tag base offset n kind allocation
++      width positive bounded storage maskValid maskLen initialized valid storageFits mutable noClocks noBackend
++      tracked extras live cached readValid writeValid
++  refine ⟨result, ?_, sizeResult, lenResult, extraResult, bytesResult⟩
++  have effect := copyWith_byte_reduction context.access context.pointers context.maximum layoutOf pointee choice state
++    (Pointer.new (.concrete id tag) (Size.ofBytes (base + offset)))
++    (Pointer.new (.concrete id tag) (Size.ofBytes (base + (offset + n)))) n
++    sourceLayout destLayout countLayout elementLayout elementTy sourcePrimitive destPrimitive countPrimitive
++    sourceRange destRange countRange sourceRepr destRepr countRepr (by rfl) targetWidth
++    pointeeQuery layoutQuery elementSize elementAlign maximumBound
++  exact effect.trans run
++
+@@ -422 +502 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -500 +580 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -579 +659 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -637,0 +718 @@
++#print axioms canonical_interval_initialized_intrinsic
+@@ -658 +739 @@
+-  for declaration in [``canonical_nested_initialized_intrinsic, ``canonical_slice_initialized_intrinsic_protected, ``canonical_slice_initialized_intrinsic, ``canonical_slice_byte_intrinsic, ``statement_copy_reduction, ``copy_wrapper, ``canonical_byte_intrinsic, ``nondiverging_copy_operands,
++  for declaration in [``canonical_interval_initialized_intrinsic, ``canonical_nested_initialized_intrinsic, ``canonical_slice_initialized_intrinsic_protected, ``canonical_slice_initialized_intrinsic, ``canonical_slice_byte_intrinsic, ``statement_copy_reduction, ``copy_wrapper, ``canonical_byte_intrinsic, ``nondiverging_copy_operands,
+--- a/examples/duplicate_prefix/GeneralBorrowScopedCopyHelperMemory.lean
++++ b/examples/duplicate_prefix/GeneralBorrowScopedCopyHelperMemory.lean
+@@ -3 +3,2 @@
+-import duplicate_prefix.CopyHelperSteps
++import duplicate_prefix.CopyPreconditions
++import duplicate_prefix.StepFacts
+@@ -18 +19 @@
+-    (sourceBody : frame.body = HelperCompilerFacts.copyBody.body)
++    (sourceBody : frame.body = RootBody.reflected.copyHelper.body)
+@@ -39 +40 @@
+-    (live : machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -109,2 +110,24 @@
+-  exact CopyHelperSteps.intrinsic_of_actual_effect config limits frames frame frame machine finalMachine
+-    ⟨7,8⟩ _ location location (by rw [sourceBody];exact CopyHelperFacts.copy_intrinsic_statement) effect
++  have code : CopyPreconditions.Bodies.statementKindAt frame.body 7 8 =
++      some (.Intrinsic (.CopyNonOverlapping ⟨.Move ⟨14,#[]⟩,.Move ⟨15,#[]⟩,.Move ⟨16,#[]⟩⟩)) := by
++    rw [sourceBody]
++    rfl
++  cases blockAt : frame.body.basicBlocks[7]? with
++  | none => simp [CopyPreconditions.Bodies.statementKindAt, blockAt] at code
++  | some block =>
++    cases stmtAt : block.statements[8]? with
++    | none => simp [CopyPreconditions.Bodies.statementKindAt, blockAt, stmtAt] at code
++    | some statement =>
++      have kind : statement.kind =
++          .Intrinsic (.CopyNonOverlapping ⟨.Move ⟨14,#[]⟩,.Move ⟨15,#[]⟩,.Move ⟨16,#[]⟩⟩) := by
++        simpa [CopyPreconditions.Bodies.statementKindAt,blockAt,stmtAt] using code
++      have effect' : Step.evalStatement (ExecutionMachine.stepHooks config limits) () statement
++          state = (Storage.withCurrent frames frame finalMachine,.ok ()) := by
++        unfold Step.evalStatement
++        simpa only [kind] using effect
++      have step := StepFacts.step_statement (ExecutionMachine.stepHooks config limits) ()
++        state (Storage.withCurrent frames frame finalMachine) frame frame ⟨7,8⟩ ⟨7,8⟩ block statement
++        (by simp [state, Storage.withCurrent, Stack.currentFrame?]) location blockAt stmtAt effect'
++        (by simp [state, Storage.withCurrent]) (by simp [Storage.withCurrent, Stack.currentFrame?]) location
++        (by simp [Storage.withCurrent])
++      simpa [ExecutionMachine.step, config, state, finalMachine, writeState, readState,
++        writeAccess, readAccess, Storage.withCurrent, Array.set_push] using step
+--- a/examples/duplicate_prefix/GenericCopyMemoryCore.lean
++++ b/examples/duplicate_prefix/GenericCopyMemoryCore.lean
+@@ -33 +33 @@
+-    (live : state.machine.memory.live.find? (fun row => row.1 == id) = some (id, ⟨kind, allocation⟩))
++    (live : state.machine.memory.live[id]? = some ⟨kind, allocation⟩)
+@@ -60,134 +60,3 @@
+-  dsimp only
+-  let readAccess := allocation.extra.performBorrowAccessRange (.concrete tag)
+-    (Size.ofBytes offset) (Size.ofBytes n) .Read tracker.global.protectedTags .VisitChildrenOfAccessed
+-  let readAlloc := allocation.setExtra readAccess.tree
+-  let readState := replaceAllocation state id kind readAlloc
+-  let writeAccess := readAccess.tree.performBorrowAccessRange (.concrete tag)
+-    (Size.ofBytes (offset + n)) (Size.ofBytes n) .Write tracker.global.protectedTags .VisitChildrenOfAccessed
+-  let writeAlloc := readAlloc.setExtra writeAccess.tree
+-  let writeState := replaceAllocation readState id kind writeAlloc
+-  have readStorage := AllocationCopy.set_extra_preserves_storage allocation readAccess.tree
+-  have writeStorage := AllocationCopy.set_extra_preserves_storage readAlloc writeAccess.tree
+-  have writeBounds : offset.toNat + n.toNat + n.toNat ≤ writeAlloc.byteSize.bytes.toNat := by
+-    simpa only [writeAlloc, writeStorage.1, readAlloc, readStorage.1] using bounded
+-  have writeStored : writeAlloc.len = writeAlloc.byteSize.bytes.toNat := by
+-    simpa only [writeAlloc, writeStorage.1, writeStorage.2.1, readAlloc,
+-      readStorage.1, readStorage.2.1] using storage
+-  have writeMaskValid : InitMaskCopy.WellFormed writeAlloc.initializationMask := by
+-    simpa only [writeAlloc, writeStorage.2.2.1, readAlloc, readStorage.2.2.1] using maskValid
+-  have writeMaskLen : writeAlloc.initializationMask.len = writeAlloc.byteSize := by
+-    simpa only [writeAlloc, writeStorage.2.2.1, writeStorage.1, readAlloc,
+-      readStorage.2.2.1, readStorage.1] using maskLen
+-  have writeInitialized : InitMaskCopy.InitializedOn writeAlloc.initializationMask
+-      (Size.ofBytes offset) (Size.ofBytes (offset + n)) := by
+-    simpa only [writeAlloc, writeStorage.2.2.1, readAlloc, readStorage.2.2.1] using initialized
+-  have writeProvenance : ProvenanceCopy.WellFormed writeAlloc.provenanceMap writeAlloc.len := by
+-    simpa only [writeAlloc, writeStorage.2.2.2.1, writeStorage.2.1, readAlloc,
+-      readStorage.2.2.2.1, readStorage.2.1] using valid
+-  have writeFits : writeAlloc.len + 64 < 18446744073709551616 := by
+-    simpa only [writeAlloc, writeStorage.2.1, readAlloc, readStorage.2.1] using storageFits
+-  have writeMutable : writeAlloc.mutability = .Mut := by
+-    simpa only [writeAlloc, writeStorage.2.2.2.2.1, readAlloc, readStorage.2.2.2.2.1] using mutable
+-  obtain ⟨result, copied, sizeResult, lenResult, extraResult, mutableResult,
+-      nativeResult, finalMaskValid, finalMaskLen, bytesResult⟩ :=
+-    CompleteAllocationCopy.copy_adjacent_initialized_source writeAlloc offset n writeStored writeMaskValid writeMaskLen writeInitialized writeProvenance writeFits
+-      writeMutable positive writeBounds
+-  refine ⟨result, ?_, ?_, ?_, ?_, ?_⟩
+-  · have capFit : allocation.byteSize.bytes.toNat < 18446744073709551616 :=
+-      allocation.byteSize.bytes.toNat_lt_size
+-    have signedFits : n.toNat < 9223372036854775808 := by omega
+-    have fits : offset.toNat + n.toNat < 2 ^ 64 := by omega
+-    have equal : (offset + n).toNat = offset.toNat + n.toNat := by simp [UInt64.toNat_add, Nat.mod_eq_of_lt fits]
+-    have nBound : offset + n ≤ allocation.byteSize.bytes := by
+-      apply UInt64.le_iff_toNat_le.mpr
+-      omega
+-    have canonical : context.access.resolvePointer = TypedMemoryProviders.resolvePointer context.pointers := rfl
+-    have before : context.access.beforeAllocationAccess = fun _ => pure () := rfl
+-    have sourceGlobals : context.access.globalHooks =
+-        EvalGlobalAllocationMachine.make context.prepared context.image context.extras context.globals := rfl
+-    have pointerSize : context.pointers.arithmetic.pointerSize = Size.ofBytes 8 :=
+-      congrArg Miri.Memory.PointerArithmetic.pointerSize width
+-    have sourceCheck := MemoryCopyBridge.copy_pointer_stage_cached context.pointers context.access canonical
+-      state id tag base offset n ⟨kind, allocation⟩ width positive signedFits cached live
+-      (by change offset.toNat + n.toNat ≤ allocation.byteSize.bytes.toNat; omega)
+-    have destinationCheck := MemoryCopyBridge.copy_pointer_stage_cached context.pointers context.access canonical
+-      state id tag base (offset + n) n ⟨kind, allocation⟩ width positive signedFits cached live (by
+-        change (offset + n).toNat + n.toNat ≤ allocation.byteSize.bytes.toNat
+-        omega)
+-    have probeId := MemoryCopyBridge.copy_probe_cached context.pointers context.access state.machine id tag base offset n width cached
+-    have probe := MemoryCopyBridge.before_allocation_stage_default context.access PointerMachine.User.addresses
+-      context.pointers.arithmetic state id before
+-    have sourceRaw := MemoryCopyBridge.source_raw_read_live context.access context.prepared context.image
+-      context.extras context.globals sourceGlobals state id ⟨kind, allocation⟩ live
+-    have readAccessFact := MemoryCopyBridge.source_global_access_exact context.prepared context.image
+-      context.maximum context.fuel context.globalHooks context.pointers context.extras state tracker allocation
+-      kind id (.concrete tag) (allocRange (Size.ofBytes offset) (Size.ofBytes n)) false
+-      noClocks noBackend tracked extras live
+-    have readEffect : source_global_access context.access false allocation id (.concrete tag)
+-        (allocRange (Size.ofBytes offset) (Size.ofBytes n)) state = .ok readAlloc readState := by
+-      simpa only [Context.access, allocRange, Bool.false_eq_true, ↓reduceIte, readValid,
+-        readAccess, readAlloc, readState, replaceAllocation] using readAccessFact
+-    have readStored : readAlloc.len = readAlloc.byteSize.bytes.toNat := by
+-      simpa only [readAlloc, readStorage.1, readStorage.2.1] using storage
+-    have readMaskValid : InitMaskCopy.WellFormed readAlloc.initializationMask := by
+-      simpa only [readAlloc, readStorage.2.2.1] using maskValid
+-    have readMaskLen : readAlloc.initializationMask.len = readAlloc.byteSize := by
+-      simpa only [readAlloc, readStorage.2.2.1, readStorage.1] using maskLen
+-    have readInitialized : InitMaskCopy.InitializedOn readAlloc.initializationMask
+-        (Size.ofBytes offset) (Size.ofBytes (offset + n)) := by
+-      simpa only [readAlloc, readStorage.2.2.1] using initialized
+-    have readProvenance : ProvenanceCopy.WellFormed readAlloc.provenanceMap readAlloc.len := by
+-      simpa only [readAlloc, readStorage.2.2.2.1, readStorage.2.1] using valid
+-    have readFits : readAlloc.len + 64 < 18446744073709551616 := by
+-      simpa only [readAlloc, readStorage.2.1] using storageFits
+-    have readMutable : readAlloc.mutability = .Mut := by
+-      simpa only [readAlloc, readStorage.2.2.2.2.1] using mutable
+-    have readBound : offset + n ≤ readAlloc.byteSize.bytes := by
+-      simpa only [readAlloc, readStorage.1] using nBound
+-    have snapshot := CompleteAllocationCopy.snapshot_checks_initialized_source context.access readAlloc offset n readState
+-      readStored readMaskValid readMaskLen readInitialized readProvenance readFits positive (by
+-        change offset.toNat + n.toNat + n.toNat ≤ allocation.byteSize.bytes.toNat
+-        omega)
+-    have readLive : readState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, readAlloc⟩) := replace_lookup state id kind readAlloc
+-    have destinationRaw := MemoryCopyBridge.source_raw_write_live context.access context.prepared context.image
+-      context.extras context.globals sourceGlobals readState id ⟨kind, readAlloc⟩ readLive readMutable
+-    have destinationBefore := MemoryCopyBridge.before_allocation_stage_default context.access PointerMachine.User.addresses
+-      context.pointers.arithmetic readState id before
+-    have writeAccessFact := MemoryCopyBridge.source_global_access_exact context.prepared context.image
+-      context.maximum context.fuel context.globalHooks context.pointers context.extras readState tracker readAlloc
+-      kind id (.concrete tag) (allocRange (Size.ofBytes (offset + n)) (Size.ofBytes n)) true
+-      noClocks noBackend tracked extras readLive
+-    have writeEffect : source_global_access context.access true readAlloc id (.concrete tag)
+-        (allocRange (Size.ofBytes (offset + n)) (Size.ofBytes n)) readState = .ok writeAlloc writeState := by
+-      simpa only [Context.access, allocRange, Bool.true_eq, ↓reduceIte, writeValid,
+-        readAccess, readAlloc, writeAccess, writeAlloc, writeState, replaceAllocation,
+-        Allocation.setExtra, Allocation.mapExtra] using writeAccessFact
+-    have primitive : Allocation.copy readAlloc (allocRange (Size.ofBytes offset) (Size.ofBytes n))
+-        (Size.ofBytes (offset + n)) (Size.ofBytes 8) true true writeAlloc = .ok () result := by
+-      exact (AllocationCopy.copy_source_extra_irrelevant readAlloc writeAlloc
+-        (allocRange (Size.ofBytes offset) (Size.ofBytes n)) (Size.ofBytes (offset + n)) (Size.ofBytes 8) true true writeAccess.tree).symm.trans copied
+-    have copy : Allocation.copyRepeatedly readAlloc (allocRange (Size.ofBytes offset) (Size.ofBytes n))
+-        (Size.ofBytes (offset + n)) 1 context.pointers.arithmetic.pointerSize (id == id) true writeAlloc = .ok () result := by
+-      rw [pointerSize]
+-      simp only [beq_self_eq_true]
+-      exact primitive
+-    have writeLive : writeState.machine.memory.live.find? (fun row => row.1 == id) =
+-        some (id, ⟨kind, writeAlloc⟩) := replace_lookup readState id kind writeAlloc
+-    have commit := MemoryCopyBridge.set_live_exact writeState.machine.memory id ⟨kind, writeAlloc⟩ result writeLive
+-    have run := CopyComposition.generic_copy_success context.access PointerMachine.User.addresses context.pointers.arithmetic
+-      (Pointer.new (some (.concrete id tag)) (Size.ofBytes (base + offset)))
+-      (Pointer.new (some (.concrete id tag)) (Size.ofBytes (base + (offset + n)))) (Size.ofBytes n) (Size.ofBytes n) 1 true
+-      id id (Size.ofBytes offset) (Size.ofBytes (offset + n)) (.concrete tag) (.concrete tag)
+-      allocation readAlloc readAlloc writeAlloc result
+-      state state state state state readState readState readState readState writeState
+-      (replaceAllocation writeState id kind result).machine.memory
+-      sourceCheck (DuplicatePrefix.size_mul_one (Size.ofBytes n)) destinationCheck probeId probe sourceRaw
+-      (by rfl) readEffect (by simpa only [pointerSize] using snapshot) destinationRaw destinationBefore writeEffect copy commit
+-    simpa only [replaceAllocation, writeState, readState] using run
+-  · simpa only [writeAlloc, writeStorage.1, readAlloc, readStorage.1] using sizeResult
+-  · simpa only [writeAlloc, writeStorage.2.1, readAlloc, readStorage.2.1] using lenResult
+-  · simpa only [writeAlloc, Allocation.setExtra, Allocation.mapExtra] using extraResult
+-  · simpa only [writeAlloc, writeStorage.2.2.2.2.2.2, readAlloc,
+-      readStorage.2.2.2.2.2.2, writeStorage.2.1, readStorage.2.1] using bytesResult
+-
++  exact CanonicalCopy.canonical_interval_initialized_success context state tracker id tag base offset n kind allocation
++    width positive bounded storage maskValid maskLen initialized valid storageFits mutable noClocks noBackend
++    tracked extras live cached readValid writeValid
+--- a/examples/duplicate_prefix/ImmediateReadProof.lean
++++ b/examples/duplicate_prefix/ImmediateReadProof.lean
+@@ -26 +26,2 @@
+-  evalTactic (← `(tactic| simp_all [PlaceMachine.readImmediate,
++  evalTactic (← `(tactic| delta PlaceMachine.readImmediate))
++  evalTactic (← `(tactic| simp_all [
+@@ -28 +29 @@
+-    Miri.Interpreter.readImmediateRaw, localMemoryLayout,
++    Miri.Interpreter.readImmediateRaw, Miri.Interpreter.finishImmediateRead, localMemoryLayout,
+--- a/examples/duplicate_prefix/RootMetadataQueries.lean
++++ b/examples/duplicate_prefix/RootMetadataQueries.lean
+@@ -2 +2 @@
+-import duplicate_prefix.RootCompilerFacts
++import duplicate_prefix.RootCompilerCore
+@@ -19 +19 @@
+-  let names ← ([".CompilerFacts.facts", ".CompilerFacts.node"] : List String).mapM
++  let names ← ([".ConcreteTypeQueries.node"] : List String).mapM
+@@ -29,2 +29,2 @@
+-theorem source_pointer_pointee : CompilerFacts.builtinDeref context 9 true = .ok (some 1) := by
+-  unfold CompilerFacts.builtinDeref CompilerFacts.optionalType
++theorem source_pointer_pointee : CompilerFacts.builtinDeref context 9 true = .ok (some 3) := by
++  unfold CompilerFacts.builtinDeref CompilerFacts.optionalType ConcreteTypeQueries.optionalType
+@@ -35,2 +35,2 @@
+-theorem destination_pointer_pointee : CompilerFacts.builtinDeref context 8 true = .ok (some 1) := by
+-  unfold CompilerFacts.builtinDeref CompilerFacts.optionalType
++theorem destination_pointer_pointee : CompilerFacts.builtinDeref context 8 true = .ok (some 3) := by
++  unfold CompilerFacts.builtinDeref CompilerFacts.optionalType ConcreteTypeQueries.optionalType
+@@ -41,2 +41,2 @@
+-theorem slice_freeze : CompilerFacts.boolean context 4 "is_freeze" = .ok true := by
+-  unfold CompilerFacts.boolean
++theorem slice_freeze : CompilerFacts.boolean context 2 "is_freeze" = .ok true := by
++  unfold CompilerFacts.boolean ConcreteTypeQueries.boolean
+@@ -47,2 +47,2 @@
+-theorem slice_unpin : CompilerFacts.boolean context 4 "is_unpin" = .ok true := by
+-  unfold CompilerFacts.boolean
++theorem slice_unpin : CompilerFacts.boolean context 2 "is_unpin" = .ok true := by
++  unfold CompilerFacts.boolean ConcreteTypeQueries.boolean
+@@ -53,2 +53,2 @@
+-theorem slice_unsafe_unpin : CompilerFacts.boolean context 4 "is_unsafe_unpin" = .ok true := by
+-  unfold CompilerFacts.boolean
++theorem slice_unsafe_unpin : CompilerFacts.boolean context 2 "is_unsafe_unpin" = .ok true := by
++  unfold CompilerFacts.boolean ConcreteTypeQueries.boolean
+@@ -59,2 +59,2 @@
+-theorem byte_freeze : CompilerFacts.boolean context 1 "is_freeze" = .ok true := by
+-  unfold CompilerFacts.boolean
++theorem byte_freeze : CompilerFacts.boolean context 3 "is_freeze" = .ok true := by
++  unfold CompilerFacts.boolean ConcreteTypeQueries.boolean
+@@ -78 +78 @@
+-theorem mutable_slice_reference : CompilerFacts.referencePointee context 3 = .ok (4,.Mut) := by
++theorem mutable_slice_reference : CompilerFacts.referencePointee context 1 = .ok (2,.Mut) := by
+@@ -84,2 +84,2 @@
+-theorem mutable_slice_dereference : CompilerFacts.builtinDeref context 3 true = .ok (some 4) := by
+-  unfold CompilerFacts.builtinDeref CompilerFacts.optionalType
++theorem mutable_slice_dereference : CompilerFacts.builtinDeref context 1 true = .ok (some 2) := by
++  unfold CompilerFacts.builtinDeref CompilerFacts.optionalType ConcreteTypeQueries.optionalType
+@@ -105 +105 @@
+-theorem usize_classification : CompilerExecutionProviders.scalarClass context 5 = .ok (.integer .usize) := by
++theorem usize_classification : CompilerExecutionProviders.scalarClass context 4 = .ok (.integer .usize) := by
+@@ -116 +116 @@
+-  with_unfolding_all rfl
++  exact RootCompilerFacts.bool_primitive_layout_eq
+@@ -118,2 +118,2 @@
+-theorem mutable_slice_shape : CompilerFacts.retagTypeShape context 3 = .ok {} := by
+-  unfold CompilerFacts.retagTypeShape CompilerFacts.boolean
++theorem mutable_slice_shape : CompilerFacts.retagTypeShape context 1 = .ok {} := by
++  unfold CompilerFacts.retagTypeShape CompilerFacts.boolean ConcreteTypeQueries.boolean
+@@ -124 +124 @@
+-theorem usize_retag_shape : CompilerFacts.retagTypeShape context 5 =
++theorem usize_retag_shape : CompilerFacts.retagTypeShape context 4 =
+@@ -126 +126 @@
+-  unfold CompilerFacts.retagTypeShape CompilerFacts.boolean
++  unfold CompilerFacts.retagTypeShape CompilerFacts.boolean ConcreteTypeQueries.boolean
+--- a/examples/duplicate_prefix/RootOperandCopy.lean
++++ b/examples/duplicate_prefix/RootOperandCopy.lean
+@@ -1 +1 @@
+-import duplicate_prefix.RootLocalStages
++import duplicate_prefix.RootLocalChecks
+--- a/examples/duplicate_prefix/RootLocalStages.lean
++++ b/examples/duplicate_prefix/RootLocalStages.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.RootLocalChecks
+@@ -23,15 +23,0 @@
+-
+-theorem operand_check_skipped
+-    [DecidableEq MiriMemoryKind]
+-    (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
+-    (choice : Unit) (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
+-    (debugOff : options.place.debugAssertions = false)
+-    (place : Place) (op : OpTy Provenance) (state : MachineHooks.State MiriMemoryKind Machine.RootUser) :
+-    (ExecutionMachine.operandHooks (ExecutionMachine.withValidation
+-      (PreparedContracts.actualConfig options choice remaining span) limits)).checkPlaceType
+-      choice place op state = .ok () state := by
+-  have fields := CanonicalConfigFacts.actual_fields options choice remaining span
+-  have debugOff' : (PreparedContracts.actualConfig options choice remaining span).compiler.debugAssertions = false :=
+-    by rw [fields.debug, debugOff]
+-  simp [ExecutionMachine.operandHooks, ExecutionMachine.withValidation,
+-    TypedMachineBindings.bindValidation, debugOff', pure, EStateM.pure]
+@@ -76,17 +61,0 @@
+-
+-theorem place_check_skipped
+-    [DecidableEq MiriMemoryKind]
+-    (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
+-    (choice : Unit) (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
+-    (debugOff : options.place.debugAssertions = false)
+-    (place : Place) (value : RuntimePlace Provenance)
+-    (state : MachineHooks.State MiriMemoryKind Machine.RootUser) :
+-    ((ExecutionMachine.projectionHooks (ExecutionMachine.withValidation
+-      (PreparedContracts.actualConfig options choice remaining span) limits)).place.checkPlaceType
+-      choice place value state) = .ok () state := by
+-  have fields := CanonicalConfigFacts.actual_fields options choice remaining span
+-  change (PreparedContracts.actualConfig options choice remaining span).projection.place.checkPlaceType
+-    choice place value state = .ok () state
+-  rw [fields.projectionPlaceType]
+-  simp [CompilerPlaceTypes.place, CompilerPlaceTypes.check, debugOff,
+-    pure, EStateM.pure]
+--- a/examples/duplicate_prefix/PhysicalMachineWrite.lean
++++ b/examples/duplicate_prefix/PhysicalMachineWrite.lean
+@@ -39 +39 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -60,2 +60 @@
+-        {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-          (id,{entry with allocation := updated}))}}} ∧
++        {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))}}} ∧
+@@ -82 +81 @@
+-  have currentPresent : current.live.find? (fun row => row.1 == id) = some (id,afterEntry) :=
++  have currentPresent : current.live[id]? = some afterEntry :=
+@@ -103,3 +102,2 @@
+-      {current with live := (current.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push (id,{afterEntry with allocation := updated})} =
+-      {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-        (id,{entry with allocation := updated}))} :=
++      {current with live := (current.live.insert id {afterEntry with allocation := updated})} =
++      {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))} :=
+@@ -130 +128 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -157,2 +155 @@
+-        {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-          (id,{entry with allocation := updated}))}}} ∧
++        {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))}}} ∧
+@@ -179 +176 @@
+-  have currentPresent : current.live.find? (fun row => row.1 == id) = some (id,afterEntry) :=
++  have currentPresent : current.live[id]? = some afterEntry :=
+@@ -206,3 +203,2 @@
+-      {current with live := (current.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push (id,{afterEntry with allocation := updated})} =
+-      {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-        (id,{entry with allocation := updated}))} :=
++      {current with live := (current.live.insert id {afterEntry with allocation := updated})} =
++      {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))} :=
+@@ -233 +229 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -254,2 +250 @@
+-        {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-          (id,{entry with allocation := updated}))}}} ∧
++        {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))}}} ∧
+@@ -297 +292 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -318,2 +313 @@
+-        {state.machine.memory with live := ((state.machine.memory.live.filter fun (row : AllocId × LocalAllocation Provenance BorrowTree MiriMemoryKind) => row.1 != id).push
+-          (id,{entry with allocation := updated}))}}} ∧
++        {state.machine.memory with live := ((state.machine.memory.live.insert id {entry with allocation := updated}))}}} ∧
+--- a/examples/duplicate_prefix/PhysicalMemoryWrite.lean
++++ b/examples/duplicate_prefix/PhysicalMemoryWrite.lean
+@@ -11 +11 @@
+-    if name.toString.endsWith suffix then some name else none
++    if ("." ++ name.toString).endsWith suffix then some name else none
+@@ -36 +36 @@
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : machine.memory.live[id]? = some entry)
+@@ -77 +77 @@
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : machine.memory.live[id]? = some entry)
+@@ -144 +144 @@
+-    (present : current.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : current.live[id]? = some entry)
+@@ -149 +149 @@
+-      ⟨{current with live := (current.live.filter fun row => row.1 != id).push (id,{entry with allocation := updated})},
++      ⟨{current with live := (current.live.insert id {entry with allocation := updated})},
+@@ -154,0 +155 @@
++  unfold writeImmediateAfterAccess
+@@ -177 +178 @@
+-    (present : current.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : current.live[id]? = some entry)
+@@ -181 +182 @@
+-      ⟨{current with live := (current.live.filter fun row => row.1 != id).push (id,{entry with allocation := updated})},
++      ⟨{current with live := (current.live.insert id {entry with allocation := updated})},
+@@ -189,0 +191 @@
++  unfold writeImmediateAfterAccess
+--- a/examples/duplicate_prefix/PhysicalPointerAccess.lean
++++ b/examples/duplicate_prefix/PhysicalPointerAccess.lean
+@@ -10,345 +9,0 @@
+-
+-private def accessPrefix {Prov Extra K S PX : Type} [DecidableEq K]
+-    (initialMemory : MemoryState Prov Extra K) (initialHooks : S)
+-    (target : PointerArithmetic) (ptr : Pointer (Option Prov)) (size : Size)
+-    (ghostMode : Bool) (globalKind : Option K)
+-    (globalHooks : GlobalAllocationHooks Prov Extra K S)
+-    (accessHooks : AllocationAccessHooks Prov Extra K S PX) (write : Bool)
+-    (finishNext : MemoryState Prov Extra K → S →
+-      Option (ResolvedPointer PX × AllocationAccessRef Prov Extra) → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra))) :
+-    PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra)) := Id.run do
+-  let mut memory := initialMemory
+-  let mut hookState := initialHooks
+-  let signedSize ← match sizeAsI64 size with
+-    | .ok amount => pure amount
+-    | .error error => return ⟨memory, hookState, none, .error (.access error)⟩
+-  let mut checked : Option (ResolvedPointer PX × AllocationAccessRef Prov Extra) := none
+-  if signedSize != 0 then
+-    let resolution := accessHooks.resolvePointer memory hookState ptr signedSize
+-    hookState := resolution.state
+-    let resolved ← match resolution.outcome with
+-      | .error message => return ⟨memory, hookState, none,
+-          .error (.hookFailure "ptrTryGetAllocId" message)⟩
+-      | .ok (.error address) => return ⟨memory, hookState, none,
+-          .error (.access (.danglingIntegerPointer address signedSize .memoryAccess))⟩
+-      | .ok (.ok resolved) => pure resolved
+-    let raw := if write then
+-        MemoryLifecycle.getAllocRawMut memory hookState resolved.allocId globalKind globalHooks
+-      else MemoryLifecycle.getAllocRaw memory hookState resolved.allocId globalKind globalHooks
+-    memory := raw.memory
+-    hookState := raw.hooks
+-    let allocation ← match raw.outcome with
+-      | .ok allocation => pure allocation
+-      | .error error => return ⟨memory, hookState, none, .error (.rawAccess error)⟩
+-    let reference : AllocationAccessRef Prov Extra :=
+-      ⟨resolved.allocId, allocRange resolved.offset size, allocation⟩
+-    match checkedBounds target resolved.allocId allocation.byteSize resolved.offset signedSize .memoryAccess with
+-    | .error error => return ⟨memory, hookState, some reference, .error (.access error)⟩
+-    | .ok () => checked := some (resolved, reference)
+-  return finishNext memory hookState checked signedSize
+-
+-private def accessFinish {Prov Extra K S PX : Type} [DecidableEq K]
+-    (initialMemory : MemoryState Prov Extra K) (initialHooks : S)
+-    (ptr : Pointer (Option Prov)) (signedSize : Int) (ghostMode : Bool)
+-    (accessHooks : AllocationAccessHooks Prov Extra K S PX) (write : Bool)
+-    (initialChecked : Option (ResolvedPointer PX × AllocationAccessRef Prov Extra)) :
+-    PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra)) := Id.run do
+-  let mut memory := initialMemory
+-  let mut hookState := initialHooks
+-  let mut checked := initialChecked
+-  if !ghostMode then
+-    let accessId ← if write then
+-        pure (checked.map fun (_, reference) => reference.allocId)
+-      else do
+-        -- The source deliberately resolves again, including size-zero reads.
+-        let resolution := accessHooks.resolvePointer memory hookState ptr signedSize
+-        hookState := resolution.state
+-        match resolution.outcome with
+-        | .error message => return ⟨memory, hookState, checked.map Prod.snd,
+-            .error (.hookFailure "ptrTryGetAllocId" message)⟩
+-        | .ok (.error _) => pure none
+-        | .ok (.ok resolved) => pure (some resolved.allocId)
+-    if let some accessId := accessId then
+-      let access := accessHooks.beforeAllocationAccess hookState accessId
+-      hookState := access.state
+-      if let .error message := access.outcome then
+-        return ⟨memory, hookState, checked.map Prod.snd,
+-          .error (.hookFailure "beforeAllocAccess" message)⟩
+-    if let some (resolved, reference) := checked then
+-      let access := if write then
+-          accessHooks.beforeMemoryWrite hookState reference.allocation.extra ptr
+-            reference.allocId resolved.extra reference.range
+-        else accessHooks.beforeMemoryRead hookState reference.allocation.extra ptr
+-            reference.allocId resolved.extra reference.range
+-      hookState := access.state
+-      let updated := { reference with allocation := reference.allocation.setExtra access.extra }
+-      -- Borrowed CTFE globals have no local cache entry. Miri's owned global
+-      -- conversions and all mutable accesses do have one.
+-      if memory.live.any (fun entry => entry.1 == reference.allocId) then
+-        match memory.setLiveAllocation reference.allocId updated.allocation with
+-        | .ok afterUpdate => memory := afterUpdate
+-        | .error error => return ⟨memory, hookState, some updated, .error (.cacheUpdate error)⟩
+-      checked := some (resolved, updated)
+-      if let .error message := access.outcome then
+-        return ⟨memory, hookState, some updated,
+-          .error (.hookFailure (if write then "beforeMemoryWrite" else "beforeMemoryRead") message)⟩
+-  let reference := checked.map Prod.snd
+-  return ⟨memory, hookState, reference, .ok reference⟩
+-
+-
+-private theorem access_program {Prov Extra K S PX : Type} [DecidableEq K]
+-    (memory : MemoryState Prov Extra K) (hooks : S)
+-    (target : PointerArithmetic) (ptr : Pointer (Option Prov)) (size : Size)
+-    (ghostMode : Bool) (globalKind : Option K)
+-    (globalHooks : GlobalAllocationHooks Prov Extra K S)
+-    (accessHooks : AllocationAccessHooks Prov Extra K S PX) :
+-    AllocationAccess.getPtrAllocMut memory hooks target ptr size ghostMode globalKind globalHooks accessHooks =
+-      accessPrefix memory hooks target ptr size ghostMode globalKind globalHooks accessHooks true
+-        (fun memory hooks checked signed => accessFinish memory hooks ptr signed ghostMode accessHooks true checked) := by
+-  unfold AllocationAccess.getPtrAllocMut
+-  unfold_internal ".AllocationAccess.getPtrAllocation"
+-  unfold accessPrefix accessFinish
+-  rfl
+-#print axioms access_program
+-
+-private def accessRaw {Prov Extra K S PX : Type} [DecidableEq K]
+-    (memory : MemoryState Prov Extra K) (hooks : S) (target : PointerArithmetic)
+-    (resolved : ResolvedPointer PX) (size : Size) (signedSize : Int)
+-    (globalKind : Option K) (globalHooks : GlobalAllocationHooks Prov Extra K S) (write : Bool)
+-    (finishNext : MemoryState Prov Extra K → S → Option (ResolvedPointer PX × AllocationAccessRef Prov Extra) → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra))) :
+-    PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra)) := Id.run do
+-  let raw := if write then MemoryLifecycle.getAllocRawMut memory hooks resolved.allocId globalKind globalHooks
+-    else MemoryLifecycle.getAllocRaw memory hooks resolved.allocId globalKind globalHooks
+-  let allocation ← match raw.outcome with
+-    | .ok allocation => pure allocation
+-    | .error error => return ⟨raw.memory,raw.hooks,none,.error (.rawAccess error)⟩
+-  let reference : AllocationAccessRef Prov Extra := ⟨resolved.allocId,allocRange resolved.offset size,allocation⟩
+-  match checkedBounds target resolved.allocId allocation.byteSize resolved.offset signedSize .memoryAccess with
+-  | .error error => return ⟨raw.memory,raw.hooks,some reference,.error (.access error)⟩
+-  | .ok () => return finishNext raw.memory raw.hooks (some (resolved,reference)) signedSize
+-
+-private def accessResolve {Prov Extra K S PX : Type} [DecidableEq K]
+-    (memory : MemoryState Prov Extra K) (hooks : S) (ptr : Pointer (Option Prov)) (size : Size)
+-    (accessHooks : AllocationAccessHooks Prov Extra K S PX)
+-    (resolvedNext : MemoryState Prov Extra K → S → ResolvedPointer PX → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra)))
+-    (finishNext : MemoryState Prov Extra K → S → Option (ResolvedPointer PX × AllocationAccessRef Prov Extra) → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra))) :
+-    PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra)) := Id.run do
+-  let signed ← match sizeAsI64 size with
+-    | .ok signed => pure signed
+-    | .error error => return ⟨memory,hooks,none,.error (.access error)⟩
+-  if signed != 0 then
+-    let resolution := accessHooks.resolvePointer memory hooks ptr signed
+-    let resolved ← match resolution.outcome with
+-      | .error message => return ⟨memory,resolution.state,none,.error (.hookFailure "ptrTryGetAllocId" message)⟩
+-      | .ok (.error address) => return ⟨memory,resolution.state,none,
+-          .error (.access (.danglingIntegerPointer address signed .memoryAccess))⟩
+-      | .ok (.ok resolved) => pure resolved
+-    return resolvedNext memory resolution.state resolved signed
+-  return finishNext memory hooks none signed
+-
+-private theorem prefix_program {Prov Extra K S PX : Type} [DecidableEq K]
+-    (memory : MemoryState Prov Extra K) (hooks : S)
+-    (target : PointerArithmetic) (ptr : Pointer (Option Prov)) (size : Size)
+-    (ghostMode : Bool) (globalKind : Option K)
+-    (globalHooks : GlobalAllocationHooks Prov Extra K S)
+-    (accessHooks : AllocationAccessHooks Prov Extra K S PX) (write : Bool)
+-    (finishNext : MemoryState Prov Extra K → S → Option (ResolvedPointer PX × AllocationAccessRef Prov Extra) → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra))) :
+-    accessPrefix memory hooks target ptr size ghostMode globalKind globalHooks accessHooks write finishNext =
+-      accessResolve memory hooks ptr size accessHooks
+-        (fun memory hooks resolved signed => accessRaw memory hooks target resolved size signed globalKind globalHooks write finishNext)
+-        finishNext := by
+-  unfold accessPrefix accessResolve accessRaw
+-  rfl
+-#print axioms prefix_program
+-
+-private theorem access_finish_write {K U : Type} [DecidableEq K]
+-    (config : PlaceMachine.AccessConfig K (ValidityMachine.UserState U))
+-    (pointers : PointerMachine.Hooks K (ValidityMachine.Control U))
+-    (canonical : config.resolvePointer = TypedMemoryProviders.resolvePointer pointers)
+-    (machine : MachineHooks.MachineState K (ValidityMachine.UserState U))
+-    (id : AllocId) (tag : BorTag) (base count : UInt64)
+-    (entry : LocalAllocation Provenance BorrowTree K) (tree : BorrowTree)
+-    (width : pointers.arithmetic = ⟨Size.ofBytes 8⟩)
+-    (positive : (0 : UInt64) < count) (signedFits : count.toNat < 9223372036854775808)
+-    (cached : machine.user.addresses.baseAddr.find? (fun row => row.allocId == id) = some ⟨id,base⟩)
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
+-    (size : entry.allocation.byteSize = Size.ofBytes count)
+-    (mutable : entry.allocation.mutability = .Mut)
+-    (synchronize : config.globalHooks.synchronizeMemory = fun memory view => {view with machine := {view.machine with memory}})
+-    (before : config.beforeAllocationAccess = fun _ => pure ())
+-    (access : PlaceMachine.memoryAccess config true ⟨machine,none⟩ entry.allocation.extra id (.concrete tag)
+-      (allocRange Size.ZERO (Size.ofBytes count)) = ⟨⟨machine,none⟩,tree,.ok ()⟩)
+-    (signedLeaf : sizeAsI64 (Size.ofBytes count) = .ok (Int.ofNat count.toNat))
+-    (nonzeroLeaf : (Int.ofNat count.toNat != 0) = true)
+-    (resolveLeaf : config.resolvePointer machine.memory
+-      (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Int.ofNat count.toNat) machine =
+-      .ok (.ok ⟨id,Size.ZERO,.concrete tag⟩) machine)
+-    (rawLeaf : MemoryLifecycle.getAllocRawMut machine.memory (PlaceMachine.AccessState.mk machine none)
+-      id config.globalKind config.globalHooks = ⟨machine.memory,⟨machine,none⟩,.ok entry.allocation⟩)
+-    (checkedLeaf : checkedBounds ⟨Size.ofBytes 8⟩ id entry.allocation.byteSize Size.ZERO
+-      (Int.ofNat count.toNat) .memoryAccess = .ok ())
+-    (storedLeaf : machine.memory.setLiveAllocation id (entry.allocation.setExtra tree) =
+-      .ok (RetagEntry.updatedMemory machine.memory id entry tree))
+-    (containsLeaf : machine.memory.live.any (fun row => row.1 == id) = true) :
+-    accessFinish machine.memory ⟨machine,none⟩
+-      (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Int.ofNat count.toNat) false
+-      (PlaceMachine.accessHooks config) true
+-      (some (⟨id,Size.ZERO,.concrete tag⟩,⟨id,allocRange Size.ZERO (Size.ofBytes count),entry.allocation⟩)) =
+-      ⟨RetagEntry.updatedMemory machine.memory id entry tree, ⟨machine,none⟩,
+-        some ⟨id,allocRange Size.ZERO (Size.ofBytes count),entry.allocation.setExtra tree⟩,
+-        .ok (some ⟨id,allocRange Size.ZERO (Size.ofBytes count),entry.allocation.setExtra tree⟩)⟩ := by
+-  unfold accessFinish
+-  simp only [Bool.not_false, Bool.true_eq, ↓reduceIte, Option.map_some, Bind.bind, Pure.pure, Id.instMonad,
+-    PlaceMachine.accessHooks]
+-  unfold_internal ".PlaceMachine.bridge"
+-  simp only [before, pure, EStateM.pure]
+-  erw [access]
+-  simp only [containsLeaf, Bool.true_eq, ↓reduceIte]
+-  erw [storedLeaf]
+-  simp only [Option.map_some]
+-  rfl
+-#print axioms access_finish_write
+-
+-private theorem resolve_write {K U : Type} [DecidableEq K]
+-    (config : PlaceMachine.AccessConfig K (ValidityMachine.UserState U))
+-    (pointers : PointerMachine.Hooks K (ValidityMachine.Control U))
+-    (canonical : config.resolvePointer = TypedMemoryProviders.resolvePointer pointers)
+-    (machine : MachineHooks.MachineState K (ValidityMachine.UserState U))
+-    (id : AllocId) (tag : BorTag) (base count : UInt64)
+-    (entry : LocalAllocation Provenance BorrowTree K) (tree : BorrowTree)
+-    (width : pointers.arithmetic = ⟨Size.ofBytes 8⟩)
+-    (positive : (0 : UInt64) < count) (signedFits : count.toNat < 9223372036854775808)
+-    (cached : machine.user.addresses.baseAddr.find? (fun row => row.allocId == id) = some ⟨id,base⟩)
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
+-    (size : entry.allocation.byteSize = Size.ofBytes count)
+-    (mutable : entry.allocation.mutability = .Mut)
+-    (synchronize : config.globalHooks.synchronizeMemory = fun memory view => {view with machine := {view.machine with memory}})
+-    (before : config.beforeAllocationAccess = fun _ => pure ())
+-    (access : PlaceMachine.memoryAccess config true ⟨machine,none⟩ entry.allocation.extra id (.concrete tag)
+-      (allocRange Size.ZERO (Size.ofBytes count)) = ⟨⟨machine,none⟩,tree,.ok ()⟩)
+-    (signedLeaf : sizeAsI64 (Size.ofBytes count) = .ok (Int.ofNat count.toNat))
+-    (nonzeroLeaf : (Int.ofNat count.toNat != 0) = true)
+-    (resolveLeaf : config.resolvePointer machine.memory
+-      (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Int.ofNat count.toNat) machine =
+-      .ok (.ok ⟨id,Size.ZERO,.concrete tag⟩) machine)
+-    (rawLeaf : MemoryLifecycle.getAllocRawMut machine.memory (PlaceMachine.AccessState.mk machine none)
+-      id config.globalKind config.globalHooks = ⟨machine.memory,⟨machine,none⟩,.ok entry.allocation⟩)
+-    (checkedLeaf : checkedBounds ⟨Size.ofBytes 8⟩ id entry.allocation.byteSize Size.ZERO
+-      (Int.ofNat count.toNat) .memoryAccess = .ok ())
+-    (storedLeaf : machine.memory.setLiveAllocation id (entry.allocation.setExtra tree) =
+-      .ok (RetagEntry.updatedMemory machine.memory id entry tree))
+-    (containsLeaf : machine.memory.live.any (fun row => row.1 == id) = true)
+-    (finishNext : MemoryState Provenance BorrowTree K → PlaceMachine.AccessState K (ValidityMachine.UserState U) →
+-      Option (ResolvedPointer ProvenanceExtra × AllocationAccessRef Provenance BorrowTree) → Int →
+-      PtrAllocationResult Provenance BorrowTree K (PlaceMachine.AccessState K (ValidityMachine.UserState U))
+-        (Option (AllocationAccessRef Provenance BorrowTree)))
+-    (resolvedNext : MemoryState Provenance BorrowTree K → PlaceMachine.AccessState K (ValidityMachine.UserState U) →
+-      ResolvedPointer ProvenanceExtra → Int →
+-      PtrAllocationResult Provenance BorrowTree K (PlaceMachine.AccessState K (ValidityMachine.UserState U))
+-        (Option (AllocationAccessRef Provenance BorrowTree))) :
+-    accessResolve machine.memory ⟨machine,none⟩
+-      (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Size.ofBytes count)
+-      (PlaceMachine.accessHooks config) resolvedNext finishNext =
+-      resolvedNext machine.memory ⟨machine,none⟩ ⟨id,Size.ZERO,.concrete tag⟩ (Int.ofNat count.toNat) := by
+-  unfold accessResolve
+-  simp only [signedLeaf, Bind.bind, Pure.pure, Id.instMonad, nonzeroLeaf, Bool.true_eq, ↓reduceIte, PlaceMachine.accessHooks]
+-  unfold_internal ".PlaceMachine.bridge"
+-  erw [resolveLeaf]
+-  simp only [Bind.bind, Pure.pure, Id.instMonad]
+-  rfl
+-#print axioms resolve_write
+-
+-private def accessRawResult {Prov Extra K S PX : Type}
+-    (raw : MemoryAccessResult Prov Extra K S (Allocation Prov Extra))
+-    (target : PointerArithmetic) (resolved : ResolvedPointer PX) (size : Size) (signedSize : Int)
+-    (finishNext : MemoryState Prov Extra K → S → Option (ResolvedPointer PX × AllocationAccessRef Prov Extra) → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra))) :
+-    PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra)) := Id.run do
+-  let allocation ← match raw.outcome with
+-    | .ok allocation => pure allocation
+-    | .error error => return ⟨raw.memory,raw.hooks,none,.error (.rawAccess error)⟩
+-  let reference : AllocationAccessRef Prov Extra := ⟨resolved.allocId,allocRange resolved.offset size,allocation⟩
+-  match checkedBounds target resolved.allocId allocation.byteSize resolved.offset signedSize .memoryAccess with
+-  | .error error => return ⟨raw.memory,raw.hooks,some reference,.error (.access error)⟩
+-  | .ok () => return finishNext raw.memory raw.hooks (some (resolved,reference)) signedSize
+-
+-private theorem raw_program {Prov Extra K S PX : Type} [DecidableEq K]
+-    (memory : MemoryState Prov Extra K) (hooks : S) (target : PointerArithmetic)
+-    (resolved : ResolvedPointer PX) (size : Size) (signedSize : Int)
+-    (globalKind : Option K) (globalHooks : GlobalAllocationHooks Prov Extra K S) (write : Bool)
+-    (finishNext : MemoryState Prov Extra K → S → Option (ResolvedPointer PX × AllocationAccessRef Prov Extra) → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra))) :
+-    accessRaw memory hooks target resolved size signedSize globalKind globalHooks write finishNext =
+-      accessRawResult (if write then MemoryLifecycle.getAllocRawMut memory hooks resolved.allocId globalKind globalHooks
+-        else MemoryLifecycle.getAllocRaw memory hooks resolved.allocId globalKind globalHooks)
+-        target resolved size signedSize finishNext := by rfl
+-
+-private theorem raw_result_ok {Prov Extra K S PX : Type}
+-    (raw : MemoryAccessResult Prov Extra K S (Allocation Prov Extra))
+-    (memory : MemoryState Prov Extra K) (hooks : S) (allocation : Allocation Prov Extra)
+-    (target : PointerArithmetic) (resolved : ResolvedPointer PX) (size : Size) (signed : Int)
+-    (rawEq : raw = ⟨memory,hooks,.ok allocation⟩)
+-    (checked : checkedBounds target resolved.allocId allocation.byteSize resolved.offset signed .memoryAccess = .ok ())
+-    (finishNext : MemoryState Prov Extra K → S → Option (ResolvedPointer PX × AllocationAccessRef Prov Extra) → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra))) :
+-    accessRawResult raw target resolved size signed finishNext =
+-      finishNext memory hooks (some (resolved,⟨resolved.allocId,allocRange resolved.offset size,allocation⟩)) signed := by
+-  rw [rawEq]
+-  unfold accessRawResult
+-  simp only [Bind.bind, Pure.pure, Id.instMonad]
+-  rw [checked]
+-  rfl
+-#print axioms raw_result_ok
+-
+-private theorem raw_write {K U : Type} [DecidableEq K]
+-    (config : PlaceMachine.AccessConfig K (ValidityMachine.UserState U))
+-    (pointers : PointerMachine.Hooks K (ValidityMachine.Control U))
+-    (canonical : config.resolvePointer = TypedMemoryProviders.resolvePointer pointers)
+-    (machine : MachineHooks.MachineState K (ValidityMachine.UserState U))
+-    (id : AllocId) (tag : BorTag) (base count : UInt64)
+-    (entry : LocalAllocation Provenance BorrowTree K) (tree : BorrowTree)
+-    (width : pointers.arithmetic = ⟨Size.ofBytes 8⟩)
+-    (positive : (0 : UInt64) < count) (signedFits : count.toNat < 9223372036854775808)
+-    (cached : machine.user.addresses.baseAddr.find? (fun row => row.allocId == id) = some ⟨id,base⟩)
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
+-    (size : entry.allocation.byteSize = Size.ofBytes count)
+-    (mutable : entry.allocation.mutability = .Mut)
+-    (synchronize : config.globalHooks.synchronizeMemory = fun memory view => {view with machine := {view.machine with memory}})
+-    (before : config.beforeAllocationAccess = fun _ => pure ())
+-    (access : PlaceMachine.memoryAccess config true ⟨machine,none⟩ entry.allocation.extra id (.concrete tag)
+-      (allocRange Size.ZERO (Size.ofBytes count)) = ⟨⟨machine,none⟩,tree,.ok ()⟩)
+-    (signedLeaf : sizeAsI64 (Size.ofBytes count) = .ok (Int.ofNat count.toNat))
+-    (nonzeroLeaf : (Int.ofNat count.toNat != 0) = true)
+-    (resolveLeaf : config.resolvePointer machine.memory
+-      (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Int.ofNat count.toNat) machine =
+-      .ok (.ok ⟨id,Size.ZERO,.concrete tag⟩) machine)
+-    (rawLeaf : MemoryLifecycle.getAllocRawMut machine.memory (PlaceMachine.AccessState.mk machine none)
+-      id config.globalKind config.globalHooks = ⟨machine.memory,⟨machine,none⟩,.ok entry.allocation⟩)
+-    (checkedLeaf : checkedBounds ⟨Size.ofBytes 8⟩ id entry.allocation.byteSize Size.ZERO
+-      (Int.ofNat count.toNat) .memoryAccess = .ok ())
+-    (storedLeaf : machine.memory.setLiveAllocation id (entry.allocation.setExtra tree) =
+-      .ok (RetagEntry.updatedMemory machine.memory id entry tree))
+-    (containsLeaf : machine.memory.live.any (fun row => row.1 == id) = true)
+-    (finishNext : MemoryState Provenance BorrowTree K → PlaceMachine.AccessState K (ValidityMachine.UserState U) →
+-      Option (ResolvedPointer ProvenanceExtra × AllocationAccessRef Provenance BorrowTree) → Int →
+-      PtrAllocationResult Provenance BorrowTree K (PlaceMachine.AccessState K (ValidityMachine.UserState U))
+-        (Option (AllocationAccessRef Provenance BorrowTree))) :
+-    accessRaw machine.memory ⟨machine,none⟩ ⟨Size.ofBytes 8⟩ ⟨id,Size.ZERO,.concrete tag⟩
+-      (Size.ofBytes count) (Int.ofNat count.toNat) config.globalKind config.globalHooks true finishNext =
+-      finishNext machine.memory ⟨machine,none⟩
+-        (some (⟨id,Size.ZERO,.concrete tag⟩,⟨id,allocRange Size.ZERO (Size.ofBytes count),entry.allocation⟩))
+-        (Int.ofNat count.toNat) := by
+-  rw [raw_program]
+-  simp only [Bool.true_eq, ↓reduceIte]
+-  exact @raw_result_ok Provenance BorrowTree K (PlaceMachine.AccessState K (ValidityMachine.UserState U)) ProvenanceExtra
+-    (MemoryLifecycle.getAllocRawMut machine.memory (PlaceMachine.AccessState.mk machine none) id config.globalKind config.globalHooks)
+-    machine.memory (PlaceMachine.AccessState.mk machine none) entry.allocation
+-    ⟨Size.ofBytes 8⟩ ⟨id,Size.ZERO,.concrete tag⟩ (Size.ofBytes count) (Int.ofNat count.toNat)
+-    rawLeaf checkedLeaf finishNext
+-
+-#print axioms raw_write
+@@ -366 +21 @@
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : machine.memory.live[id]? = some entry)
+@@ -403,21 +58,24 @@
+-  rw [access_program, prefix_program]
+-  let finishNext := fun memory hooks checked signed =>
+-    accessFinish memory hooks (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) signed false
+-      (PlaceMachine.accessHooks config) true checked
+-  let resolvedNext := fun memory hooks resolved signed =>
+-    accessRaw memory hooks ⟨Size.ofBytes 8⟩ resolved (Size.ofBytes count) signed
+-      config.globalKind config.globalHooks true finishNext
+-  change accessResolve machine.memory (PlaceMachine.AccessState.mk machine none)
+-    (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Size.ofBytes count)
+-    (PlaceMachine.accessHooks config) resolvedNext finishNext = _
+-  have resolveStep := @resolve_write K U inferInstance config pointers canonical machine id tag base count entry tree width positive signedFits
+-    cached present size mutable synchronize before access signed nonzero resolved raw checked stored contains finishNext resolvedNext
+-  rw [resolveStep]
+-  change accessRaw machine.memory (PlaceMachine.AccessState.mk machine none) ⟨Size.ofBytes 8⟩
+-    ⟨id,Size.ZERO,.concrete tag⟩ (Size.ofBytes count) (Int.ofNat count.toNat)
+-    config.globalKind config.globalHooks true finishNext = _
+-  have rawStep := @raw_write K U inferInstance config pointers canonical machine id tag base count entry tree width positive signedFits
+-    cached present size mutable synchronize before access signed nonzero resolved raw checked stored contains finishNext
+-  rw [rawStep]
+-  exact @access_finish_write K U inferInstance config pointers canonical machine id tag base count entry tree width positive signedFits
+-    cached present size mutable synchronize before access signed nonzero resolved raw checked stored contains
++  let ptr : Pointer (Option Provenance) := Pointer.new (some (.concrete id tag)) (Size.ofBytes base)
++  let hooks : PlaceMachine.AccessState K (ValidityMachine.UserState U) := ⟨machine, none⟩
++  let resolvedPointer : ResolvedPointer ProvenanceExtra := ⟨id, Size.ZERO, .concrete tag⟩
++  have resolveHook :
++      (PlaceMachine.accessHooks config).resolvePointer machine.memory hooks ptr (Int.ofNat count.toNat) =
++        ⟨hooks, .ok (.ok resolvedPointer)⟩ := by
++    simp only [PlaceMachine.accessHooks, PlaceMachine.bridge, hooks, ptr, resolvedPointer, resolved]
++  have beforeHook : (PlaceMachine.accessHooks config).beforeAllocationAccess hooks id =
++      ⟨hooks, .ok ()⟩ := by
++    simp only [PlaceMachine.accessHooks, PlaceMachine.bridge, hooks, before, pure, EStateM.pure]
++  have performed := AllocationAccess.getPtrAlloc_checked true machine.memory machine.memory
++    hooks hooks hooks hooks ⟨Size.ofBytes 8⟩ ptr (Size.ofBytes count) config.globalKind
++    config.globalHooks (PlaceMachine.accessHooks config) resolvedPointer resolvedPointer entry.allocation
++    (Int.ofNat count.toNat) hooks signed (bne_iff_ne.mp nonzero) resolveHook raw checked
++    (by intro contradictory; cases contradictory) beforeHook
++  simp only [↓reduceIte] at performed
++  change AllocationAccess.getPtrAllocMut machine.memory hooks ⟨Size.ofBytes 8⟩ ptr
++    (Size.ofBytes count) false config.globalKind config.globalHooks (PlaceMachine.accessHooks config) = _
++  rw [performed]
++  dsimp only [AllocationAccess.finishCheckedAccess, PlaceMachine.accessHooks, hooks, resolvedPointer]
++  rw [access]
++  dsimp only
++  rw [ite_eq_left contains, stored]
++  rfl
+@@ -427,12 +85,25 @@
+-private theorem resolve_result_ok {Prov Extra K S PX : Type} [DecidableEq K]
+-    (memory : MemoryState Prov Extra K) (hooks : S) (ptr : Pointer (Option Prov)) (size : Size)
+-    (accessHooks : AllocationAccessHooks Prov Extra K S PX) (signed : Int) (resolved : ResolvedPointer PX)
+-    (sizeEq : sizeAsI64 size = .ok signed) (nonzero : (signed != 0) = true)
+-    (resolve : accessHooks.resolvePointer memory hooks ptr signed = ⟨hooks,.ok (.ok resolved)⟩)
+-    (resolvedNext : MemoryState Prov Extra K → S → ResolvedPointer PX → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra)))
+-    (finishNext : MemoryState Prov Extra K → S → Option (ResolvedPointer PX × AllocationAccessRef Prov Extra) → Int →
+-      PtrAllocationResult Prov Extra K S (Option (AllocationAccessRef Prov Extra))) :
+-    accessResolve memory hooks ptr size accessHooks resolvedNext finishNext = resolvedNext memory hooks resolved signed := by
+-  unfold accessResolve
+-  simp only [sizeEq, nonzero, Bind.bind, Pure.pure, Id.instMonad, Bool.true_eq, ↓reduceIte]
++private theorem ghost_access_of_edges {P E K H X : Type} [DecidableEq K]
++    (write : Bool) (memory rawMemory : MemoryState P E K) (hooks resolvedHooks rawHooks : H)
++    (target : PointerArithmetic) (ptr : Pointer (Option P)) (size : Size) (kind : Option K)
++    (global : GlobalAllocationHooks P E K H) (access : AllocationAccessHooks P E K H X)
++    (resolved : ResolvedPointer X) (allocation : Allocation P E) (amount : Int)
++    (signed : sizeAsI64 size = .ok amount) (nonzero : amount ≠ 0)
++    (resolve : access.resolvePointer memory hooks ptr amount = ⟨resolvedHooks, .ok (.ok resolved)⟩)
++    (raw : (if write then MemoryLifecycle.getAllocRawMut memory resolvedHooks resolved.allocId kind global
++      else MemoryLifecycle.getAllocRaw memory resolvedHooks resolved.allocId kind global) =
++        ⟨rawMemory, rawHooks, .ok allocation⟩)
++    (bounds : checkedBounds target resolved.allocId allocation.byteSize resolved.offset amount .memoryAccess = .ok ()) :
++    (if write then AllocationAccess.getPtrAllocMut memory hooks target ptr size true kind global access
++      else AllocationAccess.getPtrAlloc memory hooks target ptr size true kind global access) =
++      let reference := AllocationAccessRef.mk resolved.allocId (allocRange resolved.offset size) allocation
++      ⟨rawMemory, rawHooks, some reference, .ok (some reference)⟩ := by
++  have same :
++      (if write then AllocationAccess.getPtrAllocMut memory hooks target ptr size true kind global access
++        else AllocationAccess.getPtrAlloc memory hooks target ptr size true kind global access) =
++        AllocationAccess.getPtrAllocation memory hooks target ptr size true kind global access write := by
++    cases write <;> rfl
++  rw [same]
++  unfold AllocationAccess.getPtrAllocation AllocationAccess.preparePtrAllocation
++  rw [signed]
++  dsimp only [Id.run, bind, Bind.bind, pure, Pure.pure]
++  simp only [bne_iff_ne, ite_eq_left nonzero]
+@@ -439,0 +111,4 @@
++  dsimp only
++  rw [raw]
++  dsimp only
++  rw [bounds]
+@@ -441,25 +115,0 @@
+-
+-private theorem access_program_read {Prov Extra K S PX : Type} [DecidableEq K]
+-    (memory : MemoryState Prov Extra K) (hooks : S)
+-    (target : PointerArithmetic) (ptr : Pointer (Option Prov)) (size : Size)
+-    (ghostMode : Bool) (globalKind : Option K)
+-    (globalHooks : GlobalAllocationHooks Prov Extra K S)
+-    (accessHooks : AllocationAccessHooks Prov Extra K S PX) :
+-    AllocationAccess.getPtrAlloc memory hooks target ptr size ghostMode globalKind globalHooks accessHooks =
+-      accessPrefix memory hooks target ptr size ghostMode globalKind globalHooks accessHooks false
+-        (fun memory hooks checked signed => accessFinish memory hooks ptr signed ghostMode accessHooks false checked) := by
+-  unfold AllocationAccess.getPtrAlloc
+-  unfold_internal ".AllocationAccess.getPtrAllocation"
+-  unfold accessPrefix accessFinish
+-  rfl
+-
+-private theorem ghost_finish {Prov Extra K S PX : Type} [DecidableEq K]
+-    (memory : MemoryState Prov Extra K) (hooks : S) (ptr : Pointer (Option Prov)) (signed : Int)
+-    (accessHooks : AllocationAccessHooks Prov Extra K S PX) (write : Bool)
+-    (resolved : ResolvedPointer PX) (reference : AllocationAccessRef Prov Extra) :
+-    accessFinish memory hooks ptr signed true accessHooks write (some (resolved,reference)) =
+-      ⟨memory,hooks,some reference,.ok (some reference)⟩ := by
+-  unfold accessFinish
+-  simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte, Option.map_some]
+-  rfl
+-
+@@ -477 +127 @@
+-    (present : machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : machine.memory.live[id]? = some entry)
+@@ -525,34 +175,6 @@
+-  let finishNext := fun memory hooks checked signed => accessFinish memory hooks
+-    (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) signed true (PlaceMachine.accessHooks config) write checked
+-  let resolvedNext := fun memory hooks resolved signed => accessRaw memory hooks ⟨Size.ofBytes 8⟩ resolved
+-    (Size.ofBytes count) signed config.globalKind config.globalHooks write finishNext
+-  have program :
+-      (if write then AllocationAccess.getPtrAllocMut machine.memory ⟨machine,none⟩ ⟨Size.ofBytes 8⟩
+-        (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Size.ofBytes count) true
+-        config.globalKind config.globalHooks (PlaceMachine.accessHooks config)
+-      else AllocationAccess.getPtrAlloc machine.memory ⟨machine,none⟩ ⟨Size.ofBytes 8⟩
+-        (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Size.ofBytes count) true
+-        config.globalKind config.globalHooks (PlaceMachine.accessHooks config)) =
+-      accessResolve machine.memory ⟨machine,none⟩
+-        (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Size.ofBytes count)
+-        (PlaceMachine.accessHooks config) resolvedNext finishNext := by
+-    cases write
+-    · rw [access_program_read, prefix_program]
+-      rfl
+-    · rw [access_program, prefix_program]
+-      rfl
+-  rw [program, resolve_result_ok machine.memory (PlaceMachine.AccessState.mk machine none)
+-    (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Size.ofBytes count) (PlaceMachine.accessHooks config)
+-    (Int.ofNat count.toNat) ⟨id,Size.ZERO,.concrete tag⟩ signed nonzero resolveHook resolvedNext finishNext]
+-  change accessRaw machine.memory (PlaceMachine.AccessState.mk machine none) ⟨Size.ofBytes 8⟩
+-    ⟨id,Size.ZERO,.concrete tag⟩ (Size.ofBytes count) (Int.ofNat count.toNat) config.globalKind config.globalHooks
+-      write finishNext = _
+-  rw [raw_program]
+-  have done := @raw_result_ok Provenance BorrowTree K (PlaceMachine.AccessState K (ValidityMachine.UserState U)) ProvenanceExtra
+-    (if write then MemoryLifecycle.getAllocRawMut machine.memory (PlaceMachine.AccessState.mk machine none) id config.globalKind config.globalHooks
+-      else MemoryLifecycle.getAllocRaw machine.memory (PlaceMachine.AccessState.mk machine none) id config.globalKind config.globalHooks)
+-    machine.memory (PlaceMachine.AccessState.mk machine none) entry.allocation ⟨Size.ofBytes 8⟩
+-    ⟨id,Size.ZERO,.concrete tag⟩ (Size.ofBytes count) (Int.ofNat count.toNat) rawEq checked finishNext
+-  rw [done]
+-  exact ghost_finish machine.memory (PlaceMachine.AccessState.mk machine none) _ _ (PlaceMachine.accessHooks config)
+-    write ⟨id,Size.ZERO,.concrete tag⟩ ⟨id,allocRange Size.ZERO (Size.ofBytes count),entry.allocation⟩
++  exact ghost_access_of_edges write machine.memory machine.memory
++    ⟨machine,none⟩ ⟨machine,none⟩ ⟨machine,none⟩ ⟨Size.ofBytes 8⟩
++    (Pointer.new (some (.concrete id tag)) (Size.ofBytes base)) (Size.ofBytes count)
++    config.globalKind config.globalHooks (PlaceMachine.accessHooks config)
++    ⟨id,Size.ZERO,.concrete tag⟩ entry.allocation (Int.ofNat count.toNat)
++    signed (bne_iff_ne.mp nonzero) resolveHook rawEq checked
+--- a/examples/duplicate_prefix/RetagEntry.lean
++++ b/examples/duplicate_prefix/RetagEntry.lean
+@@ -78,2 +78 @@
+-  { memory with live := ((memory.live.filter fun row => row.1 != id).push
+-    (id, { entry with allocation := entry.allocation.setExtra tree })) }
++  { memory with live := ((memory.live.insert id { entry with allocation := entry.allocation.setExtra tree })) }
+@@ -89 +88 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id, entry)) :
++    (present : memory.live[id]? = some entry) :
+@@ -110 +109 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : memory.live[id]? = some entry)
+@@ -174,3 +173,2 @@
+-  have updatedPresent : (updatedMemory memory id entry parentTree).live.find?
+-      (fun row => row.1 == id) =
+-      some (id, {entry with allocation := entry.allocation.setExtra parentTree}) :=
++  have updatedPresent : (updatedMemory memory id entry parentTree).live[id]? =
++      some {entry with allocation := entry.allocation.setExtra parentTree} :=
+@@ -199 +197 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : memory.live[id]? = some entry)
+--- a/examples/duplicate_prefix/PhysicalScalarReturn.lean
++++ b/examples/duplicate_prefix/PhysicalScalarReturn.lean
+@@ -5 +4,0 @@
+-import duplicate_prefix.ProtectedBorrowAccess
+--- a/examples/duplicate_prefix/RootScalarQueries.lean
++++ b/examples/duplicate_prefix/RootScalarQueries.lean
+@@ -24 +24 @@
+-      (PreparedContracts.actualConfig options () remaining span) limits)).classify () 5 =
++      (PreparedContracts.actualConfig options () remaining span) limits)).classify () 4 =
+@@ -26 +26 @@
+-  change (PreparedContracts.actualConfig options () remaining span).scalar.classify () 5 = _
++  change (PreparedContracts.actualConfig options () remaining span).scalar.classify () 4 = _
+--- a/examples/duplicate_prefix/ReferenceMetadataFacts.lean
++++ b/examples/duplicate_prefix/ReferenceMetadataFacts.lean
+@@ -13,4 +13 @@
+-theorem slice_tail_type : CompilerFacts.requiredType context 4 "metadata_tail" = .ok 4 := by
+-  unfold CompilerFacts.requiredType CompilerFacts.optionalType
+-  unfold_fact_helpers
+-  simp only [context_node]
++theorem slice_tail_type : CompilerFacts.requiredType context 2 "metadata_tail" = .ok 2 := by
+@@ -19,4 +16 @@
+-theorem slice_inhabited : CompilerFacts.boolean context 4 "opsem_inhabited" = .ok true := by
+-  unfold CompilerFacts.boolean
+-  unfold_fact_helpers
+-  simp only [context_node]
++theorem slice_inhabited : CompilerFacts.boolean context 2 "opsem_inhabited" = .ok true := by
+@@ -37 +31 @@
+-theorem slice_metadata_tail : CompilerFactAdapters.metadataTail prepared 4 = .ok .sliceOrStr := by
++theorem slice_metadata_tail : CompilerFactAdapters.metadataTail prepared 2 = .ok .sliceOrStr := by
+@@ -45 +39 @@
+-theorem reference_kind : CompilerFactAdapters.validityKind prepared 3 = .ok (.reference true) := by
++theorem reference_kind : CompilerFactAdapters.validityKind prepared 1 = .ok (.reference true) := by
+@@ -53 +47 @@
+-    (CompilerFactAdapters.validityHooks prepared base).classify choice 3 = pure (.reference true) := by
++    (CompilerFactAdapters.validityHooks prepared base).classify choice 1 = pure (.reference true) := by
+@@ -60 +54 @@
+-    (CompilerFactAdapters.validityHooks prepared base).metadataTail choice 4 = pure .sliceOrStr := by
++    (CompilerFactAdapters.validityHooks prepared base).metadataTail choice 2 = pure .sliceOrStr := by
+@@ -67 +61 @@
+-    (CompilerFactAdapters.validityHooks prepared base).typeName choice 3 = pure "&mut [u8]" := by
++    (CompilerFactAdapters.validityHooks prepared base).typeName choice 1 = pure "&mut [u8]" := by
+@@ -76,2 +70,2 @@
+-    (noConstructedSlice : world.entries.find? (·.value.ty == 4) = none) :
+-    RuntimeArrayFacts.opsemInhabited context world 4 (fuel+1) = .ok true := by
++    (noConstructedSlice : world.entries.find? (·.value.ty == 2) = none) :
++    RuntimeArrayFacts.opsemInhabited context world 2 (fuel+1) = .ok true := by
+@@ -83 +77 @@
+-    RuntimeArrayFacts.opsemInhabited context PreparedReflection.actual.prepared.types 4 (fuel+1) = .ok true := by
++    RuntimeArrayFacts.opsemInhabited context PreparedReflection.actual.prepared.types 2 (fuel+1) = .ok true := by
+--- a/examples/duplicate_prefix/RootPrefix.lean
++++ b/examples/duplicate_prefix/RootPrefix.lean
+@@ -35 +35 @@
+-    (trivial2 : config.lifecycle.storage.veryTriviallySized 2 = .ok true)
++    (trivialUnit : config.lifecycle.storage.veryTriviallySized 5 = .ok true)
+@@ -37 +37 @@
+-    (trivial5 : config.lifecycle.storage.veryTriviallySized 5 = .ok true) :
++    (trivialUsize : config.lifecycle.storage.veryTriviallySized 4 = .ok true) :
+@@ -53 +53 @@
+-    ⟨0,0⟩ block (block.statements[0]'(by decide)) 3 2 location
++    ⟨0,0⟩ block (block.statements[0]'(by decide)) 3 5 location
+@@ -55 +55 @@
+-    (by rw [body]; rfl) trivial2 dead3 noClocks
++    (by rw [body]; rfl) trivialUnit dead3 noClocks
+@@ -62 +62 @@
+-    ⟨0,2⟩ block (block.statements[2]'(by decide)) 5 5 (by rfl)
++    ⟨0,2⟩ block (block.statements[2]'(by decide)) 5 4 (by rfl)
+@@ -64 +64 @@
+-    (by rw [sizeTwo]; decide) (by change frame.body.locals[5]? = _; rw [body]; rfl) trivial5
++    (by rw [sizeTwo]; decide) (by change frame.body.locals[5]? = _; rw [body]; rfl) trivialUsize
+--- a/examples/duplicate_prefix/PhysicalMachineRead.lean
++++ b/examples/duplicate_prefix/PhysicalMachineRead.lean
+@@ -17 +17 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -70 +70 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+--- a/examples/duplicate_prefix/WideValidityQueries.lean
++++ b/examples/duplicate_prefix/WideValidityQueries.lean
+@@ -0,0 +1,2 @@
++import duplicate_prefix.RootCompilerFacts
++import duplicate_prefix.ReferenceMetadataFacts
+@@ -8,2 +10,3 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 4 "is_sized" = .ok false := by
+-  unfold CompilerFacts.boolean
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 2 "is_sized" = .ok false := by
++  change ConcreteTypeQueries.boolean PreparedReflection.actual.runtime 2 "is_sized" = .ok false
++  unfold ConcreteTypeQueries.boolean
+@@ -11,5 +14,4 @@
+-  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 4 =
+-      PreparedReflection.actual.runtime.node 4 :=
+-    RootMetadataQueries.context_node 4
+-  simp only [node]
+-  with_unfolding_all rfl
++  have row : PreparedReflection.actual.runtime.node 2 = .ok PreparedReflection.actual.runtime.source.types[2] := rfl
++  simp only [row, bind, Bind.bind, Except.bind, Except.mapError]
++  rw [RootCompilerFacts.pointee_layout_eq]
++  rfl
+@@ -17 +19 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 49 = .ok (.rawPointer 4 false) := by
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 44 = .ok (.rawPointer 2 false) := by
+@@ -26,2 +28,2 @@
+-    let sized ← CompilerFacts.boolean PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 4 "is_sized"
+-    pure (ValidityVisitor.TypeKind.rawPointer 4 sized)) = .ok (ValidityVisitor.TypeKind.rawPointer 4 false)
++    let sized ← CompilerFacts.boolean PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 2 "is_sized"
++    pure (ValidityVisitor.TypeKind.rawPointer 2 sized)) = .ok (ValidityVisitor.TypeKind.rawPointer 2 false)
+@@ -32 +34 @@
+-      choice 49 = pure (.rawPointer 4 false) := by
++      choice 44 = pure (.rawPointer 2 false) := by
+@@ -40 +42 @@
+-      choice 49 = pure "*const [u8]" := by
++      choice 44 = pure "*const [u8]" := by
+@@ -44,3 +46,3 @@
+-  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 49 =
+-      PreparedReflection.actual.runtime.node 49 :=
+-    RootMetadataQueries.context_node 49
++  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 44 =
++      PreparedReflection.actual.runtime.node 44 :=
++    RootMetadataQueries.context_node 44
+@@ -51,10 +53,2 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 4 = .ok .sliceOrStr := by
+-  unfold CompilerFactAdapters.metadataTail CompilerFacts.requiredType CompilerFacts.optionalType
+-  unfold_fact_helpers
+-  unfold_validity_source
+-  have nodes (id : TypeId) : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node id =
+-      PreparedReflection.actual.runtime.node id :=
+-    RootMetadataQueries.context_node id
+-  simp only [nodes]
+-  with_unfolding_all rfl
+-
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 2 = .ok .sliceOrStr :=
++  ReferenceMetadataFacts.slice_metadata_tail
+@@ -63 +57 @@
+-      choice 4 = pure .sliceOrStr := by
++      choice 2 = pure .sliceOrStr := by
+--- a/examples/duplicate_prefix/ScalarValidityQueries.lean
++++ b/examples/duplicate_prefix/ScalarValidityQueries.lean
+@@ -22 +22 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 5 = .ok .integer := by
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 4 = .ok .integer := by
+@@ -26,3 +26,3 @@
+-  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 5 =
+-      PreparedReflection.actual.runtime.node 5 :=
+-    RootMetadataQueries.context_node 5
++  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 4 =
++      PreparedReflection.actual.runtime.node 4 :=
++    RootMetadataQueries.context_node 4
+@@ -45 +45 @@
+-      choice 5 = pure .integer := by
++      choice 4 = pure .integer := by
+@@ -69 +69 @@
+-      choice 5 = pure "usize" := by
++      choice 4 = pure "usize" := by
+@@ -73,3 +73,3 @@
+-  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 5 =
+-      PreparedReflection.actual.runtime.node 5 :=
+-    RootMetadataQueries.context_node 5
++  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 4 =
++      PreparedReflection.actual.runtime.node 4 :=
++    RootMetadataQueries.context_node 4
+@@ -92,2 +92,3 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 1 "is_sized" = .ok true := by
+-  unfold CompilerFacts.boolean
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 3 "is_sized" = .ok true := by
++  change ConcreteTypeQueries.boolean PreparedReflection.actual.runtime 3 "is_sized" = .ok true
++  unfold ConcreteTypeQueries.boolean
+@@ -95,5 +96,4 @@
+-  have node : PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context.runtime.node 1 =
+-      PreparedReflection.actual.runtime.node 1 :=
+-    RootMetadataQueries.context_node 1
+-  simp only [node]
+-  with_unfolding_all rfl
++  have row : PreparedReflection.actual.runtime.node 3 = .ok PreparedReflection.actual.runtime.source.types[3] := rfl
++  simp only [row, bind, Bind.bind, Except.bind, Except.mapError]
++  rw [CopyCompilerFacts.byte_layout_eq]
++  rfl
+@@ -113 +113 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 8 = .ok (.rawPointer 1 true) := by
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 8 = .ok (.rawPointer 3 true) := by
+@@ -122,2 +122,2 @@
+-    let sized ← CompilerFacts.boolean PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 1 "is_sized"
+-    pure (ValidityVisitor.TypeKind.rawPointer 1 sized)) = .ok (ValidityVisitor.TypeKind.rawPointer 1 true)
++    let sized ← CompilerFacts.boolean PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 3 "is_sized"
++    pure (ValidityVisitor.TypeKind.rawPointer 3 sized)) = .ok (ValidityVisitor.TypeKind.rawPointer 3 true)
+@@ -128 +128 @@
+-    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 9 = .ok (.rawPointer 1 true) := by
++    PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 9 = .ok (.rawPointer 3 true) := by
+@@ -137,2 +137,2 @@
+-    let sized ← CompilerFacts.boolean PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 1 "is_sized"
+-    pure (ValidityVisitor.TypeKind.rawPointer 1 sized)) = .ok (ValidityVisitor.TypeKind.rawPointer 1 true)
++    let sized ← CompilerFacts.boolean PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts.context 3 "is_sized"
++    pure (ValidityVisitor.TypeKind.rawPointer 3 sized)) = .ok (ValidityVisitor.TypeKind.rawPointer 3 true)
+@@ -144 +144 @@
+-      choice 8 = pure (.rawPointer 1 true) := by
++      choice 8 = pure (.rawPointer 3 true) := by
+@@ -164 +164 @@
+-      choice 9 = pure (.rawPointer 1 true) := by
++      choice 9 = pure (.rawPointer 3 true) := by
+--- a/examples/duplicate_prefix/TypedRetagFields.lean
++++ b/examples/duplicate_prefix/TypedRetagFields.lean
+@@ -152 +152 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
+@@ -215 +215 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)
+@@ -265 +265 @@
+-    (present : ambient.machine.memory.live.find? (fun row => row.1 == id) = some (id, entry))
++    (present : ambient.machine.memory.live[id]? = some entry)

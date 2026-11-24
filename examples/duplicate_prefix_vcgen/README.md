@@ -73,8 +73,8 @@ authorized location slots to a complete access across the specified range.
 unexposed protector and the corresponding allocation and ownership-ledger
 updates. [ZeroTail.lean](ZeroTail.lean) verifies the three steps from the
 prepared zero-branch cleanup position through the jump to the return slot.
-The whole-function proof still needs to derive permissions at the
-relevant calls and compose the current helper and return paths.
+The whole-function proof still needs to establish the prepared ownership
+states from lawful call entry and compose the helper and return paths.
 
 [LanguageGuardStack.lean](LanguageGuardStack.lean) checks the actual helper's
 false-result assignment, local destination copy, and canonical stack return
@@ -83,18 +83,25 @@ under its explicit frame and call-policy premises.
 [LanguageGuardCall.lean](LanguageGuardCall.lean) connects the actual
 resolved helper to canonical call entry. [LanguageGuardValidity.lean](LanguageGuardValidity.lean)
 handles the guard's Boolean validity check.
+[LanguageGuardAssignment.lean](LanguageGuardAssignment.lean) proves the
+constant operand and uncached place evaluation for the guard assignment.
 [NestedGuardDriver.lean](NestedGuardDriver.lean) links the canonical step
 to the checked before-terminator path under fixed scheduling.
 [ZeroBoolean.lean](ZeroBoolean.lean)
 checks the selected zero-branch write and read of the actual return value.
 [ZeroAssignment.lean](ZeroAssignment.lean) links the assignment to the
-canonical step. [ZeroReturn.lean](ZeroReturn.lean) checks writing back to
-the caller and resuming its continuation, given the exact stack pop.
+canonical step. [ZeroNodes.lean](ZeroNodes.lean) checks the generated
+assignment and return instructions. [ZeroReturnDriver.lean](ZeroReturnDriver.lean)
+connects the selected return to its before-terminator step.
+[ZeroReturn.lean](ZeroReturn.lean) checks writing back to the caller and
+resuming its continuation, given the exact stack pop.
 
 [SourceDomain.lean](SourceDomain.lean) states bytewise ownership and
 forest coherence for a prepared concrete slice. [MutableSliceRights.lean](MutableSliceRights.lean)
 uses those facts to preserve the local and foreign permissions of a fresh
 mutable child, given the concrete retag footprint.
+[MutableSliceRetag.lean](MutableSliceRetag.lean) derives the child attachment
+from the actual Tree Borrows insertion.
 
 [ScopedSafetyTransfer.lean](ScopedSafetyTransfer.lean) connects separately
 proved scoped error safety and successful root preparation to the generated
@@ -106,9 +113,9 @@ The archive overlay imports the current standalone MIR and rebuilds its proof
 modules against the current interpreter. It pins the old source revision and
 applies [ArchiveMigration.patch](ArchiveMigration.patch) only in a fresh
 output directory. Its default target set covers the typed compiler metadata,
-the root and copy-helper opcode equations, and selected allocation, retagging
-and copy bridges. The complete archived zero and all-count call proofs still
-need further migration.
+the root's exact ABI and declaration spans, canonical frame initialization
+queries, and selected allocation, retagging and copy bridges. The complete
+archived zero and all-count call proofs still need further migration.
 
 ```sh
 git fetch origin 7950c01b18013969c360df535b8b888dd6181dff
@@ -118,5 +125,30 @@ python3 tools/check-duplicate-prefix-archive.py \
 ```
 
 The checker uses prebuilt Lean library artifacts. Its logs and rebuilt
-proofs stay in the output directory. `--target RootZeroComplete` selects
-the larger proof closure for migration work.
+proofs stay in the output directory. The active protector release and
+canonical stack-pop composition are included in the default targets.
+[ZeroReturnOwnership.lean](ZeroReturnOwnership.lean) uses that composition
+to check normal return from the owned protector profile.
+
+```sh
+LEAN_PATH="$PWD/scratch/duplicate-prefix-vcgen:$PWD/scratch/duplicate-prefix-archive-check:$PWD/.lake/build/lib/lean" \
+  lean -j1 examples/duplicate_prefix_vcgen/ZeroReturnOwnership.lean
+```
+
+`--target ArchiveTraceToVC` checks the bridge from a separately proved
+returning trace to the current VC.
+`--target RootZeroComplete` selects the larger proof closure for migration work.
+
+The optional `RetagFrozenChild` target checks actual child insertion and
+the resulting range and permission frame under its concrete fresh-tag premises.
+
+After the standalone example script builds `SourceDomain.olean`, the
+optional `ExclusiveCopyStep` target verifies the actual positive copy
+instruction and its byte update from the prepared tree permissions.
+
+```sh
+LEAN_PATH="$PWD/scratch/duplicate-prefix-vcgen" \
+  python3 tools/check-duplicate-prefix-archive.py \
+    scratch/duplicate-prefix-vcgen/Representative.mir.json \
+    --output scratch/duplicate-prefix-copy-step --target ExclusiveCopyStep
+```

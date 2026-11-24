@@ -1,4 +1,6 @@
 import Representative
+import Miri.Verification.StepWP
+import Miri.Interpreter.ValidityMachine
 import empty_function.FrameExit
 
 namespace DuplicatePrefix.LanguageGuardStack
@@ -263,9 +265,113 @@ theorem returnRuntimeGuard
     change cleanup choice false frame after = (after, .ok .normal) at cleaned
     simp [result, cleaned, continuation, ControlFlow.returnToBlock]
 
+/-- At the exported helper's second instruction the real step selector
+dispatches the retained Return. -/
+theorem selectedRuntimeReturn (before : State) (frame : F)
+    (current : before.stack.currentFrame? = some frame)
+    (source : GeneratedBodySafety.input.document.bodies[19]?.map (·.mir) = some frame.body)
+    (atReturn : frame.location = .mir ⟨0, 1⟩) :
+    ∃ term, Miri.Verification.StepWP.currentTerminator before = some term ∧ term.kind = .Return := by
+  have shape := congrArg (fun code : Option Body => code.bind fun body =>
+    body.basicBlocks[0]?.map fun block => (block.statements.size, block.cleanup, block.terminator.kind)) source
+  change some (1, false, .Return) =
+    (frame.body.basicBlocks[0]?.map fun block => (block.statements.size, block.cleanup, block.terminator.kind)) at shape
+  cases row : frame.body.basicBlocks[0]? with
+  | none => simp [row] at shape
+  | some block =>
+    simp only [row, Option.map_some, Option.some.injEq, Prod.mk.injEq] at shape
+    have empty : block.statements[1]? = none := by
+      apply Array.getElem?_eq_none
+      omega
+    exact ⟨block.terminator,
+      by simp [Miri.Verification.StepWP.currentTerminator, current, atReturn, row, empty], shape.2.2.symm⟩
+
+theorem writeFalseScoped [DecidableEq K]
+    (access : ValidityMachine.Access K U)
+    (alloc : PlaceMachine.AllocationConfig K (ValidityMachine.UserState U))
+    (compiler : ValidityMachine.Compiler K U C) (choice : C)
+    (older : Array F) (caller : F) (machine : MachineHooks.MachineState K (ValidityMachine.UserState U))
+    (id : LocalId) (slot : LocalState Provenance LocalLayout) (layout : LocalLayout)
+    (atSlot : caller.locals[id]? = some slot)
+    (live : ∃ old, slot.value = .live (.immediate old))
+    (sized : layout.layout.isSized = true) (noClocks : caller.extra.dataRace = none)
+    (debug : compiler.debugAssertions = false) (abi : compiler.debugAbiCheck = fun _ _ => pure ())
+    :
+    let destination : RuntimePlace Provenance :=
+      ⟨.local older.size id none caller.localsIdentity, layout⟩
+    let newSlot : LocalState Provenance LocalLayout := {slot with value := .live (.immediate (.scalar (Scalar.fromBool false)))}
+    let updated := {caller with locals := caller.locals.setIfInBounds id newSlot}
+    writePlaceImmediateNoValidate (ValidityMachine.placeHooks access alloc compiler) choice
+      (.scalar (Scalar.fromBool false)) destination (withCurrent older caller machine) =
+      .ok () (withCurrent older updated machine) := by
+  obtain ⟨old, live⟩ := live
+  have bound := (Array.getElem?_eq_some_iff.mp atSlot).1
+  have found := (Array.getElem?_eq_some_iff.mp atSlot).2
+  have got : caller.getLocalOperand id = .ok (.immediate old) := by
+    simp [Frame.getLocalOperand, Frame.getLocal, bound, found, live, LocalState.access,
+      bind, Bind.bind, pure, Pure.pure, Except.bind, Except.pure, Except.mapError]
+  let newSlot : LocalState Provenance LocalLayout := {slot with value := .live (.immediate (.scalar (Scalar.fromBool false)))}
+  let updated := {caller with locals := caller.locals.setIfInBounds id newSlot}
+  have put : caller.setLocalOperand id (.immediate (.scalar (Scalar.fromBool false))) =
+      .ok updated := by
+    simp [Frame.setLocalOperand, Frame.replaceLocalValue, got, bound, found, updated, newSlot,
+      Array.setIfInBounds, bind, Bind.bind, pure, Pure.pure, Except.bind, Except.pure]
+  cases ghost : machine.user.payload.ghost <;> with_unfolding_all
+    simp [writePlaceImmediateNoValidate, asMplaceOrMutableLocal, ValidityMachine.placeHooks,
+      ValidityMachine.compilerPolicy, ValidityMachine.validationInProgress, PlaceMachine.placeHooks,
+      requireCurrent_eq, checkLocalIdentity_debugOff, placeWriteLocalImmediate, stackLift_ok,
+      sized, debug, abi, got, put, MachineHooks.currentFrame, Stack.currentFrame?, Stack.frameIndex,
+      withCurrent, MachineHooks.setCurrentFrame, MachineHooks.afterLocalWrite, noClocks,
+      updated, newSlot, ghost, get, getThe, MonadStateOf.get, EStateM.get, bind, Bind.bind, EStateM.bind,
+      set, MonadStateOf.set, EStateM.set, pure, Pure.pure, EStateM.pure, Except.pure, Except.bind]
+
+/-- A same-layout return copy through the real place hooks writes the
+Boolean to the live caller slot. The exact residual operation is the
+production validation branch on the updated destination. -/
+theorem copyFalseScoped [DecidableEq K]
+    (access : ValidityMachine.Access K U)
+    (alloc : PlaceMachine.AllocationConfig K (ValidityMachine.UserState U))
+    (compiler : ValidityMachine.Compiler K U C)
+    (copy : PlaceCopyHooks Provenance (ValidityMachine.State K U) C)
+    (choice : C) (older : Array F) (caller : F) (machine : MachineHooks.MachineState K (ValidityMachine.UserState U))
+    (id : LocalId) (slot : LocalState Provenance LocalLayout) (layout : LocalLayout)
+    (atSlot : caller.locals[id]? = some slot)
+    (live : ∃ old, slot.value = .live (.immediate old))
+    (sized : layout.layout.isSized = true) (noClocks : caller.extra.dataRace = none)
+    (debug : compiler.debugAssertions = false) (abi : compiler.debugAbiCheck = fun _ _ => pure ())
+    (compatible : copy.compatible layout layout = .ok true)
+    (padding : ∃ hasPadding, copy.hasPadding layout = .ok hasPadding)
+    (rawRead : copy.readRaw choice = PlaceMachine.readRaw access)
+    (retain : access.retainTouched machine none = machine) :
+    let destination : RuntimePlace Provenance :=
+      ⟨.local older.size id none caller.localsIdentity, layout⟩
+    let newSlot : LocalState Provenance LocalLayout :=
+      {slot with value := .live (.immediate (.scalar (Scalar.fromBool false)))}
+    let updated := {caller with locals := caller.locals.setIfInBounds id newSlot}
+    copyRuntimePlace (ValidityMachine.placeHooks access alloc compiler) copy choice
+      ⟨.immediate (.scalar (Scalar.fromBool false)), layout⟩ destination true
+      (withCurrent older caller machine) =
+      ((do
+        if ← ValidityMachine.enforceValidity then compiler.validate choice destination) :
+          ValidityMachine.M K U Unit) (withCurrent older updated machine) := by
+  obtain ⟨pad, padding⟩ := padding
+  have write := writeFalseScoped access alloc compiler choice older caller machine id slot layout
+    atSlot live sized noClocks debug abi
+  have raw := readRawFalse access layout (withCurrent older caller machine) retain
+  dsimp only at write ⊢
+  cases pad <;>
+    simp [copyRuntimePlace, copyRuntimePlaceNoValidate, placeLift_ok, compatible, padding,
+      rawRead, raw, sized, write,
+      bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure] <;>
+    rfl
+
 end DuplicatePrefix.LanguageGuardStack
 
 #print axioms DuplicatePrefix.LanguageGuardStack.pointerAddGuardBinding
 #print axioms DuplicatePrefix.LanguageGuardStack.writeFalseCached
 #print axioms DuplicatePrefix.LanguageGuardStack.copyFalseCached
 #print axioms DuplicatePrefix.LanguageGuardStack.returnRuntimeGuard
+
+#print axioms DuplicatePrefix.LanguageGuardStack.selectedRuntimeReturn
+
+#print axioms DuplicatePrefix.LanguageGuardStack.copyFalseScoped

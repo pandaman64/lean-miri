@@ -380,6 +380,38 @@ theorem stepRuntimeGuardAssignment
   rw [show evalRvalueIntoPlace hooks choice runtimeExpression (atLocal 0) before =
     hooks.writeImmediate choice (.scalar (Scalar.fromBool false)) place laidOut from result]
 
+private def pointerAddTargets : SwitchTargets := ⟨#[.Case 0 5], 2⟩
+
+theorem pointerAddSwitchCode :
+    atTerminator 4 1 = some (.SwitchInt (.Move (atLocal 4)) pointerAddTargets) := by rfl
+
+/-- The current pointer-add switch sends the actual false guard result to
+bb5, bypassing the additional debug precondition branch. -/
+theorem pointerAddFalseJump
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
+    (choice : C) (layout : LocalLayout) (before read classified laidOut : State)
+    (width : layout.layout.size = Size.ofBytes 1)
+    (value : (ExecutionMachine.terminatorHooks config limits).evalDiscriminant choice
+      (.Move (atLocal 4)) before = (read, .ok ⟨.scalar (Scalar.fromBool false), layout⟩))
+    (classification : ((ExecutionMachine.scalarHooks (ExecutionMachine.withValidation config limits)).classify
+      choice layout.ty).run read = .ok .boolean classified)
+    (boolLayout : ((ExecutionMachine.scalarHooks (ExecutionMachine.withValidation config limits)).boolLayout
+      choice).run classified = .ok layout laidOut) :
+    ControlFlow.evalSwitchInt (ExecutionMachine.terminatorHooks config limits) choice
+      (.Move (atLocal 4)) pointerAddTargets before = ControlFlow.goToBlock 5 laidOut := by
+  have compared := compareBooleanZero config limits choice layout read classified laidOut
+    width classification boolLayout
+  have selected : ControlFlow.selectSwitchTarget (ExecutionMachine.terminatorHooks config limits) choice
+      ⟨.scalar (Scalar.fromBool false), layout⟩ pointerAddTargets read = (laidOut, .ok 5) := by
+    generalize (ExecutionMachine.terminatorHooks config limits) = hooks at *
+    conv => lhs; cbv
+    cbv at compared
+    rw [compared]
+    rfl
+  unfold ControlFlow.evalSwitchInt
+  rw [value]
+  simp only [bind, Bind.bind, pure, Pure.pure, Id.run, selected]
+
 end DuplicatePrefix.PreparedArguments
 
 #print axioms DuplicatePrefix.PreparedArguments.EntryArguments.entered
@@ -388,3 +420,5 @@ end DuplicatePrefix.PreparedArguments
 #print axioms DuplicatePrefix.PreparedArguments.languageCheckBranchJump
 
 #print axioms DuplicatePrefix.PreparedArguments.stepRuntimeGuardAssignment
+
+#print axioms DuplicatePrefix.PreparedArguments.pointerAddFalseJump

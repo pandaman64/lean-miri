@@ -83,7 +83,28 @@ theorem stepFixedTerminator
     sameControl, sameChoice, tick, Id.run, pure, Pure.pure]
   rfl
 
+/-- The ordinary return stage after the fixed-scheduling source prefix. -/
+theorem stepFixedReturn
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
+    (choice : C) (before : State) (term : Miri.MIR.Terminator)
+    (selected : Miri.Verification.StepWP.currentTerminator before = some term)
+    (returnCode : term.kind = .Return)
+    (lens : ∀ control user, config.terminators.getControl
+      (config.terminators.setControl control user) = control)
+    (fixed : before.machine.threads.fixedScheduling = true)
+    (unchecked : (config.terminators.getControl before.machine.user).checkedArithmetic = false)
+    (noGc : (config.terminators.getControl before.machine.user).gcInterval = 0) :
+    let user := nextTerminatorUser config.terminators before.machine.user
+    let after := {before with machine := {before.machine with user}}
+    let result := ControlFlow.returnFromCurrentFrame
+      (ExecutionMachine.terminatorHooks config limits).toControlHooks choice false after
+    ExecutionMachine.step config limits choice before = (result.1, result.2.map fun _ => true) := by
+  rw [stepFixedTerminator config limits choice before term selected lens fixed unchecked noGc]
+  simp only [ControlFlow.evalTerminator, returnCode, Id.run, pure, Pure.pure]
+
 end DuplicatePrefix.NestedGuardDriver
 
 #print axioms DuplicatePrefix.NestedGuardDriver.beforeTerminatorFixed
 #print axioms DuplicatePrefix.NestedGuardDriver.stepFixedTerminator
+
+#print axioms DuplicatePrefix.NestedGuardDriver.stepFixedReturn
