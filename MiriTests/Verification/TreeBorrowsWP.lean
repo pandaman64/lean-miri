@@ -4,7 +4,7 @@ import Init.Internal.Order.While
 namespace MiriTests.Verification.TreeBorrowsWP
 
 open Miri.ABI Miri.DataStructures Miri.Memory Miri.TreeBorrows
-open Miri.Verification.TreeBorrowsWP Std.WP
+open Miri.Verification.TreeBorrowsWP Miri.Verification.TreeRangeAccess Std.WP
 
 set_option experimental.vcgen true
 set_option maxRecDepth 65536
@@ -143,5 +143,96 @@ example :
     tree.traverseWithSkipPre 0 .VisitChildrenOfAccessed (fun node => node == 0 || node == 1)
       (fun root visits => root = 0 ∧ visits = [⟨0, .LocalAccess⟩, ⟨2, .ForeignAccess⟩]) := by
   cbv
+
+private def twoBytes := Size.ofBytes 2
+private def wildcardRoot := (BorrowTree.new BorTag.one twoBytes).newChild Size.ZERO
+  .wildcard aliasTag permissions .Frozen false
+private def twoRoots := ((wildcardRoot.tree.exposeTag {} BorTag.one).tree.exposeTag {} aliasTag).tree
+private def twoSlots := twoRoots.locations.iterMut Size.ZERO twoBytes
+
+private theorem wildcardReadAuthorized :
+    AccessAuthorized twoRoots .wildcard Size.ZERO twoBytes .Read {} .VisitChildrenOfAccessed := by
+  have slots : twoSlots.positions.size = 2 := by cbv
+  refine ⟨True.intro, by cbv, ?_⟩
+  intro cursor within
+  change cursor < twoSlots.positions.size at within
+  rw [slots] at within
+  have cursorIndex : cursor = 0 ∨ cursor = 1 := by omega
+  have roots : twoRoots.roots = #[⟨0⟩, ⟨1⟩] := by cbv
+  rcases cursorIndex with rfl | rfl
+  · refine ⟨0, _, by cbv, by cbv, by cbv, ?_⟩
+    rw [wildcardTwoRootsComplete_iff _ _ _ _ _ _ _ _ roots]
+    cbv
+  · refine ⟨1, _, by cbv, by cbv, by cbv, ?_⟩
+    rw [wildcardTwoRootsComplete_iff _ _ _ _ _ _ _ _ roots]
+    cbv
+
+/-- A wildcard access through both roots and across the split range can be
+proved from the two original snapshots. -/
+example :
+    Triple (access .wildcard Size.ZERO twoBytes .Read {} .VisitChildrenOfAccessed)
+      (· = twoRoots) (fun _ _ => True) (fun _ _ => False) := by
+  vcgen
+  subst_vars
+  miri_tree_range_wp
+  exact wildcardReadAuthorized
+
+private def afterReadTwoRoots := (accessSuccessor twoRoots .wildcard Size.ZERO twoBytes .Read {}
+  .VisitChildrenOfAccessed).1
+private def writeSlots := afterReadTwoRoots.locations.iterMut bytes bytes
+
+/-- The second prepared snapshot supplies the write range's input location. -/
+example :
+    afterReadTwoRoots.locations.entries[1]?.map (·.data) =
+      preparedSlotLocationAt twoRoots twoSlots none .Read {} .VisitChildrenOfAccessed 1 1 := by
+  rw [afterReadTwoRoots, accessSuccessor_locationAt]
+  cbv
+
+/-- The write uses one of the two read locations, and the postcondition
+observes the diagnostics of each access separately. -/
+example :
+    wp ((do
+        let reads ← access .wildcard Size.ZERO twoBytes .Read {} .VisitChildrenOfAccessed
+        let writes ← access (.concrete BorTag.one) bytes bytes .Write {} .VisitChildrenOfAccessed
+        pure (reads, writes)) :
+        EStateM (BorrowTree.BorrowTreeAccessStatus × Array BorrowTree.BorrowTreeLocationResult)
+          BorrowTree (Array BorrowTree.BorrowTreeLocationResult × Array BorrowTree.BorrowTreeLocationResult))
+      (fun (reads, writes) _ => reads.size = 2 ∧ (writes[0]?.map (·.range)) = some ⟨1, 2⟩)
+      (fun _ _ => False) twoRoots := by
+  miri_tree_range_wp
+  refine ⟨wildcardReadAuthorized, ?_⟩
+  constructor
+  · change AccessAuthorized afterReadTwoRoots (.concrete BorTag.one) bytes bytes .Write {}
+      .VisitChildrenOfAccessed
+    have single : writeSlots.positions.size = 1 := by cbv
+    refine ⟨by cbv, by cbv, ?_⟩
+    intro cursor within
+    change cursor < writeSlots.positions.size at within
+    rw [single] at within
+    have cursorZero : cursor = 0 := by omega
+    subst cursor
+    refine ⟨1, _, by cbv, by cbv, by cbv, ?_⟩
+    rw [← BorrowTree.RangeVerification.locationContract_iff]
+    cbv
+  · cbv
+
+/-- An unresolved tag fails the success-only WP even for a zero-byte access. -/
+example :
+    ¬ wp (access (.concrete aliasTag) Size.ZERO Size.ZERO .Read {} .VisitChildrenOfAccessed)
+      (fun _ _ => True) (fun _ _ => False) entry := by
+  rw [wp_access_succeeds_iff]
+  intro authorized
+  have resolved : (entry.indexOfTag aliasTag).isSome = true := authorized.1
+  cbv at resolved
+
+/-- A resolved tag cannot authorize bytes outside the prepared map. -/
+example :
+    ¬ wp (access (.concrete BorTag.one) Size.ZERO twoBytes .Read {} .VisitChildrenOfAccessed)
+      (fun _ _ => True) (fun _ _ => False) entry := by
+  rw [wp_access_succeeds_iff]
+  intro authorized
+  have prepared : (entry.locations.iterMut Size.ZERO twoBytes).outcome = .ok () := authorized.2.1
+  cbv at prepared
+  cases prepared
 
 end MiriTests.Verification.TreeBorrowsWP
