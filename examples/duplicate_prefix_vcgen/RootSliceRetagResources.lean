@@ -67,8 +67,8 @@ theorem RootLengthOfSlice.futureCapacity
         (ExclusiveTwoPhaseRetag.reservationTree tree post.branch.ready.tag newTag (Size.ofBytes offset)
           (Size.ofBytes len) global.protectedTags) child post.branch.ready.root advanced.nextPointerTag := by
   exact RetagSuccessorCapacity.afterReservation _ _ _ _ _ _ _
-    (post.reservationStage initialKeys (by omega) bounds) (post.keys initialKeys (by omega))
-    (by rw [post.nodes]; omega) post.tagAge (by rw [post.nextTag]; omega)
+    (post.reservationStage initialKeys (by omega) bounds) (post.keys)
+    (by have growth := post.nodes; omega) post.tagAge (by rw [post.nextTag]; omega)
 
 #print axioms RootLengthOfSlice.futureCapacity
 end DuplicatePrefix.RootZeroShallowReturn

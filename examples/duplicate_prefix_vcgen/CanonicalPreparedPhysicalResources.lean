@@ -9,11 +9,10 @@ set_option maxRecDepth 65536
 set_option maxHeartbeats 3000000
 set_option backward.isDefEq.respectTransparency false
 
-/-- The initialized source allocation retains enough dense key capacity and
+/-- The initialized source allocation retains enough key capacity and
 well-formed physical backing for this compiled function's actual accesses. -/
 structure CopySourceResources (entry : LocalAllocation Provenance BorrowTree MiriMemoryKind) : Prop where
   keys : RetagInsertionCapacity.Ready entry.allocation.extra
-  dense : entry.allocation.extra.tagMapping.deassigned = #[]
   room : entry.allocation.extra.nodes.size + 3 < 2^32
   maskLength : entry.allocation.initializationMask.len = entry.allocation.byteSize
   mask : InitMaskCopy.WellFormed entry.allocation.initializationMask
@@ -78,7 +77,7 @@ theorem nonemptyPhysical
   exact RootZeroShallowReturn.allCountsFromCanonicalPhysical options limits remaining sizeFuel span fuel validation
     frame machine count loan.tracker loan.tracked dynamic storage.id tag loan.source root base
     storage.relativeStart.bytes length storage.entry addr positive nonnull loan.coherent node found roots loan.tagKnown
-    scope.extent owners scope.materializedWithin dispatch dispatchFuel available.dense program loaded pointer concrete
+    scope.extent owners scope.materializedWithin dispatch dispatchFuel program loaded pointer concrete
     pointerBytes admitted compiler storage rfl rfl rfl available.keys available.room statementFuel outerRank innerRank
     available.maskLength available.mask available.provenance available.storageBound extras
 

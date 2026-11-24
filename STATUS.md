@@ -1190,8 +1190,9 @@ vector-clock backend.
   caller-rights premises, for either a physical root Boolean destination or a
   nested cached Boolean destination.
   The emitted VC is also proved for every `UInt64` count of a nonempty
-  initialized slice under the canonical compiler profile and backing and
-  dense tag-table premises, with either supported Boolean return. The
+  initialized slice under the canonical compiler profile, backing invariants,
+  and tag capacity premises, with either supported Boolean return. Both
+  appended and recycled Tree Borrows keys are covered. The
   same theorem covers every count on an integer-address empty slice
   without provenance. Backed and wildcard empty slices at nonzero counts
   remain open.

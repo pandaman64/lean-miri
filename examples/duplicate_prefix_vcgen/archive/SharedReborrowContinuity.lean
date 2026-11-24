@@ -97,6 +97,9 @@ structure SharedChildFrame (original read after : BorrowTree) (parent child : Un
     after.tagMapping.deassigned = #[] ∧
     after.tagMapping.mapping.size = original.tagMapping.mapping.size + 1 ∧
     after.nodes.size = original.nodes.size + 1
+  recycled : original.tagMapping.deassigned.back? = some child →
+    child.toNat < original.nodes.size → after.nodes.size = original.nodes.size
+
 
 private theorem under_read (original read : BorrowTree) (source index : UniIndex)
     (same : read = {original with locations := read.locations}) :
@@ -415,7 +418,7 @@ theorem concrete_shared_readable_reborrow_with_frame
       have values := Option.some.inj same
       exact ⟨previous, rfl, (congrArg Prod.fst values).symm, congrArg (fun v => v.2.2) values⟩
   have footprint : SharedChildFrame tree read.tree result.tree parent child tag offset length inside := by
-    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro index data distinct found
       obtain ⟨previous, existsBefore, tag, permission⟩ := oldNodes index data distinct found
       exact ⟨previous, by
@@ -498,6 +501,26 @@ theorem concrete_shared_readable_reborrow_with_frame
         rw [metadata, ← sameMap]
         exact mapSize
       · exact graphSize.trans (grown.trans (by rw [sameNodes]))
+    · intro _ bounded
+      have graph := newChild_graph_initial read.tree offset parentTag tag parent child mapping inside
+        .Frozen held .Read rfl rfl rfl selected readFound parentNode readHead vacant complete
+      let initial := initialChildNode tag parent .Frozen .Read
+      have graphSize := congrArg
+        (fun data : Array UniIndex × Nat × (UniIndex → Option (Option UniIndex × Array UniIndex)) => data.2.1) graph
+      simp only [graphView, initialChildAttached] at graphSize
+      have different : parent ≠ child := by
+        intro same
+        rw [same, vacant] at readHead
+        contradiction
+      have retained :=
+        (BorrowTree.ZeroProtection.Sparse.get_other read.tree.nodes child parent initial different).trans readHead
+      have boundedRead : child.toNat < read.tree.nodes.size := by rw [sameNodes]; exact bounded
+      have stable : (BorrowTree.ZeroProtection.Append.attachedNodes read.tree.nodes child parent parentNode initial).size =
+          read.tree.nodes.size := by
+        unfold BorrowTree.ZeroProtection.Append.attachedNodes
+        rw [BorrowTree.ZeroProtection.insert_existing_size (read.tree.nodes.insert child initial) parent parentNode _ retained,
+          BorrowTree.ZeroProtection.Reuse.bounded_size _ _ _ boundedRead]
+      exact graphSize.trans (stable.trans (by rw [sameNodes]))
   refine ⟨readOk, complete, frameWith.1.trans readSize, coherentAfter, sameRoots.trans
     ((congrArg BorrowTree.roots frame).trans roots), child, key, childStored, footprint, ?_⟩
   intro point lower upper location indexed

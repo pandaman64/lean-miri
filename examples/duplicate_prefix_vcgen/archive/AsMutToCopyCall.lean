@@ -97,8 +97,8 @@ theorem completes
     (Pointer.new (.concrete storage.id tag) (Size.ofBytes (base+storage.relativeStart.bytes)))
   let v15 : 15 < caller.locals.size := by omega
   let returned := AsMutPreparedAddFrame.returned caller v15 pointer
-  obtain ⟨after,history,addressAfter,raceAfter,fixedAfter,checkedAfter,gcAfter,backendAfter,extrasAfter,ghostAfter,shallowAfter,
-      activeAfter,rootCache,next,right,idEq,offsetEq,entryEq,rootsEq,extentEq,modeAfter⟩ :=
+  obtain ⟨after,history,addressAfter,raceAfter,fixedAfter,checkedAfter,gcAfter,backendAfter,extrasAfter,_,ghostAfter,shallowAfter,
+      activeAfter,rootCache,next,right,idEq,offsetEq,entryEq,rootsEq,extentEq,modeAfter,_,_⟩ :=
     AsMutRootRoundtrip.completes options limits remaining fuel sizeFuel span budget sizeBudget debugOff preciseOff implicitOff
       older caller machine length base parentTag positive bounded noRace ghost shallow storage loan root capacity tagRoom
       defaultMode extent address nonnull metadata noAlias cmp source dispatchBudget dispatchFuel location body identity instanceId

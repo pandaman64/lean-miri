@@ -74,14 +74,10 @@ structure RootLengthState (config : CanonicalConfigFacts.RootConfig)
   uncached7 : (result.locals[7]'(by rw [branch.guard.size]; decide)).layout = none
   rootCache : frame.extra.userRelevance = 255 →
     ∃ thread, final.threads.activeThread? = some thread ∧ thread.topUserRelevantFrame = some (older.push outside).size
-  dense : branch.ready.entry.allocation.extra.tagMapping.deassigned = #[] ∧
-    branch.ready.entry.allocation.extra.tagMapping.mapping.size = branch.ready.entry.allocation.extra.nodes.size
-  nodes : branch.ready.entry.allocation.extra.nodes.size = entry.allocation.extra.nodes.size + 2
+  nodes : branch.ready.entry.allocation.extra.nodes.size ≤ entry.allocation.extra.nodes.size + 2
   nextTag : branch.ready.tracker.global.nextPointerTag.value.toNat = originalTracker.global.nextPointerTag.value.toNat + 2
   protectors : branch.ready.tracker.global.protectedTags = originalTracker.global.protectedTags
-  keys : RetagInsertionCapacity.Ready entry.allocation.extra →
-    entry.allocation.extra.nodes.size+2 < 2^32 →
-    RetagInsertionCapacity.Ready branch.ready.entry.allocation.extra
+  keys : RetagInsertionCapacity.Ready branch.ready.entry.allocation.extra
   tagAge : ∀ index data, branch.ready.entry.allocation.extra.nodeAt index = some data →
     data.tag.value.toNat < branch.ready.tracker.global.nextPointerTag.value.toNat
 
@@ -154,9 +150,8 @@ theorem reachesRootLengthGuard
     (dispatch : Nat) (dispatchFuel : limits.callDispatch = dispatch+1)
     (cacheValid : ∀ index, ready.thread.topUserRelevantFrame = some index → index < (older.push outside).size + 1)
     (tagHeadroom : tracker.global.nextPointerTag.value.toNat + 1 < 18446744073709551615)
-    (pool : entry.allocation.extra.tagMapping.deassigned = #[])
-    (keyShape : entry.allocation.extra.tagMapping.mapping.size = entry.allocation.extra.nodes.size)
-    (nodeRoom : entry.allocation.extra.nodes.size + 1 ≤ 4294967295)
+    (initialKeys : RetagInsertionCapacity.Ready entry.allocation.extra)
+    (keySpace : entry.allocation.extra.nodes.size + 2 < 2^32)
     (keyAge : ∀ old i, entry.allocation.extra.indexOfTag old = some i → old.value.toNat < tracker.global.nextPointerTag.value.toNat)
     (nodeAge : ∀ i data, entry.allocation.extra.nodeAt i = some data → data.tag.value.toNat < tracker.global.nextPointerTag.value.toNat)
     (protectedAge : ∀ old, tracker.global.protectedTags.contains old = true → old.value.toNat < tracker.global.nextPointerTag.value.toNat)
@@ -256,16 +251,13 @@ theorem reachesRootLengthGuard
       change second.value.toNat < first.value.toNat at age
       change second.value.toNat = first.value.toNat + 1 at secondValue
       omega
-  have appended : afterTree.tagMapping.deassigned = #[] ∧
-      afterTree.tagMapping.mapping.size = initial.tagMapping.mapping.size + 1 ∧
-      afterTree.nodes.size = initial.nodes.size + 1 :=
-    framed.appended pool keyShape
-  obtain ⟨nextPool, nextLength, nextNodes⟩ := appended
-  have nextNoReuse : afterTree.tagMapping.deassigned.back? = none := by rw [nextPool]; rfl
-  have nextRoom : afterTree.tagMapping.mapping.size ≤ 4294967295 := by
-    rw [nextLength, keyShape]
-    exact nodeRoom
-  have nextAligned : afterTree.tagMapping.mapping.size = afterTree.nodes.size := by rw [nextLength, keyShape, nextNodes]
+  have nextCapacity := framed.readyAfterInsertion initialKeys (by omega)
+    tagFresh ⟨newNode, newFound, newTagEq⟩ vacant
+  have nextKeys : RetagInsertionCapacity.Ready afterTree := nextCapacity.1
+  have sharedRoom : afterTree.nodes.size + 1 < 2^32 := by
+    have growth := nextCapacity.2
+    change afterTree.nodes.size ≤ entry.allocation.extra.nodes.size + 1 at growth
+    omega
   obtain ⟨loose, boundedDepth, decreasing⟩ := good.parentDepth
   let graph : BorrowTree.ZeroProtection.ParentDepth afterTree.nodes := ⟨loose, boundedDepth, by
     intro index data present parentIndex edge
@@ -390,16 +382,26 @@ theorem reachesRootLengthGuard
     ((congrArg (·.dataRace) extraC).trans noClocks) positiveLen bounded memoryBounds notNull cmp
     (by rw [arraysAfter]; exact metadata) (by rw [arraysAfter]; exact noAlias) ghostAfter shallowAfter
     good newNode newFound afterRoots selected rankGraph (tight child newNode newFound)
-    freshKey freshNodes (fun _ => nextRoom) (fun _ => nextAligned)
-    (fun i saved => by
-      change afterTree.tagMapping.deassigned.back? = some i at saved
-      rw [nextNoReuse] at saved
-      contradiction) vacant nextBounds readOwners
+    freshKey freshNodes
+    (fun empty => by
+      change afterTree.tagMapping.deassigned.back? = none at empty
+      change afterTree.tagMapping.mapping.size ≤ 4294967295
+      have noPool := Array.back?_eq_none_iff.mp empty
+      have aligned : afterTree.tagMapping.mapping.size = afterTree.nodes.size := by
+        simpa [noPool] using nextKeys.balanced
+      rw [aligned]
+      omega)
+    (fun empty => by
+      change afterTree.tagMapping.deassigned.back? = none at empty
+      change afterTree.tagMapping.mapping.size = afterTree.nodes.size
+      have noPool := Array.back?_eq_none_iff.mp empty
+      simpa [noPool] using nextKeys.balanced)
+    (fun i saved => nextKeys.free i (Array.mem_of_back? saved)) vacant nextBounds readOwners
     valid11 .uninit (congrArg (·.value) destSlot) (congrArg (·.layout) destSlot) ready.thread index current threadActive
     top present (bodyC.trans body) (identityC.trans identity) (instanceC.trans callee) locC source valid12
     (congrArg (·.layout) lenSource) nextBackend dispatch dispatchFuel after rfl uncheckedAfter gcAfter fixedAfter
     ready sameId sameRoot modeNext n prepared rfl contC placeC vaC (congrArg (·.borrowTracker) extraC)
-    cacheValid cachedRoot nextPool nextAligned noHeld holder nextHolder nextHolderTag holderShallow
+    cacheValid cachedRoot nextKeys sharedRoom noHeld holder nextHolder nextHolderTag holderShallow
     (by rw [← sameHolder]; exact ordered.1) (by rw [← sameHolder]; exact ordered.2.1) unheldNext
     transferExtent transferRights supplied
   have stableFirst : LenExitFacts.Stable machine after := by
@@ -432,11 +434,12 @@ theorem reachesRootLengthGuard
     exact congrArg (·.layout) (Option.some.inj fromSource)
   have kept (index : Nat) (which : index < 3 ∨ 13 ≤ index) : result.locals[index]? = frame.locals[index]? :=
     (post.locals index (by omega)).trans (originalSlots index which)
-  have countNodes : branch.ready.entry.allocation.extra.nodes.size = entry.allocation.extra.nodes.size + 2 := by
+  have countNodes : branch.ready.entry.allocation.extra.nodes.size ≤ entry.allocation.extra.nodes.size + 2 := by
     have shows := post.nodeCount
-    change branch.ready.entry.allocation.extra.nodes.size = afterTree.nodes.size + 1 at shows
-    rw [nextNodes] at shows
-    exact shows
+    change branch.ready.entry.allocation.extra.nodes.size ≤ afterTree.nodes.size + 1 at shows
+    have growth := nextCapacity.2
+    change afterTree.nodes.size ≤ entry.allocation.extra.nodes.size + 1 at growth
+    omega
   have counter : branch.ready.tracker.global.nextPointerTag.value.toNat = tracker.global.nextPointerTag.value.toNat + 2 := by
     change post.branch.ready.tracker.global.nextPointerTag.value.toNat = _
     rw [post.nextTag, UInt64.toNat_add]
@@ -446,16 +449,6 @@ theorem reachesRootLengthGuard
       omega
     rw [Nat.mod_eq_of_lt fits, secondValue]
     rfl
-  have scopeCommon : RetagInsertionCapacity.Ready entry.allocation.extra →
-      entry.allocation.extra.nodes.size+2 < 2^32 →
-      RetagInsertionCapacity.Ready branch.ready.entry.allocation.extra := by
-    intro oldShape space
-    have readyShared := framed.readyAfterAppend oldShape (by omega) pool tagFresh
-      ⟨newNode, newFound, newTagEq⟩ vacant
-    apply post.keys readyShared
-    change afterTree.nodes.size+1 < 2^32
-    rw [nextNodes]
-    exact space
   have younger (index : UniIndex) (data : TreeNode)
       (found : branch.ready.entry.allocation.extra.nodeAt index = some data) :
       data.tag.value.toNat < branch.ready.tracker.global.nextPointerTag.value.toNat := by
@@ -487,11 +480,10 @@ theorem reachesRootLengthGuard
     bystanders := kept
     uncached7 := uncached7
     rootCache := fun rank => post.rootCache ((congrArg (·.userRelevance) extraC).trans rank)
-    dense := post.dense
     nodes := countNodes
     nextTag := counter
     protectors := post.protectedTags.trans protections
-    keys := scopeCommon
+    keys := post.keys
     tagAge := younger }
 
 #print axioms reachesRootLengthGuard

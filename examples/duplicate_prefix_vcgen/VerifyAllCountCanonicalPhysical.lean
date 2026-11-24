@@ -56,7 +56,6 @@ theorem allCountsFromCanonicalPhysical
       offset (offset+len) entry.allocation.extra.locations)
     (extent : MaterializedWithin entry.allocation.extra parent offset (offset+len))
     (dispatch : Nat) (dispatchFuel : limits.callDispatch = dispatch+1)
-    (pool : entry.allocation.extra.tagMapping.deassigned = #[])
     (program : Miri.Verification.BodyVCGen.LoadedProgram) (loaded : GeneratedBodySafety.loaded = .ok program)
     (pointer : Pointer (Option Provenance))
     (concrete : pointer.provenance = some (.concrete id parentTag))
@@ -143,9 +142,6 @@ theorem allCountsFromCanonicalPhysical
   have fresh : tracker.global.nextPointerTag.value < 18446744073709551615 :=
     UInt64.lt_iff_toNat_lt.mpr (by change tracker.global.nextPointerTag.value.toNat < 18446744073709551615; omega)
   have tagHeadroom : tracker.global.nextPointerTag.value.toNat + 1 < 18446744073709551615 := by omega
-  have keyShape : entry.allocation.extra.tagMapping.mapping.size = entry.allocation.extra.nodes.size := by
-    simpa [pool] using initialKeys.balanced
-  have nodeRoom : entry.allocation.extra.nodes.size + 1 ≤ 4294967295 := by omega
   have nodeAge (i : UniIndex) (data : TreeNode) (found : entry.allocation.extra.nodeAt i = some data) :
       data.tag.value.toNat < tracker.global.nextPointerTag.value.toNat :=
     UInt64.lt_iff_toNat_lt.mp (oldNodes id entry i data live found)
@@ -210,7 +206,7 @@ theorem allCountsFromCanonicalPhysical
     allocationMut profile.raceOff positiveLen bounded memoryBounds notNull (show ProjectionMetadataFacts.NullComparator from by decide) profile.compilerRuntime profile.noSyntheticSliceCache
     coherent parentNode parentStored roots parentFound depth rank cap.freshKey cap.freshNode unheld cap.room cap.aligned cap.reuse cap.clean bounds
     owners extent sourceSlot ready rfl rfl rfl rfl heldUnexposed admitted.resultSlot temp13'
-    profile.backendOff dispatch dispatchFuel cacheValid tagHeadroom pool keyShape nodeRoom keyAge nodeAge protectedAge cachedRoot
+    profile.backendOff dispatch dispatchFuel cacheValid tagHeadroom keyAge nodeAge protectedAge cachedRoot
     program loaded storage storageId storageEntry storageOffset initialKeys keyBudget
     tagBudget statementFuel compiler.highestRelevance compiler.noTrackCaller
     (fun i low high => temporary i (by omega) (by omega) (by omega)) outerRank innerRank

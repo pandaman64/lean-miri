@@ -124,6 +124,7 @@ supply individual cases of the all-count argument.
 `DuplicatePrefix.CanonicalCallDomain.safetyForPreparedCall` for all `UInt64`
 counts and either admitted Boolean return destination. For a nonempty
 initialized slice it uses `CopySourceResources` for the source allocation.
+The permission proof covers both appended and recycled Tree Borrows keys.
 For a nonzero count on an empty slice it covers a non-null integer-address
 pointer without provenance. The proof uses the pinned compiler profile,
 resource budgets, and Shallow fixed-scheduling configuration in the
@@ -151,8 +152,8 @@ rebuild this proof.
 `DuplicatePrefix.RootZeroShallowReturn.allCountsFromCanonicalAdmitted`.
 For any `UInt64` count, it discharges the generated safety condition from a
 prepared nonempty initialized slice and a nested cached Boolean destination.
-The theorem also requires the pinned compiler control profile, dense tag-table
-append capacity for four fresh keys and tags, and the checked Shallow,
+The theorem also requires the pinned compiler control profile, room for
+four fresh tags and their occupied or recycled key slots, and the checked Shallow,
 fixed-scheduling, no-GC, no-race configuration. The proof derives the actual
 zero-count, rejecting, or copying execution and its return from those
 initial conditions.

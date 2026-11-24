@@ -33,14 +33,10 @@ structure LengthCallOfSlice (config : CanonicalConfigFacts.RootConfig)
   localsIdentity : result.localsIdentity = caller.localsIdentity
   track : result.trackCallerArg = caller.trackCallerArg
   locals : ∀ i, i ≠ 11 → result.locals[i]? = caller.locals[i]?
-  dense : branch.ready.entry.allocation.extra.tagMapping.deassigned = #[] ∧
-    branch.ready.entry.allocation.extra.tagMapping.mapping.size = branch.ready.entry.allocation.extra.nodes.size
-  nodeCount : branch.ready.entry.allocation.extra.nodes.size = entry.allocation.extra.nodes.size + 1
+  nodeCount : branch.ready.entry.allocation.extra.nodes.size ≤ entry.allocation.extra.nodes.size + 1
   nextTag : branch.ready.tracker.global.nextPointerTag.value = old.global.nextPointerTag.value + 1
   protectedTags : branch.ready.tracker.global.protectedTags = old.global.protectedTags
-  keys : RetagInsertionCapacity.Ready entry.allocation.extra →
-    entry.allocation.extra.nodes.size+1 < 2^32 →
-    RetagInsertionCapacity.Ready branch.ready.entry.allocation.extra
+  keys : RetagInsertionCapacity.Ready branch.ready.entry.allocation.extra
   nodeOrigin : ∀ index data, branch.ready.entry.allocation.extra.nodeAt index = some data →
     data.tag = old.global.nextPointerTag ∨
       ∃ prior, entry.allocation.extra.nodeAt index = some prior ∧ prior.tag = data.tag
@@ -121,8 +117,8 @@ theorem preparesFromLenCallOfSlice
     (destValue : oldDest = .uninit)
     (cacheValid : ∀ i, thread.topUserRelevantFrame = some i → i < frames.size + 1)
     (cachedRoot : thread.topUserRelevantFrame = some frames.size)
-    (dense : entry.allocation.extra.tagMapping.deassigned = #[])
-    (coversKeys : entry.allocation.extra.tagMapping.mapping.size = entry.allocation.extra.nodes.size)
+    (keys : RetagInsertionCapacity.Ready entry.allocation.extra)
+    (space : entry.allocation.extra.nodes.size+1 < 2^32)
     (freshUnheld : old.global.protectedTags.contains old.global.nextPointerTag = false)
     (holder : TreeNode) (holderFound : entry.allocation.extra.nodeAt rootReady.source = some holder)
     (holderIndex : entry.allocation.extra.indexOfTag rootReady.tag = some rootReady.source)
@@ -349,10 +345,6 @@ theorem preparesFromLenCallOfSlice
       exact Or.inr rfl
     · rw [ite_eq_right selects]
       exact Or.inl cachedRoot
-  obtain ⟨heapPool, heapKeys, heapNodes⟩ := attached.appended dense coversKeys
-  have mapAfter : branch.ready.entry.allocation.extra.tagMapping = afterTree.tagMapping := by
-    have same := congrArg BorrowTree.tagMapping post.graph
-    exact same
   have nodesAfter : branch.ready.entry.allocation.extra.nodes = afterTree.nodes := by
     have same := congrArg BorrowTree.nodes post.graph
     exact same
@@ -371,16 +363,11 @@ theorem preparesFromLenCallOfSlice
   have other (i : Nat) (different : i ≠ 11) : result.locals[i]? = caller.locals[i]? := by
     simp [result, writeFrame, cf, LenUncachedFrontend.cachedCaller, LocalPlaces.cachePlaceLayout, Ne.symm different]
   refine ⟨result, final, .next step suffix, ⟨afterTree, branch, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-    other, ?_, ?_, storedNext, storedProtectors, ?_, ?_, rooted⟩⟩
-  · rw [mapAfter, nodesAfter, heapPool, heapKeys, heapNodes, coversKeys]
-    exact ⟨rfl,rfl⟩
+    other, ?_, storedNext, storedProtectors, ?_, ?_, rooted⟩⟩
   · rw [nodesAfter]
-    exact heapNodes
-
-  · intro ready space
-    have beforeVacant := (attached.extent extent).2
-    have afterReady := attached.readyAfterAppend ready space dense tagFresh ⟨childNode, childFound, childTag⟩ beforeVacant
-    exact ready_following_release afterTree branch.ready.entry.allocation.extra post.graph afterReady post.vacant
+    exact (attached.readyAfterInsertion keys space tagFresh ⟨childNode, childFound, childTag⟩ (attached.extent extent).2).2
+  · have next := attached.readyAfterInsertion keys space tagFresh ⟨childNode, childFound, childTag⟩ (attached.extent extent).2
+    exact ready_following_release afterTree branch.ready.entry.allocation.extra post.graph next.1 post.vacant
   · intro index data actual
     have seen : afterTree.nodeAt index = some data := by
       unfold BorrowTree.nodeAt at actual ⊢

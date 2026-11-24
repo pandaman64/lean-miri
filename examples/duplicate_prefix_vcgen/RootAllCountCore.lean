@@ -78,9 +78,8 @@ theorem allCountSafetyByAcceptedArm
     (dispatch : Nat) (dispatchFuel : limits.callDispatch = dispatch+1)
     (cacheValid : ∀ index, ready.thread.topUserRelevantFrame = some index → index < (older.push outside).size + 1)
     (tagHeadroom : tracker.global.nextPointerTag.value.toNat + 1 < 18446744073709551615)
-    (pool : entry.allocation.extra.tagMapping.deassigned = #[])
-    (keyShape : entry.allocation.extra.tagMapping.mapping.size = entry.allocation.extra.nodes.size)
-    (nodeRoom : entry.allocation.extra.nodes.size + 1 ≤ 4294967295)
+    (initialKeys : RetagInsertionCapacity.Ready entry.allocation.extra)
+    (keySpace : entry.allocation.extra.nodes.size + 2 < 2^32)
     (keyAge : ∀ old i, entry.allocation.extra.indexOfTag old = some i → old.value.toNat < tracker.global.nextPointerTag.value.toNat)
     (nodeAge : ∀ i data, entry.allocation.extra.nodeAt i = some data → data.tag.value.toNat < tracker.global.nextPointerTag.value.toNat)
     (protectedAge : ∀ old, tracker.global.protectedTags.contains old = true → old.value.toNat < tracker.global.nextPointerTag.value.toNat)
@@ -120,7 +119,7 @@ theorem allCountSafetyByAcceptedArm
         id parentTag parent root base offset len entry fresh cached live allocationMut raceOff positiveLen bounded memoryBounds
         notNull cmp metadata noAlias coherent parentNode parentStored roots parentFound depth rank tagFresh nodeFresh
         unheld room aligned reuse clean bounds owners extent sourceSlot ready sameId sameRoot sameHolder sameTag heldUnexposed
-        resultSlot tempSlot backend dispatch dispatchFuel cacheValid tagHeadroom pool keyShape nodeRoom keyAge nodeAge protectedAge cachedRoot
+        resultSlot tempSlot backend dispatch dispatchFuel cacheValid tagHeadroom initialKeys keySpace keyAge nodeAge protectedAge cachedRoot
     have leaves : ∃ done, SuccessfulTrace.Trace cfg limits (Storage.withCurrent (older.push outside) result final) done ∧
         done.stack.frames.size < (Storage.withCurrent (older.push outside) result final).stack.frames.size := by
       by_cases rejected : n > len/2

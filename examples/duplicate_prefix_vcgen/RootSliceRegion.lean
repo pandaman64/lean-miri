@@ -39,7 +39,7 @@ theorem RootLengthOfSlice.sourceRegion
       post.branch.ready.entry.allocation.extra.locations.size.bytes.toNat
     rw [sameStart, post.branch.rangeCapacity]
     exact originalExtent
-  have keys := post.keys initialKeys room
+  have keys := post.keys
   have tag := ready_tag_at tree keys post.branch.ready.source post.branch.ready.tag post.branch.ready.node
     post.branch.ready.indexed post.branch.ready.found
   have perByte (point : UInt64) (lower : offset.toNat ≤ point.toNat) (upper : point.toNat < (offset+len).toNat)
@@ -92,7 +92,7 @@ theorem RootLengthOfSlice.insertionCapacity
     CurrentTwoPhaseStructural.InsertionCapacity post.branch.ready.entry.allocation.extra post.branch.ready.source
       post.branch.ready.root post.branch.ready.tracker.global.nextPointerTag := by
   refine RetagInsertionCapacity.derive _ _ _ _ post.branch.coherence post.branch.ready.roots
-    post.branch.ready.node post.branch.ready.found (post.keys initialKeys room) ?_
+    post.branch.ready.node post.branch.ready.found (post.keys) ?_
   intro index node found collision
   have age := post.tagAge index node found
   rw [collision] at age

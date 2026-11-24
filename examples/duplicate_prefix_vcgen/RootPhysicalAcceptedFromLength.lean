@@ -145,8 +145,8 @@ theorem RootLengthOfSlice.acceptedPhysicalTrace
     metadataFinal noAliasFinal source dispatch dispatchFuel (by rw [trackerEq]; exact post.branch.defaultMode)
     (post.branch.stable.backend.trans backend) post.branch.unchecked post.branch.gc thread active relevant
     (by rw [entry,trackerEq,sourceEq,startEq]; exact post.reservationStage initialKeys room originalExtent)
-    (by rw [entry]; exact post.keys initialKeys room)
-    (by rw [entry,post.nodes]; omega)
+    (by rw [entry]; exact post.keys)
+    (by rw [entry]; have growth := post.nodes; omega)
     (by rw [entry,trackerEq]; exact post.tagAge)
     (by rw [trackerEq]; exact ordered)
     (by rw [trackerEq,post.nextTag]; omega)

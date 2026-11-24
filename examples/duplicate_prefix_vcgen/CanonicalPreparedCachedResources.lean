@@ -113,7 +113,7 @@ theorem nonemptyCached
     older caller frame machine count loan.tracker loan.tracked dynamic storage.id tag loan.source root base
     storage.relativeStart.bytes length storage.entry addr positive nonnull loan.coherent node found roots loan.tagKnown
     scope.extent owners scope.materializedWithin sourceSlot
-    ready sameId sameRoot sameHolder sameTag hidden dispatch dispatchFuel available.dense program loaded pointer
+    ready sameId sameRoot sameHolder sameTag hidden dispatch dispatchFuel program loaded pointer
     admitted compiler storageNow rfl rfl rfl available.keys available.room statementFuel outerRank innerRank
     available.maskLength available.mask available.provenance available.storageBound extras
 
