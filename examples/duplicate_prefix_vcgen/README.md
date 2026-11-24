@@ -132,8 +132,13 @@ theorem statement. It proves the exact generated obligation without
 requiring a trace or execution result.
 
 Use `--client VerifyCanonicalSafety` in the checker command below to
-rebuild this proof. The unresolved wildcard and backed empty cases with
-nonzero counts have separate proof obligations.
+rebuild this proof.
+
+[VerifyEmptyWildcardCanonical.lean](VerifyEmptyWildcardCanonical.lean) also
+proves the exact obligation for every count on an admitted zero-length
+wildcard slice whose zero-width address lookup selects no allocation. It
+covers both return destinations. Use `--client VerifyEmptyWildcardCanonical`
+to rebuild that proof.
 
 ### Zero count with either return destination
 

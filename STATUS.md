@@ -1194,8 +1194,9 @@ vector-clock backend.
   and tag capacity premises, with either supported Boolean return. Both
   appended and recycled Tree Borrows keys are covered. The
   same theorem covers every count on an integer-address empty slice
-  without provenance. Backed and wildcard empty slices at nonzero counts
-  remain open.
+  without provenance. A separate exact proof covers empty wildcard slices
+  whose zero-width address lookup selects no allocation. Backed empty
+  slices at nonzero counts remain open.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`

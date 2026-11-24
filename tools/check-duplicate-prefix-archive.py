@@ -261,6 +261,22 @@ LOCAL = {
     "RootPositiveToPhysicalWindow",
     "RootPositiveWindowCarrier",
     "RootPositiveWindowReturn",
+    "EmptyPointerShallow",
+    "EmptyUnresolvedPointerBorrow",
+    "EmptyWildcardLenArgumentCopy",
+    "EmptyWildcardLenCallReturn",
+    "EmptyWildcardLenCallStep",
+    "EmptyWildcardLenEntry",
+    "EmptyWildcardLenEntryValidity",
+    "EmptyWildcardLenInstall",
+    "EmptyWildcardLenUncachedCall",
+    "EmptyWildcardLength",
+    "EmptyWildcardLocalValidator",
+    "EmptyWildcardLocalWrite",
+    "EmptyWildcardPrefix",
+    "EmptyWildcardReference",
+    "EmptyWildcardRetag",
+    "EmptyWildcardRootLenCall",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 CLIENT_IMPORTS = re.compile(rb"^import ([A-Za-z][A-Za-z0-9_]*)(?:\.([A-Za-z0-9_]+))?\s*$", re.MULTILINE)
