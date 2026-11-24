@@ -106,11 +106,15 @@ structure RetainedRootBorrow (older : Array CompilerFrameContext.ActualFrame)
       ActiveRelease.ReleaseOwnership entry.allocation.extra root.source root.root tracker.global.protectedTags slot
 
 noncomputable def ActiveCaller.afterLengthReturn
-    (older : Array CompilerFrameContext.ActualFrame) (caller frame : CompilerFrameContext.ActualFrame)
+    (older : Array CompilerFrameContext.ActualFrame) (caller anchor frame : CompilerFrameContext.ActualFrame)
     (initial final : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
     (length count : UInt64) (before : BeforeLengthReturn frame count)
-    (root : ActiveCaller older caller frame initial)
-    (retained : RetainedRootBorrow older caller frame initial final root)
+    (root : ActiveCaller older caller anchor initial)
+    (continuation : frame.returnContinuation = anchor.returnContinuation)
+    (destination : frame.returnPlace = anchor.returnPlace)
+    (varargs : frame.vaList = anchor.vaList)
+    (ownership : frame.extra.borrowTracker = anchor.extra.borrowTracker)
+    (retained : RetainedRootBorrow older caller anchor initial final root)
     (running : ∃ thread, final.threads.activeThread? = some thread) :
     ActiveCaller older caller
       {writeFrame frame 11 (.scalar (.fromScalarInt (.ofUInt64 length)))
@@ -123,15 +127,15 @@ noncomputable def ActiveCaller.afterLengthReturn
   exact {
     target := root.target
     unwind := root.unwind
-    continuation := root.continuation
+    continuation := continuation.trans root.continuation
     destinationIndex := root.destinationIndex
     destinationBound := root.destinationBound
     destinationSlot := root.destinationSlot
     destinationLive := root.destinationLive
     destinationCached := root.destinationCached
-    destination := root.destination
+    destination := destination.trans root.destination
     callerClocks := root.callerClocks
-    varargs := root.varargs
+    varargs := varargs.trans root.varargs
     id := root.id
     tag := root.tag
     entry := retained.entry
@@ -139,7 +143,7 @@ noncomputable def ActiveCaller.afterLengthReturn
     tracker := retained.tracker
     tracked := retained.tracked
     owned := root.owned
-    ownership := root.ownership
+    ownership := ownership.trans root.ownership
     ownedTags := root.ownedTags
     source := root.source
     root := root.root
