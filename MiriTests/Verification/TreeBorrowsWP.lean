@@ -260,7 +260,7 @@ example :
           BorrowTree (Array BorrowTree.BorrowTreeLocationResult × Array BorrowTree.BorrowTreeLocationResult))
       (fun (reads, writes) _ => reads.size = 2 ∧ (writes[0]?.map (·.range)) = some ⟨1, 2⟩)
       (fun _ _ => False) twoRoots := by
-  miri_tree_range_wp
+  miri_tree_range_wp successor
   refine ⟨wildcardReadAuthorized, ?_⟩
   constructor
   · change AccessAuthorized afterReadTwoRoots (.concrete BorTag.one) bytes bytes .Write {}

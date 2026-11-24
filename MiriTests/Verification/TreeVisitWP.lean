@@ -1,9 +1,10 @@
 import Miri.Verification.TreeVisitWP
+import Miri.Verification.TreeNormalRangeWP
 
 namespace MiriTests.Verification.TreeVisitWP
 
 open Miri.ABI Miri.Memory Miri.DataStructures Miri.TreeBorrows Miri.TreeBorrows.Tree
-open Miri.Verification.TreeVisitWP
+open Miri.Verification.TreeVisitWP Miri.Verification.TreeRangeAccess Std.WP
 
 set_option maxRecDepth 65536
 set_option cbv.maxSteps 1000000
@@ -101,5 +102,99 @@ example :
       ⟨2⟩ ⟨1⟩ qAt pAt).mpr
     cbv
     exact .tail _ (.head _)
+
+private def rangeMode := ChildrenVisitMode.VisitChildrenOfAccessed
+
+/-- An ancestor read makes its protected descendant conflicted. The
+descendant's subsequent local write is permitted only without its protector
+during the read. The write alone starts with an unconflicted permission. -/
+example (protectReadOfQ : Bool) :
+    let readTags := if protectReadOfQ then protectors else protectors.remove q
+    wp ((do
+      let reads ← Miri.Verification.TreeBorrowsWP.access (.concrete p) Size.ZERO bytes
+        .Read readTags rangeMode
+      let writes ← Miri.Verification.TreeBorrowsWP.access (.concrete q) Size.ZERO bytes
+        .Write protectors rangeMode
+      pure (reads, writes)) : EStateM
+        (BorrowTree.BorrowTreeAccessStatus × Array BorrowTree.BorrowTreeLocationResult)
+        BorrowTree (Array BorrowTree.BorrowTreeLocationResult × Array BorrowTree.BorrowTreeLocationResult))
+      (fun (reads, writes) _ => reads.size = 1 ∧ writes.size = 1) (fun _ _ => False) child.tree ↔
+    protectReadOfQ = false := by
+  dsimp only
+  miri_tree_range_wp
+  cases protectReadOfQ <;> cbv <;> rfl
+
+private def readPrepared := child.tree.locations.iterMut Size.ZERO bytes
+private def qAfterRead : LocationState := ⟨.ReservedFrz true, false, .Read⟩
+private def retainedRead : BorrowTree.TreeLocationAccessAtResult :=
+  let events : List TraversalEvent := [⟨1, .LocalAccess⟩, ⟨0, .LocalAccess⟩, ⟨2, .ForeignAccess⟩]
+  let trace := (child.tree.normalView initial protectors).processEvents 0 .Read events
+  let perms := (initial.perms.insert ⟨1⟩ ⟨.ReservedFrz false, true, .None⟩).insert ⟨2⟩ qAfterRead
+  ⟨{ initial with perms }, some trace, none⟩
+
+/-- The pointwise successor obtains q's conflicted permission directly from
+the read's retained location. -/
+example :
+    SnapshotAuthorized child.tree readPrepared (some ⟨1⟩)
+      .Read protectors rangeMode 0 retainedRead ∧
+    let after := snapshotSuccessor child.tree readPrepared
+      (fun _ => retainedRead)
+    (after.1.locations.entries[0]?.map (·.data)).bind (fun location => location.perms.get ⟨2⟩) =
+      some qAfterRead := by
+  constructor
+  · refine ⟨0, _, by cbv, by cbv, by cbv, ?_⟩
+    cbv
+  · dsimp only
+    rw [snapshotSuccessor_locationAt]
+    cbv
+
+/-- The fused rule rejects the write by inspecting q's initial read event
+and its resulting conflicted permission. -/
+example :
+    ¬ wp ((do
+      let reads ← Miri.Verification.TreeBorrowsWP.access (.concrete p) Size.ZERO bytes
+        .Read protectors rangeMode
+      let writes ← Miri.Verification.TreeBorrowsWP.access (.concrete q) Size.ZERO bytes
+        .Write protectors rangeMode
+      pure (reads, writes)) : EStateM
+        (BorrowTree.BorrowTreeAccessStatus × Array BorrowTree.BorrowTreeLocationResult)
+        BorrowTree (Array BorrowTree.BorrowTreeLocationResult × Array BorrowTree.BorrowTreeLocationResult))
+      (fun _ _ => True) (fun _ _ => False) child.tree := by
+  unfold rangeMode
+  have unexposed (position : Nat) (inside : position < child.tree.nodes.data.size) :
+      ∃ index node, UniIndex.ofNat? position = some index ∧ child.tree.nodeAt index = some node ∧
+        node.isExposed = false := by
+    have nodeCount : child.tree.nodes.data.size = 3 := by cbv
+    rw [nodeCount] at inside
+    have cursor : position = 0 ∨ position = 1 ∨ position = 2 := by omega
+    rcases cursor with rfl | rfl | rfl
+    · exact ⟨⟨0⟩, _, by cbv, by cbv, by cbv⟩
+    · exact ⟨⟨1⟩, _, by cbv, by cbv, by cbv⟩
+    · exact ⟨⟨2⟩, _, by cbv, by cbv, by cbv⟩
+  rw [Miri.Verification.TreeNormalRangeWP.wp_uniform_read_write_iff child.tree initial bytes
+    (by cbv) (by cbv) p q ⟨1⟩ ⟨2⟩ ⟨0⟩ (by cbv) (by cbv) (by cbv) protectors
+    (by cbv) (by cbv) (by cbv <;> decide) unexposed (by cbv <;> decide) (by cbv <;> decide)]
+  let view := child.tree.normalView initial protectors
+  let reads := (view.topology.traverseWithSkip 1 rangeMode (view.shouldSkipForeignNode .Read)).2
+  let writes := (writeScheduleAfterRead view reads 2 rangeMode).2
+  intro obligations
+  have qWritten : (⟨2, .LocalAccess⟩ : TraversalEvent) ∈ writes := by
+    dsimp only [writes, reads, view]
+    cbv
+    exact .head _
+  obtain ⟨old, recorded, next, transition, found, record, allowed⟩ :=
+    obligations.2 ⟨2, .LocalAccess⟩ qWritten
+  have readEffect : stateAfterEventsAt view .Read reads 2 = some qAfterRead := by
+    dsimp only [reads, view]
+    cbv
+  have oldEq : old = qAfterRead := Option.some.inj (found.symm.trans readEffect)
+  subst old
+  have qRecord : qAfterRead.recordNewAccess .Write .LocalAccess =
+      .Recorded { qAfterRead with idempotentForeignAccess := .None } := by cbv
+  have recordedEq : recorded = { qAfterRead with idempotentForeignAccess := .None } :=
+    LocationState.RecordAccessResult.Recorded.inj (record.symm.trans qRecord)
+  subst recorded
+  cbv at allowed
+  cases allowed
 
 end MiriTests.Verification.TreeVisitWP
