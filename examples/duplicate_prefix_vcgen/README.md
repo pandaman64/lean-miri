@@ -130,6 +130,9 @@ proofs stay in the output directory. The active protector release and
 canonical stack-pop composition are included in the default targets.
 [ZeroReturnOwnership.lean](ZeroReturnOwnership.lean) uses that composition
 to check normal return from the owned protector profile.
+The optional `ActiveStackReleaseExclusive` target checks protector release
+and stack pop while preserving the raw-pointer access rights described by
+its ownership premises.
 
 ```sh
 LEAN_PATH="$PWD/scratch/duplicate-prefix-vcgen:$PWD/scratch/duplicate-prefix-archive-check:$PWD/.lake/build/lib/lean" \

@@ -21,6 +21,53 @@ private theorem ensureLive (kind : K) (hooks : GlobalHooks) (id : AllocId) (befo
       get, getThe, MonadStateOf.get, EStateM.get, bind, Bind.bind, EStateM.bind, pure, Pure.pure,
       EStateM.pure, modify, modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet] <;> rfl
 
+/-- Install the exact released tree in the live allocation cache, then clear
+the returned frame's protector ledger. -/
+def releasedMachine (before : State) (entry : LocalAllocation Provenance BorrowTree K)
+    (id : AllocId) (tree : BorrowTree) (tracker : MachineHooks.BorrowState)
+    (owned : FrameState) : MachineHooks.MachineState K U :=
+  { before.machine with
+    memory := { before.machine.memory with
+      live := before.machine.memory.live.insert id { entry with allocation := entry.allocation.setExtra tree } }
+    borrowTracker := some { tracker with global := tracker.global.endCall owned } }
+
+/-- Install a tree whose release has been discharged separately through the
+actual before-stack-pop hooks and global ledger. -/
+theorem beforeStackPopOfTree (kind : K) (hooks : GlobalHooks) (id : AllocId) (tag : BorTag)
+    (before : State) (entry : LocalAllocation Provenance BorrowTree K)
+    (present : before.machine.memory.live[id]? = some entry)
+    (synchronize : hooks.synchronizeMemory before.machine.memory ⟨before.machine, none⟩ =
+      ⟨before.machine, none⟩)
+    (tracker : MachineHooks.BorrowState) (tracked : before.machine.borrowTracker = some tracker)
+    (frame : Frame Provenance LocalLayout MachineHooks.FrameExtra)
+    (current : before.stack.currentFrame? = some frame)
+    (owned : FrameState) (ownership : frame.extra.borrowTracker = some owned)
+    (ownedTags : owned.protectedTags = #[(id, tag)])
+    (tree : BorrowTree)
+    (released : ∀ (post : BorrowTree → Prop) failure,
+      ProtectorReleaseWP.releasePre tag tracker.global.protectedTags post failure entry.allocation.extra ↔ post tree)
+    (post : State → Prop) (failure : StepError → State → Prop) :
+    ProtectorReleaseWP.beforeStackPopPre (GlobalAllocationMachine.ensure kind hooks) post failure before ↔
+      post { before with machine := releasedMachine before entry id tree tracker owned } := by
+  have info : before.machine.memory.getAllocInfo id = .ok
+      ⟨entry.allocation.byteSize, entry.allocation.align, .liveData, entry.allocation.mutability⟩ := by
+    simp [MemoryState.getAllocInfo, present] <;> rfl
+  simp only [ProtectorReleaseWP.beforeStackPopPre, tracked, Option.isSome_some, ↓reduceIte,
+    current, ownership, ownedTags]
+  change ProtectorReleaseWP.stackEntryPre (GlobalAllocationMachine.ensure kind hooks) id tag
+    (fun after =>
+      match after.machine.borrowTracker with
+      | none => failure (.invalidProgram "borrow tracker removed during stack pop") after
+      | some current => post { after with machine := { after.machine with
+          borrowTracker := some { current with global := current.global.endCall owned } } })
+    failure before ↔ _
+  simp only [ProtectorReleaseWP.stackEntryPre, info, beq_self_eq_true, ↓reduceIte, RvalueWP.actionPre,
+    ensureLive kind hooks id before entry present synchronize, present, tracked]
+  rw [released]
+  rw [MemoryState.setLiveAllocation_of_find _ _ _ _ present]
+  rfl
+
+
 /-- Release one structurally authorized active protector in the live allocation
 map and then update ownership. The source data determine the complete saved
 tree, keyed allocation update, and final protector ledger. -/
@@ -49,27 +96,9 @@ theorem beforeStackPop (kind : K) (hooks : GlobalHooks) (id : AllocId) (tag : Bo
         post after := by
   obtain ⟨tree, released⟩ := releaseAll entry.allocation.extra tag source root
     tracker.global.protectedTags index roots depth children node found unexposed authorized
-  let memory := { before.machine.memory with
-    live := before.machine.memory.live.insert id { entry with allocation := entry.allocation.setExtra tree } }
-  let afterTracker := { tracker with global := tracker.global.endCall owned }
-  refine ⟨{ before with machine := { before.machine with memory, borrowTracker := some afterTracker } }, rfl, rfl, rfl, ?_⟩
-  intro post failure
-  have info : before.machine.memory.getAllocInfo id = .ok
-      ⟨entry.allocation.byteSize, entry.allocation.align, .liveData, entry.allocation.mutability⟩ := by
-    simp [MemoryState.getAllocInfo, present] <;> rfl
-  simp only [ProtectorReleaseWP.beforeStackPopPre, tracked, Option.isSome_some, ↓reduceIte,
-    current, ownership, ownedTags]
-  change ProtectorReleaseWP.stackEntryPre (GlobalAllocationMachine.ensure kind hooks) id tag
-    (fun after =>
-      match after.machine.borrowTracker with
-      | none => failure (.invalidProgram "borrow tracker removed during stack pop") after
-      | some current => post { after with machine := { after.machine with
-          borrowTracker := some { current with global := current.global.endCall owned } } })
-    failure before ↔ _
-  simp only [ProtectorReleaseWP.stackEntryPre, info, beq_self_eq_true, ↓reduceIte, RvalueWP.actionPre,
-    ensureLive kind hooks id before entry present synchronize, present, tracked]
-  rw [released]
-  rw [MemoryState.setLiveAllocation_of_find _ _ _ _ present]
+  refine ⟨{before with machine := releasedMachine before entry id tree tracker owned}, rfl, rfl, rfl, ?_⟩
+  exact beforeStackPopOfTree kind hooks id tag before entry present synchronize tracker tracked
+    frame current owned ownership ownedTags tree released
 
 private def atFrame (older : Array (Frame Provenance LocalLayout MachineHooks.FrameExtra))
     (frame : Frame Provenance LocalLayout MachineHooks.FrameExtra) (machine : MachineHooks.MachineState K U) : State :=

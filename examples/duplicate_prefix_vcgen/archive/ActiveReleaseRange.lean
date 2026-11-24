@@ -45,7 +45,8 @@ def ReleaseOwnership (tree : BorrowTree) (source root : UniIndex) (tags : Protec
         GeneralBorrowExposedScopedNormal.Owned projected source.toNat kind component) ∧
       UniIndex.ofNat? (projected.topology.ancestorPath source.toNat).getLast! = some root
 
-private def applyVisit (tree : BorrowTree) (source : UniIndex) (tags : ProtectedTags)
+/-- The segment update selected by the operational protector release. -/
+def applyVisit (tree : BorrowTree) (source : UniIndex) (tags : ProtectedTags)
     (position : Nat) : DedupRangeMap LocationTree :=
   match tree.locations.index position with
   | .error _ => tree.locations
@@ -103,26 +104,34 @@ private theorem step_release (original : BorrowTree) (source root : UniIndex)
 
 /-- Successively visit the original range-map positions. The write at an
 earlier slot preserves every later slot's ownership evidence. -/
-theorem releaseAll (original : BorrowTree) (tag : BorTag) (source root : UniIndex)
+theorem releaseAll_frame (original : BorrowTree) (tag : BorTag) (source root : UniIndex)
     (tags : ProtectedTags) (tagIndex : original.indexOfTag tag = some source)
     (roots : original.roots = #[root]) (depth : DuplicatePrefix.GeneralBorrowExposure.ParentDepth original.nodes)
     (children : GeneralBorrowGraph.ChildNodes original) (node : TreeNode)
     (present : original.nodeAt source = some node) (unexposed : node.isExposed = false)
     (owned : ∀ position < original.locations.entries.size, ∃ slot,
-      original.locations.index position = .ok slot ∧ ReleaseOwnership original source root tags slot) :
-    ∃ after, ∀ post failure,
-      ProtectorReleaseWP.releasePre tag tags post failure original ↔ post after := by
+      original.locations.index position = .ok slot ∧ ReleaseOwnership original source root tags slot)
+    (invariant : DedupRangeMap LocationTree → Prop) (initial : invariant original.locations)
+    (frame : ∀ table position slot, invariant table →
+      table.index position = .ok slot → original.locations.index position = .ok slot →
+      position < table.entries.size →
+      ReleaseOwnership original source root tags slot →
+      invariant (applyVisit {original with locations := table} source tags position)) :
+    ∃ after, after = {original with locations := after.locations} ∧ invariant after.locations ∧
+      ∀ post failure, ProtectorReleaseWP.releasePre tag tags post failure original ↔ post after := by
   have go (positions : List Nat) (table : DedupRangeMap LocationTree)
       (sized : table.entries.size = original.locations.entries.size)
       (unique : positions.Nodup)
       (inside : ∀ position ∈ positions, position < original.locations.entries.size)
-      (untouched : ∀ position ∈ positions, table.index position = original.locations.index position) :
-      ∃ after, ∀ post failure,
+      (untouched : ∀ position ∈ positions, table.index position = original.locations.index position)
+      (good : invariant table) :
+      ∃ after, after = {original with locations := after.locations} ∧ invariant after.locations ∧
+        ∀ post failure,
         ProtectorReleaseWP.segmentsPre tag tags source post failure positions
           { original with locations := table } ↔ post after := by
     induction positions generalizing table with
     | nil =>
-      refine ⟨{ original with locations := table }, ?_⟩
+      refine ⟨{ original with locations := table }, rfl, good, ?_⟩
       intro post failure
       have idx : ({ original with locations := table } : BorrowTree).indexOfTag tag = some source := tagIndex
       have atNode : ({ original with locations := table } : BorrowTree).nodeAt source = some node := present
@@ -137,19 +146,35 @@ theorem releaseAll (original : BorrowTree) (tag : BorTag) (source root : UniInde
       have changes := step_release original source root tags table position sized bound slot find
         authorized roots depth children node present
       have stays := (changes (fun _ => True) (fun _ _ => False)).2
-      obtain ⟨final, restProof⟩ := ih after (stays.1.trans sized) (List.nodup_cons.mp unique).2
+      have boundHere : position < table.entries.size := by rwa [sized]
+      have kept : invariant after := frame table position slot good find indexed boundHere authorized
+      obtain ⟨final, finalShape, invariantFinal, restProof⟩ := ih after (stays.1.trans sized) (List.nodup_cons.mp unique).2
         (fun other mem => inside other (List.mem_cons_of_mem _ mem))
         (fun other mem => (stays.2 other (fun eq => (List.nodup_cons.mp unique).1 (eq ▸ mem))).trans
-          (untouched other (List.mem_cons_of_mem _ mem)))
-      refine ⟨final, ?_⟩
+          (untouched other (List.mem_cons_of_mem _ mem))) kept
+      refine ⟨final, finalShape, invariantFinal, ?_⟩
       intro post failure
       exact (changes (ProtectorReleaseWP.segmentsPre tag tags source post failure rest) failure).1.trans
         (restProof post failure)
   let positions := List.range' 0 original.locations.entries.size
-  obtain ⟨after, checked⟩ := go positions original.locations rfl (List.nodup_range')
+  obtain ⟨after, shape, good, checked⟩ := go positions original.locations rfl (List.nodup_range')
     (by intro position member; simpa [positions] using member)
-    (fun _ _ => rfl)
-  exact ⟨after, fun post failure => by simpa only [ProtectorReleaseWP.releasePre, tagIndex] using checked post failure⟩
+    (fun _ _ => rfl) initial
+  exact ⟨after, shape, good, fun post failure => by simpa only [ProtectorReleaseWP.releasePre, tagIndex] using checked post failure⟩
 
-#print axioms releaseAll
+/-- Release every authorized slot. -/
+theorem releaseAll (original : BorrowTree) (tag : BorTag) (source root : UniIndex)
+    (tags : ProtectedTags) (tagIndex : original.indexOfTag tag = some source)
+    (roots : original.roots = #[root]) (depth : DuplicatePrefix.GeneralBorrowExposure.ParentDepth original.nodes)
+    (children : GeneralBorrowGraph.ChildNodes original) (node : TreeNode)
+    (present : original.nodeAt source = some node) (unexposed : node.isExposed = false)
+    (owned : ∀ position < original.locations.entries.size, ∃ slot,
+      original.locations.index position = .ok slot ∧ ReleaseOwnership original source root tags slot) :
+    ∃ after, ∀ post failure,
+      ProtectorReleaseWP.releasePre tag tags post failure original ↔ post after := by
+  obtain ⟨after, _, _, checked⟩ := releaseAll_frame original tag source root tags tagIndex roots
+    depth children node present unexposed owned (fun _ => True) trivial (fun _ _ _ _ _ _ _ _ => trivial)
+  exact ⟨after, checked⟩
+
+#print axioms releaseAll_frame
 end DuplicatePrefix.ActiveRelease
