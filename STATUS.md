@@ -1191,6 +1191,17 @@ vector-clock backend.
   preserve commit order for overlapping ranges. The original ranged rule
   carries the partial tree and diagnostics to a caller-supplied error
   postcondition.
+  For a read followed by a write, the ordered range contract carries the
+  failing access's trace and its partial state through an arbitrary error
+  continuation. A pointwise lookup in the successful snapshot map inspects
+  the last matching cursor or the prepared location when no cursor wrote it.
+  [Instruction reductions](Miri/Verification/ExactWP.lean) expose tag encoding
+  for discriminant writes, local layout and replacement for storage activation,
+  the projection path for place mentions, and the `Assume` and
+  `CopyNonOverlapping` checks. Drop resolves the glue and return edge, and
+  assertion failure resolves the panic lang item and evaluates its diagnostic
+  operands. Dynamic compiler queries and memory-policy actions contribute
+  their own continuations.
   [Call rules](Miri/Verification/CallWP.lean) expose argument passing, dispatch
   and tail-call cleanup. Frame initialization exposes the convention,
   ordinary-argument and return-ABI checks, closure self, variadic allocations

@@ -117,11 +117,31 @@ The generated precondition covers every permitted choice. Use
 canonical assignment's place, operand, and copy effects. See the
 [assignment proof fixture](MiriTests/Verification/RvalueWP.lean).
 
-For a ranged Tree Borrows access whose error postcondition is `False`,
-the `miri_tree_range_wp` tactic rewrites the WP to tag lookup, range
-preparation and checks on the initial segments. It also handles a read
-followed by a write and retains both diagnostic traces for the success
-postcondition. See the [ranged access examples](MiriTests/Verification/TreeBorrowsWP.lean).
+After selecting a MIR instruction in the generated VC, use
+`miri_instruction_wp` to open its rule for `SetDiscriminant`, `StorageLive`,
+`PlaceMention`, statement intrinsics, `Drop`, `Assert` or `UnwindTerminate`. Each rule keeps the
+state at which an error occurs. For example, `miri_drop_wp` further exposes
+the empty-glue jump and the dispatch request for a destructor.
+See the [Drop step fixture](MiriTests/Verification/DropWP.lean).
+
+For a ranged Tree Borrows read followed by a write, `miri_tree_range_wp`
+pulls both continuations through the prepared segments in order. A read
+failure skips the write. A write failure passes its own trace and the
+partially updated tree to the error postcondition. With errors rejected,
+`miri_tree_range_wp snapshots` exposes each initial segment's permission
+checks and retained result. A lookup in the resulting map uses its last
+matching cursor, with the untouched location as the fallback.
+For a safety goal with success `True` and error `False`, use
+`miri_tree_range_wp safety` on the WP or the nested precondition produced by
+`vcgen`. It obtains each retained read location from its contract. Use
+`miri_tree_range_wp pointwise` to supply local read results explicitly.
+Write preparation sees the pointwise read
+results, including any split or merge at the new byte boundaries. For a
+full, uniform, single-root range, the normal-access theorem reduces safety
+to the initial per-node permission and protector checks under its stated
+topology and cache hypotheses. See the [pointwise range examples](MiriTests/Verification/TreeRangePointwiseWP.lean),
+[normal read/write examples](MiriTests/Verification/TreeVisitWP.lean)
+and [partial-failure examples](MiriTests/Verification/TreeRangeOutcomeWP.lean).
 
 For a canonical call, use `miri_call_dispatch_wp` on the call precondition
 produced by `vcgen`. It opens one dispatch iteration and its ABI, pointer,

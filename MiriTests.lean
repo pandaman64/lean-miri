@@ -47,6 +47,15 @@ import MiriTests.TreeBorrows.NormalCacheWP
 import MiriTests.Verification.CallLifecycleWP
 import MiriTests.Verification.CallDispatchWP
 import MiriTests.Verification.InstructionWP
+import MiriTests.Verification.AssertPanicWP
+import MiriTests.Verification.DiscriminantWP
+import MiriTests.Verification.DropWP
+import MiriTests.Verification.NondivergingIntrinsicWP
+import MiriTests.Verification.PlaceMentionWP
+import MiriTests.Verification.StorageLiveWP
+import MiriTests.Verification.TreeRangeCursorsWP
+import MiriTests.Verification.TreeRangeOutcomeWP
+import MiriTests.Verification.TreeRangePointwiseWP
 import MiriTests.Verification.BranchControlWP
 import MiriTests.Verification.MemoryWP
 import MiriTests.Verification.ScalarMemoryWP
