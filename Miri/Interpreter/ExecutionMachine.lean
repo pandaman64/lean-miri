@@ -246,7 +246,8 @@ def rvalueHooks [DecidableEq K] (h : Config K U C O X Host) (limits : Limits) :
     readDiscriminant := Discriminant.readDiscriminant discr
     discriminantForVariant := Discriminant.discriminantForVariant discr}
 
-private def intrinsicHooks [DecidableEq K] (h : Config K U C O X Host) (limits : Limits)
+/-- Install canonical memory, validation, and control operations for intrinsic evaluation. -/
+def intrinsicHooks [DecidableEq K] (h : Config K U C O X Host) (limits : Limits)
     (context : IntrinsicHooks Provenance (State K U) C Value) :
     IntrinsicHooks Provenance (State K U) C Value :=
   let place := (projectionHooks h).place
