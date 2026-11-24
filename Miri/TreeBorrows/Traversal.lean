@@ -38,7 +38,8 @@ structure TraversalEvent where
 
 namespace TraversalTree
 
-private def nodeAt (tree : TraversalTree) (index : Nat) : TraversalNode :=
+/-- Look up a traversal node, with an isolated empty node for a missing index. -/
+def nodeAt (tree : TraversalTree) (index : Nat) : TraversalNode :=
   tree.nodes[index]?.getD ⟨none, []⟩
 
 /-- The start node followed by its successive parents, through the root. -/
@@ -108,6 +109,109 @@ def traverseWithSkip (tree : TraversalTree) (start : Nat)
   let foreignEvents :=
     foreignRoots.flatMap (foreignPostorder tree shouldSkip tree.nodes.size)
   (root, localEvents ++ foreignEvents)
+
+/-- A foreign branch starts at an allowed child of the accessed node, or a
+child of a higher ancestor other than the child leading back to the access. -/
+inductive ForeignBranch (tree : TraversalTree) (mode : ChildrenVisitMode) :
+    List Nat → Option Nat → Bool → Nat → Prop where
+  | here {current rest previous isStart branch}
+      (enter : !isStart || mode == .VisitChildrenOfAccessed)
+      (child : branch ∈ (nodeAt tree current).children) (offPath : previous ≠ some branch) :
+      ForeignBranch tree mode (current :: rest) previous isStart branch
+  | above {current rest previous isStart branch}
+      (higher : ForeignBranch tree mode rest (some current) false branch) :
+      ForeignBranch tree mode (current :: rest) previous isStart branch
+
+/-- A path through a foreign subtree which stays inside the traversal depth
+bound and passes the pruning check at every node, including both ends. -/
+inductive UnprunedPath (tree : TraversalTree) (skip : Nat → Bool) : Nat → Nat → Nat → Prop where
+  | here {fuel node} (enter : skip node = false) : UnprunedPath tree skip (fuel + 1) node node
+  | child {fuel node next target} (enter : skip node = false)
+      (edge : next ∈ (nodeAt tree node).children)
+      (reaches : UnprunedPath tree skip fuel next target) :
+      UnprunedPath tree skip (fuel + 1) node target
+
+private theorem foreignRoots_iff (tree : TraversalTree) (mode : ChildrenVisitMode)
+    (path : List Nat) (previous : Option Nat) (isStart : Bool) (branch : Nat) :
+    branch ∈ initialForeignRoots.go tree mode path previous isStart ↔
+      ForeignBranch tree mode path previous isStart branch := by
+  induction path generalizing previous isStart with
+  | nil =>
+    simp only [initialForeignRoots.go, List.not_mem_nil, false_iff]
+    intro impossible
+    cases impossible
+  | cons current rest ih =>
+    rw [initialForeignRoots.go, List.mem_append, ih]
+    constructor
+    · rintro (chosen | higher)
+      · by_cases enter : (!isStart || mode == .VisitChildrenOfAccessed) = true
+        · simp [enter, bne_iff_ne] at chosen
+          exact .here enter chosen.1 chosen.2
+        · simp [enter] at chosen
+      · exact .above higher
+    · intro chosen
+      cases chosen with
+      | here enter child offPath => exact Or.inl (by simp [enter, bne_iff_ne, child, offPath])
+      | above higher => exact Or.inr higher
+
+private theorem foreignPostorder_iff (tree : TraversalTree) (skip : Nat → Bool)
+    (fuel start target : Nat) :
+    (⟨target, .ForeignAccess⟩ : TraversalEvent) ∈ tree.foreignPostorder skip fuel start ↔
+      UnprunedPath tree skip fuel start target := by
+  induction fuel generalizing start with
+  | zero =>
+    simp only [foreignPostorder, List.not_mem_nil, false_iff]
+    intro impossible
+    cases impossible
+  | succ fuel ih =>
+    constructor
+    · intro visit
+      cases enter : skip start with
+      | true => simp [foreignPostorder, enter] at visit
+      | false =>
+        simp only [foreignPostorder, enter, Bool.false_eq_true, ↓reduceIte, List.mem_append,
+          List.mem_flatMap, List.mem_reverse, List.mem_singleton] at visit
+        rcases visit with ⟨next, edge, reaches⟩ | same
+        · exact .child enter edge ((ih next).mp reaches)
+        · cases same
+          exact .here enter
+    · intro reaches
+      cases reaches with
+      | here enter => simp [foreignPostorder, enter]
+      | child enter edge reaches =>
+        simp only [foreignPostorder, enter, Bool.false_eq_true, ↓reduceIte, List.mem_append,
+          List.mem_flatMap, List.mem_reverse, List.mem_singleton]
+        exact Or.inl ⟨_, edge, (ih _).mpr reaches⟩
+
+private theorem foreignPostorder_no_local (tree : TraversalTree) (skip : Nat → Bool)
+    (fuel root target : Nat) :
+    (⟨target, .LocalAccess⟩ : TraversalEvent) ∉ tree.foreignPostorder skip fuel root := by
+  intro reaches
+  induction fuel generalizing root with
+  | zero => simp [foreignPostorder] at reaches
+  | succ fuel ih =>
+    by_cases enter : skip root = true
+    · simp [foreignPostorder, enter] at reaches
+    · simp only [foreignPostorder, enter, ↓reduceIte, List.mem_append, List.mem_flatMap,
+        List.mem_singleton, TraversalEvent.mk.injEq, reduceCtorEq, and_false, or_false] at reaches
+      obtain ⟨child, _, reaches⟩ := reaches
+      exact ih child reaches
+
+/-- Local selection depends only on the accessed node's ancestor path. -/
+@[simp] theorem local_visit_iff (tree : TraversalTree) (start target : Nat)
+    (mode : ChildrenVisitMode) (skip : Nat → Bool) :
+    (⟨target, .LocalAccess⟩ : TraversalEvent) ∈ (tree.traverseWithSkip start mode skip).2 ↔
+      target ∈ tree.ancestorPath start := by
+  simp [traverseWithSkip, foreignPostorder_no_local]
+
+/-- Foreign selection follows an eligible branch from the ancestor path and
+requires an unpruned child chain to the target. -/
+@[simp] theorem foreign_visit_iff (tree : TraversalTree) (start target : Nat)
+    (mode : ChildrenVisitMode) (skip : Nat → Bool) :
+    (⟨target, .ForeignAccess⟩ : TraversalEvent) ∈ (tree.traverseWithSkip start mode skip).2 ↔
+      ∃ branch, ForeignBranch tree mode (tree.ancestorPath start) none true branch ∧
+        UnprunedPath tree skip tree.nodes.size branch target := by
+  simp [traverseWithSkip, initialForeignRoots, foreignRoots_iff, foreignPostorder_iff]
 
 private theorem foreignPostorder_notSkipped (tree : TraversalTree) (skip : Nat → Bool)
     (fuel index : Nat) (event : TraversalEvent)
