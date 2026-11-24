@@ -1173,7 +1173,20 @@ vector-clock backend.
   and preserves both successors and typed failures. The canonical assignment
   rules expose rvalue, place, operand and memory effects. The Tree Borrows
   rules expose ranged access, child insertion, exposure, release, deallocation
-  and collection continuations. [Whole-body VC generation](Miri/Verification/BodyVCGen.lean)
+  and collection continuations.
+  [Read/write composition](Miri/Verification/TreeReadWriteWP.lean) characterizes
+  successful consecutive accesses at a normal tree location from its initial
+  node states, when each access schedule visits each node at most once. It
+  reconstructs write pruning after the read. General ranged accesses still
+  carry obligations for range preparation, other roots and cache updates.
+  [Call rules](Miri/Verification/CallWP.lean) expose argument passing, dispatch
+  and tail-call cleanup. Direct MIR dispatch retains a frame-initialization
+  obligation. [Aggregate rules](Miri/Verification/AggregateWP.lean) expose
+  ordered copies and validation, including repeated-element construction.
+  [Scalar memory examples](MiriTests/Verification/ScalarMemoryWP.lean) reduce
+  indirect Boolean loads and stores to byte, initialization and provenance
+  facts after access resolution.
+  [Whole-body VC generation](Miri/Verification/BodyVCGen.lean)
   constructs a weakest liberal precondition for a supplied MIR body using
   shared control-flow equations. Generation takes the interpreter configuration,
   choice policy, and continuations. It follows nested calls and loops without

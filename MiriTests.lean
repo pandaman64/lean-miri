@@ -45,9 +45,14 @@ import MiriTests.Verification.StepWP
 import MiriTests.Verification.CallReturnWP
 import MiriTests.Verification.InstructionWP
 import MiriTests.Verification.MemoryWP
+import MiriTests.Verification.ScalarMemoryWP
 import MiriTests.Verification.RvalueWP
 import MiriTests.Verification.TreeBorrowsWP
 import MiriTests.Verification.TreeEffectsWP
 import MiriTests.Verification.TreeRangeInitWP
+import MiriTests.Verification.AggregateWP
+import MiriTests.Verification.CallWP
+import MiriTests.Verification.TreeSiblingWP
+import MiriTests.Verification.TreeVisitWP
 import MiriTests.Verification.WholeBodyReplay
 import MiriTests.Verification.WholeBodyWP
