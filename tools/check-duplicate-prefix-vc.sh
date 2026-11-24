@@ -16,6 +16,7 @@ tools/body-vc safety "$source" \
   --output "$out/Representative.lean" --no-build --no-check
 lean -j1 -o "$out/Representative.olean" "$out/Representative.lean"
 lean -j1 examples/duplicate_prefix_vcgen/VerifyGenerated.lean
+lean -j1 examples/duplicate_prefix_vcgen/CopyStatementTreeVC.lean
 lean -j1 examples/duplicate_prefix_vcgen/ScopedSafetyTransfer.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/PreparedArguments.olean" examples/duplicate_prefix_vcgen/PreparedArguments.lean

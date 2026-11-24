@@ -143,6 +143,23 @@ topology and cache hypotheses. See the [pointwise range examples](MiriTests/Veri
 [normal read/write examples](MiriTests/Verification/TreeVisitWP.lean)
 and [partial-failure examples](MiriTests/Verification/TreeRangeOutcomeWP.lean).
 
+For a well-formed location map and in-bounds read and write ranges, the
+`miri_tree_range_wp bytes` separates read-only, write-only and intersecting bytes. Only an
+intersecting byte needs the read's permission and cache changes when the
+write is checked. Wildcard access exposes each root's exposure counters,
+permissions, protectors and child checks. See the
+[byte-range examples](MiriTests/Verification/TreeOverlapWP.lean) and
+[wildcard forest examples](MiriTests/Verification/TreeWildcardPairWP.lean).
+
+Use `miri_copy_tree_wp` on the selected copy statement. Its concrete rule
+checks the source access before loading the destination
+for writing. A same-allocation destination can therefore observe the borrow
+state committed by the read. Use `miri_copy_bytes_wp` to inspect the
+physical copy stages, including initialization and provenance updates.
+The checked operands from the exported
+`duplicate_prefix` helper are used in the
+[copy statement proof](examples/duplicate_prefix_vcgen/CopyStatementTreeVC.lean).
+
 For a canonical call, use `miri_call_dispatch_wp` on the call precondition
 produced by `vcgen`. It opens one dispatch iteration and its ABI, pointer,
 virtual, intrinsic or foreign-call checks. Apply it again when a fallback

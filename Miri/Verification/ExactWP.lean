@@ -4,6 +4,7 @@ import Miri.Verification.CallLifecycleWP
 import Miri.Verification.CanonicalStepWP
 import Miri.Verification.AssertPanicWP
 import Miri.Verification.DiscriminantWP
+import Miri.Verification.CopyTreeWP
 import Miri.Verification.DropWP
 import Miri.Verification.NondivergingIntrinsicWP
 import Miri.Verification.PlaceMentionWP
@@ -15,6 +16,8 @@ import Miri.Verification.TreeBorrowSetupWP
 import Miri.Verification.TreeDiagnosticWP
 import Miri.Verification.TreeEffectsWP
 import Miri.Verification.TreeNormalRangeWP
+import Miri.Verification.TreeOverlapWP
+import Miri.Verification.TreeWildcardPairWP
 import Miri.Verification.TreeRangeCursorsWP
 import Miri.Verification.TreeRangeAccess
 import Miri.Verification.TreeRangeOutcomeWP

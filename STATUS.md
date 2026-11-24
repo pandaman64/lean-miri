@@ -1195,6 +1195,16 @@ vector-clock backend.
   failing access's trace and its partial state through an arbitrary error
   continuation. A pointwise lookup in the successful snapshot map inspects
   the last matching cursor or the prepared location when no cursor wrote it.
+  For a well-formed, in-bounds map, `miri_tree_range_wp bytes` reduces a
+  read/write pair to initial byte locations. The iterator proof covers splits
+  within a segment and merges of equal adjacent segments. The intersection
+  checks the write on that byte's retained read location. Wildcard permissions
+  use the ordered roots and the protected and exposed states of their nodes.
+  [The exported copy statement](examples/duplicate_prefix_vcgen/CopyStatementTreeVC.lean)
+  connects the operands in the `duplicate_prefix` helper with the concrete
+  memory and Tree Borrows rules. The destination uses the state left by the
+  source lookup and read. Physical errors retain the allocation committed
+  by the copy's error path.
   [Instruction reductions](Miri/Verification/ExactWP.lean) expose tag encoding
   for discriminant writes, local layout and replacement for storage activation,
   the projection path for place mentions, and the `Assume` and

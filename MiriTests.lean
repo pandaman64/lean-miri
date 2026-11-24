@@ -48,11 +48,15 @@ import MiriTests.Verification.CallLifecycleWP
 import MiriTests.Verification.CallDispatchWP
 import MiriTests.Verification.InstructionWP
 import MiriTests.Verification.AssertPanicWP
+import MiriTests.Verification.CopyMemoryWP
+import MiriTests.Verification.CopyTreeWP
 import MiriTests.Verification.DiscriminantWP
 import MiriTests.Verification.DropWP
 import MiriTests.Verification.NondivergingIntrinsicWP
 import MiriTests.Verification.PlaceMentionWP
 import MiriTests.Verification.StorageLiveWP
+import MiriTests.Verification.TreeOverlapWP
+import MiriTests.Verification.TreeWildcardPairWP
 import MiriTests.Verification.TreeRangeCursorsWP
 import MiriTests.Verification.TreeRangeOutcomeWP
 import MiriTests.Verification.TreeRangePointwiseWP
