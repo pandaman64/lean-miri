@@ -27,9 +27,11 @@ def readPre (hooks : MemoryIntrinsicHooks P S C) (choice : C) (operand : OpTy P)
     scalarCheckPre (value.imm.toScalar.mapError ScalarOps.immediateError) (fun scalar =>
       scalarCheckPre (convert scalar) post onError) onError) onError
 
-/-- Check the copy count and size, read pointers, and check both alignments
-before calling the checked memory copy. A zero count takes the same path. -/
-def copyPre [PointerProvenance P] (hooks : MemoryIntrinsicHooks P S C) (choice : C)
+/-- Preserve all operand, scalar, layout and alignment checks while
+supplying a continuation for the memory copy itself. -/
+def copyPreUsing [PointerProvenance P] (hooks : MemoryIntrinsicHooks P S C)
+    (memoryCopy : Pointer (Option P) → Pointer (Option P) → Size → Bool →
+      (Unit → S → Prop) → (StepError → S → Prop) → S → Prop) (choice : C)
     (source dest count : OpTy P) (nonoverlap : Bool) (post : Unit → S → Prop)
     (onError : StepError → S → Prop) : S → Prop :=
   readPre hooks choice count
@@ -46,9 +48,17 @@ def copyPre [PointerProvenance P] (hooks : MemoryIntrinsicHooks P S C) (choice :
             readPre hooks choice dest toPointer (fun dest =>
               actionPre (hooks.checkAlign choice source layout.layout.align.abi) (fun _ =>
                 actionPre (hooks.checkAlign choice dest layout.layout.align.abi) (fun _ =>
-                  actionPre (hooks.memCopy choice source dest size nonoverlap) post onError)
+                  memoryCopy source dest size nonoverlap post onError)
                   onError) onError) onError) onError state) onError) onError)
     onError
+
+/-- Check the copy count and size, read pointers, and check both alignments
+before calling the checked memory copy. A zero count takes the same path. -/
+def copyPre [PointerProvenance P] (hooks : MemoryIntrinsicHooks P S C) (choice : C)
+    (source dest count : OpTy P) (nonoverlap : Bool) (post : Unit → S → Prop)
+    (onError : StepError → S → Prop) : S → Prop :=
+  copyPreUsing hooks (fun source dest size nonoverlap =>
+    actionPre (hooks.memCopy choice source dest size nonoverlap)) choice source dest count nonoverlap post onError
 
 theorem copyPre_eq [PointerProvenance P] (hooks : MemoryIntrinsicHooks P S C) (choice : C)
     (source dest count : OpTy P) (nonoverlap : Bool) (post : Unit → S → Prop)
@@ -71,7 +81,7 @@ theorem copyPre_eq [PointerProvenance P] (hooks : MemoryIntrinsicHooks P S C) (c
     hooks.checkAlign choice source layout.layout.align.abi
     hooks.checkAlign choice dest layout.layout.align.abi
     hooks.memCopy choice source dest size nonoverlap) post onError
-  simp only [copyPre, readPre, actionPre_bind_fun, liftCheck_pre]
+  simp only [copyPre, copyPreUsing, readPre, actionPre_bind_fun, liftCheck_pre]
   congr 1
   funext value
   congr 1
@@ -172,7 +182,7 @@ theorem statementPre_intrinsic
 end Canonical
 
 macro "miri_nondiverging_intrinsic_wp" : tactic =>
-  `(tactic| simp only [statementPre_intrinsic, wp_eval, wp_copy, evalPre, copyPre, readPre,
+  `(tactic| simp only [statementPre_intrinsic, wp_eval, wp_copy, evalPre, copyPre, copyPreUsing, readPre,
     EffectSpecs.canonical_intrinsic_copy])
 
 end Miri.Verification.NondivergingIntrinsicWP

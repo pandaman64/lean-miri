@@ -1965,4 +1965,263 @@ theorem copyRepeatedly_step_bridge
   rw [h_applyProv]
   rfl
 
+/-- Destination preparation can commit initialization before a provenance
+failure. Expose the exact allocation passed to each continuation. -/
+theorem prepareCopyOverwritePre_eq (range : AllocRange) (pointerSize : Size)
+    (dest : Allocation P E) (post : Allocation P E → Prop)
+    (onError : AllocError → Allocation P E → Prop) :
+    (match prepareForOverwrite range pointerSize dest with
+      | .ok () updated => post updated
+      | .error error updated => onError error updated) =
+      match dest.getBytesUnchecked range with
+      | .error error => onError error dest
+      | .ok _ =>
+        if range.size.bytes == 0 then post dest
+        else if dest.mutability != .Mut then onError .readOnlyAllocation dest
+        else
+          match dest.initializationMask.setRange range true with
+          | .error error => onError (.memory error) dest
+          | .ok mask =>
+            let marked := {dest with initMask := mask}
+            match marked.provenanceMap.clear range marked.rawBytes pointerSize with
+            | .ok () prov => post {marked with provenance := prov}
+            | .error error prov => onError (.provenance error) {marked with provenance := prov} := by
+  simp only [prepareForOverwrite, setInitialization, runProvenanceMutation, Id.run, Bind.bind,
+    Pure.pure, Allocation.getBytesUnchecked, initializationMask, provenanceMap]
+  cases dest.checkedSlice range with
+  | error => rfl
+  | ok bytes =>
+    dsimp only
+    by_cases zero : (range.size.bytes == 0) = true
+    · simp only [zero, ↓reduceIte]
+    by_cases readOnly : (dest.mutability != .Mut) = true
+    · simp only [zero, readOnly, Bool.false_eq_true, ↓reduceIte]
+    simp only [zero, readOnly, Bool.false_eq_true, ↓reduceIte, Except.mapError, Except.bind, Except.pure]
+    cases dest.initMask.setRange range true with
+    | error => rfl
+    | ok mask =>
+      dsimp only
+      cases dest.provenance.clear range dest.rawBytes pointerSize with
+      | ok value => cases value; rfl
+      | error => rfl
+
+/-- The physical splice preserves bytes outside the checked destination
+range. Report malformed storage before committing any replacement bytes. -/
+theorem overwriteCopyBytes_eq (dest : Allocation P E) (range : AllocRange) (bytes : Array UInt8) :
+    overwriteRawBytes dest range bytes =
+      match range.endExclusive with
+      | .error error => .error (.memory error)
+      | .ok finish =>
+        let updated := dest.rawBytes.extract 0 range.start.bytes.toNat ++ bytes ++
+          dest.rawBytes.extract finish.bytes.toNat dest.rawBytes.size
+        if updated.size != dest.byteSize.bytes.toNat then
+          .error (.storageLengthMismatch dest.byteSize updated.size)
+        else .ok {dest with rawBytes := updated} := by
+  unfold overwriteRawBytes
+  cases range.endExclusive <;> rfl
+
+/-- The allocation copy as a continuation for the exact success and failure
+states. Each check supplies the last allocation reached by that check. -/
+def copyRepeatedlyPre (source : Allocation P E) (sourceRange : AllocRange)
+    (destStart : Size) (repeatCount : UInt64) (pointerSize : Size)
+    (sameAllocation nonoverlap : Bool) (post : Allocation P E → Prop)
+    (onError : AllocError → Allocation P E → Prop) (dest : Allocation P E) : Prop :=
+  match source.getBytesUnchecked sourceRange with
+  | .error error => onError error dest
+  | .ok bytes =>
+    match Size.mul sourceRange.size repeatCount with
+    | .error error => onError (.memory (.sizeError error)) dest
+    | .ok totalSize =>
+      let destRange := allocRange destStart totalSize
+      match dest.getBytesUnchecked destRange with
+      | .error error => onError error dest
+      | .ok _ =>
+        match source.provenanceMap.prepareCopy sourceRange source.rawBytes pointerSize with
+        | .error error => onError (.provenance error) dest
+        | .ok provenance =>
+          match source.initializationMask.prepareCopy sourceRange with
+          | .error error => onError (.memory error) dest
+          | .ok initialized =>
+            match prepareForOverwrite destRange pointerSize dest with
+            | .error error after => onError error after
+            | .ok () afterClear =>
+              let copyBytes :=
+                if repeatCount > 1 && !nonoverlap then
+                  onError .repeatedCopyRequiresNonoverlapping afterClear
+                else if initialized.noBytesInit then
+                  match Allocation.writeUninit destRange pointerSize afterClear with
+                  | .error error after => onError error after
+                  | .ok () after => post after
+                else if sourceRange.size.bytes == 1 && repeatCount == 0 && !initialized.noBytesInit then
+                  onError .singleByteZeroCountCopy afterClear
+                else
+                  let repeatedBytes := forIn (m := Id) [:repeatCount.toNat] #[]
+                    (fun _ acc => pure (ForInStep.yield (acc ++ bytes)))
+                  match overwriteRawBytes afterClear destRange repeatedBytes with
+                  | .error error => onError error afterClear
+                  | .ok afterBytes =>
+                    let firstDestRange := allocRange destStart sourceRange.size
+                    match afterBytes.initializationMask.applyCopy initialized firstDestRange repeatCount with
+                    | .error error => onError (.memory error) afterBytes
+                    | .ok mask =>
+                      let afterInit := {afterBytes with initMask := mask}
+                      match afterInit.provenanceMap.applyCopy provenance firstDestRange repeatCount with
+                      | .ok () prov => post {afterInit with provenance := prov}
+                      | .error error prov => onError (.provenance error) {afterInit with provenance := prov}
+              if sameAllocation && nonoverlap then
+                match sourceRange.endExclusive with
+                | .error error => onError (.memory error) afterClear
+                | .ok sourceEnd =>
+                  match destRange.endExclusive with
+                  | .error error => onError (.memory error) afterClear
+                  | .ok destEnd =>
+                    if (sourceRange.start.bytes ≤ destStart.bytes && destStart.bytes < sourceEnd.bytes) ||
+                        (destStart.bytes ≤ sourceRange.start.bytes && sourceRange.start.bytes < destEnd.bytes) then
+                      onError .copyRangesOverlap afterClear
+                    else copyBytes
+              else copyBytes
+
+set_option maxHeartbeats 800000 in
+theorem copyRepeatedlyPre_eq (source : Allocation P E) (sourceRange : AllocRange)
+    (destStart : Size) (repeatCount : UInt64) (pointerSize : Size)
+    (sameAllocation nonoverlap : Bool) (post : Allocation P E → Prop)
+    (onError : AllocError → Allocation P E → Prop) (dest : Allocation P E) :
+    (match Allocation.copyRepeatedly source sourceRange destStart repeatCount pointerSize
+        sameAllocation nonoverlap dest with
+      | .ok () after => post after
+      | .error error after => onError error after) =
+      copyRepeatedlyPre source sourceRange destStart repeatCount pointerSize sameAllocation nonoverlap
+        post onError dest := by
+  simp only [Allocation.copyRepeatedly, copyRepeatedlyPre, Id.run, Bind.bind, Pure.pure,
+    Allocation.getBytesUnchecked, provenanceMap, initializationMask]
+  cases checkedSlice source sourceRange with
+  | error => rfl
+  | ok bytes =>
+    dsimp only
+    cases Size.mul sourceRange.size repeatCount with
+    | error => rfl
+    | ok totalSize =>
+      dsimp only
+      cases checkedSlice dest (allocRange destStart totalSize) with
+      | error => rfl
+      | ok _ =>
+        dsimp only
+        cases source.provenance.prepareCopy sourceRange source.rawBytes pointerSize with
+        | error => rfl
+        | ok prov =>
+          dsimp only
+          cases source.initMask.prepareCopy sourceRange with
+          | error => rfl
+          | ok initialized =>
+            dsimp only
+            cases prepareForOverwrite (allocRange destStart totalSize) pointerSize dest with
+            | error => rfl
+            | ok value afterClear =>
+              cases value
+              dsimp only
+              by_cases enforce : (sameAllocation && nonoverlap) = true
+              case' pos =>
+                simp only [enforce, ↓reduceIte]
+                cases sourceRange.endExclusive
+                case error => rfl
+                case' ok sourceEnd =>
+                  dsimp only
+                  cases (allocRange destStart totalSize).endExclusive
+                  case error => rfl
+                  case' ok destEnd =>
+                    dsimp only
+                    by_cases overlap :
+                        ((sourceRange.start.bytes ≤ destStart.bytes && destStart.bytes < sourceEnd.bytes) ||
+                          (destStart.bytes ≤ sourceRange.start.bytes && sourceRange.start.bytes < destEnd.bytes)) = true
+                    all_goals simp only [overlap, Bool.false_eq_true, ↓reduceIte]
+              case' neg => simp only [enforce, Bool.false_eq_true, ↓reduceIte]
+              all_goals
+                by_cases repeated : (decide (repeatCount > 1) && !nonoverlap) = true
+                · simp only [repeated, ↓reduceIte]
+                simp only [repeated, Bool.false_eq_true, ↓reduceIte]
+                cases noInit : initialized.noBytesInit
+                · simp only [noInit, Bool.false_eq_true, ↓reduceIte]
+                  by_cases oneByte : (sourceRange.size.bytes == 1 && repeatCount == 0 &&
+                      !initialized.noBytesInit) = true
+                  · simp only [noInit, Bool.not_false, Bool.and_true] at oneByte
+                    simp only [Bool.not_false, Bool.and_true, oneByte, ↓reduceIte]
+                  · simp only [noInit, Bool.not_false, Bool.and_true] at oneByte
+                    simp only [Bool.not_false, Bool.and_true, oneByte, Bool.false_eq_true, ↓reduceIte]
+                    let repeatedBytes := forIn (m := Id) [:repeatCount.toNat] #[]
+                      (fun _ acc => ForInStep.yield (acc ++ bytes))
+                    cases replaced : overwriteRawBytes afterClear (allocRange destStart totalSize) repeatedBytes with
+                    | error => rfl
+                    | ok afterBytes =>
+                      simp only [repeatedBytes] at replaced
+                      simp only [replaced]
+                      cases afterBytes.initMask.applyCopy initialized (allocRange destStart sourceRange.size) repeatCount with
+                      | error => rfl
+                      | ok mask =>
+                        dsimp only
+                        cases afterBytes.provenance.applyCopy prov (allocRange destStart sourceRange.size) repeatCount with
+                        | error => rfl
+                        | ok value => cases value; rfl
+                · simp only [noInit, ↓reduceIte]
+                  cases Allocation.writeUninit (allocRange destStart totalSize) pointerSize afterClear with
+                  | ok value => cases value; rfl
+                  | error => rfl
+
+/-- Overlap is diagnosed after destination initialization and provenance
+clearing. At this point the destination bytes and other fields are retained. -/
+theorem copyRepeatedly_overlap_error (source dest : Allocation P E)
+    (sourceRange : AllocRange) (destStart totalSize sourceEnd destEnd pointerSize : Size)
+    (repeatCount : UInt64)
+    (sourceBytes destBytes sourceFull destFull : Array UInt8)
+    (provenance : ProvenanceCopy P) (initialized : InitCopy)
+    (mask : InitMask) (cleared : ProvenanceMap P)
+    (sourceSlice : source.getBytesUnchecked sourceRange = .ok sourceBytes)
+    (destSlice : dest.getBytesUnchecked (allocRange destStart totalSize) = .ok destBytes)
+    (sourceStorage : source.len = source.byteSize.bytes.toNat)
+    (destStorage : dest.len = dest.byteSize.bytes.toNat)
+    (sourceImage : source.getBytesUnchecked (allocRange Size.ZERO source.byteSize) = .ok sourceFull)
+    (destImage : dest.getBytesUnchecked (allocRange Size.ZERO dest.byteSize) = .ok destFull)
+    (sizeOk : Size.mul sourceRange.size repeatCount = .ok totalSize)
+    (prepareProvenance : source.provenanceMap.prepareCopy sourceRange sourceFull pointerSize = .ok provenance)
+    (prepareInit : source.initializationMask.prepareCopy sourceRange = .ok initialized)
+    (positive : totalSize.bytes ≠ 0) (mutable : dest.mutability = .Mut)
+    (setInit : dest.initializationMask.setRange (allocRange destStart totalSize) true = .ok mask)
+    (clear : dest.provenanceMap.clear (allocRange destStart totalSize) destFull pointerSize = .ok () cleared)
+    (sourceRangeEnd : sourceRange.endExclusive = .ok sourceEnd)
+    (destRangeEnd : (allocRange destStart totalSize).endExclusive = .ok destEnd)
+    (overlap : (sourceRange.start.bytes ≤ destStart.bytes ∧ destStart.bytes < sourceEnd.bytes) ∨
+      (destStart.bytes ≤ sourceRange.start.bytes ∧ sourceRange.start.bytes < destEnd.bytes)) :
+    ∃ updated,
+      Allocation.copyRepeatedly source sourceRange destStart repeatCount pointerSize true true dest =
+        .error .copyRangesOverlap updated ∧
+      updated.initializationMask = mask ∧ updated.provenanceMap = cleared ∧
+      updated.byteSize = dest.byteSize ∧ updated.align = dest.align ∧
+      updated.mutability = dest.mutability ∧ updated.extra = dest.extra ∧
+      updated.nativeBuffer = dest.nativeBuffer ∧
+      ∀ range, updated.getBytesUnchecked range = dest.getBytesUnchecked range := by
+  refine ⟨{dest with initMask := mask, provenance := cleared}, ?_, rfl, rfl, rfl, rfl, rfl,
+    rfl, rfl, fun _ => rfl⟩
+  have srcRaw : sourceFull = source.rawBytes :=
+    Except.ok.inj (sourceImage.symm.trans (getBytesUnchecked_full_raw source sourceStorage))
+  have dstRaw : destFull = dest.rawBytes :=
+    Except.ok.inj (destImage.symm.trans (getBytesUnchecked_full_raw dest destStorage))
+  subst sourceFull
+  subst destFull
+  change checkedSlice source sourceRange = .ok sourceBytes at sourceSlice
+  change checkedSlice dest (allocRange destStart totalSize) = .ok destBytes at destSlice
+  change source.provenance.prepareCopy sourceRange source.rawBytes pointerSize = .ok provenance
+    at prepareProvenance
+  change source.initMask.prepareCopy sourceRange = .ok initialized at prepareInit
+  change dest.initMask.setRange (allocRange destStart totalSize) true = .ok mask at setInit
+  change dest.provenance.clear (allocRange destStart totalSize) dest.rawBytes pointerSize =
+    .ok () cleared at clear
+  have prepared : prepareForOverwrite (allocRange destStart totalSize) pointerSize dest =
+      .ok () {dest with initMask := mask, provenance := cleared} := by
+    unfold prepareForOverwrite setInitialization runProvenanceMutation
+    have notZero : (allocRange destStart totalSize).size.bytes ≠ 0 := positive
+    simp [Id.run, Bind.bind, Pure.pure, destSlice, notZero, mutable, setInit, clear,
+      Except.mapError, Except.bind, Except.pure]
+  unfold copyRepeatedly
+  simp [Id.run, Bind.bind, Pure.pure, sourceSlice, destSlice, sizeOk,
+    prepareProvenance, prepareInit, prepared, sourceRangeEnd, destRangeEnd, overlap]
+
 end Miri.Memory.Allocation.Bridge
