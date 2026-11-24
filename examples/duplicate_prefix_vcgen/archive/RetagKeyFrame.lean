@@ -160,4 +160,60 @@ theorem newChild_selected_key (tree : BorrowTree) (offset : Size) (source : Prov
   exact inserted_lookup tree.tagMapping tag mapping index inserted
 
 #print axioms newChild_selected_key
+private theorem pushed_other (table : Array (BorTag × UniIndex)) (pool : Array UniIndex)
+    (tag query : BorTag) (index : UniIndex) (different : query ≠ tag) :
+    (⟨(table.filter fun pair => pair.1 != tag).push (tag, index), pool⟩ : UniKeyMap BorTag).get query =
+      (⟨table, pool⟩ : UniKeyMap BorTag).get query := by
+  unfold UniKeyMap.get
+  rw [Array.find?_push, Array.find?_filter]
+  have same : (fun pair : BorTag × UniIndex => decide ((pair.1 != tag) = true ∧ (pair.1 == query) = true)) =
+      (fun pair => pair.1 == query) := by
+    funext pair
+    by_cases equal : pair.1 = query
+    · simp [equal, different]
+    · simp [equal]
+  rw [same]
+  simp [Ne.symm different]
+
+theorem inserted_lookup_other (table : UniKeyMap BorTag) (tag query : BorTag)
+    (mapping : UniKeyMap BorTag) (index : UniIndex) (different : query ≠ tag)
+    (inserted : table.insert tag = .Inserted mapping index) :
+    mapping.get query = table.get query := by
+  unfold UniKeyMap.insert at inserted
+  cases reusable : table.deassigned.back? with
+  | none =>
+    cases selected : UniIndex.ofNat? table.mapping.size with
+    | none => simp [reusable, selected, Id.run, pure] at inserted
+    | some selected =>
+      simp only [reusable, selected, Id.run, bind, pure] at inserted
+      split at inserted
+      · contradiction
+      · injection inserted with mapEq indexEq
+        cases mapEq
+        cases indexEq
+        exact pushed_other _ _ _ _ _ different
+  | some selected =>
+    simp only [reusable, Id.run, bind, pure] at inserted
+    split at inserted
+    · contradiction
+    · injection inserted with mapEq indexEq
+      cases mapEq
+      cases indexEq
+      change ((⟨(table.mapping.filter fun pair => pair.1 != tag).push (tag, index),
+        table.deassigned.pop⟩ : UniKeyMap BorTag).get query) = table.get query
+      have kept := pushed_other table.mapping table.deassigned.pop tag query index different
+      exact kept
+
+theorem newChild_old_key (tree : BorrowTree) (offset : Size) (source : ProvenanceExtra)
+    (tag query : BorTag) (inside : DedupRangeMap Tree.LocationState)
+    (outside : Permission) (held : Bool)
+    (mapping : UniKeyMap BorTag) (index : UniIndex) (different : query ≠ tag)
+    (inserted : tree.tagMapping.insert tag = .Inserted mapping index) :
+    (tree.newChild offset source tag inside outside held).tree.indexOfTag query =
+      tree.indexOfTag query := by
+  unfold BorrowTree.indexOfTag
+  rw [newChild_keyMap tree offset source tag inside outside held mapping index inserted]
+  exact inserted_lookup_other tree.tagMapping tag query mapping index different inserted
+
+#print axioms newChild_old_key
 end Miri.Verification.MutableRetagFootprint

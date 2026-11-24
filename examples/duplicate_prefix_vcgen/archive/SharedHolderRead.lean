@@ -56,11 +56,12 @@ private theorem same_local (state : LocationState) (held : Bool) :
 /-- A shared child's final read retains its mutable ancestor's local
 permissions. The intervening shared read chain needs only readable grants,
 and its released protectors restore compatibility with future writes. -/
-theorem parent_after_read (tree : BorrowTree) (location : LocationTree)
+theorem parent_after_read_or_fresh (tree : BorrowTree) (location : LocationTree)
     (tags : ProtectedTags) (tag : BorTag) (child parent root : UniIndex)
     (node : TreeNode) (found : tree.nodeAt child = some node)
     (holder : TreeNode) (holderPresent : tree.nodeAt parent = some holder)
-    (chain : Ancestor tree parent child) (separate : parent ≠ child)
+    (chain : Ancestor tree parent child)
+    (separate : parent ≠ child ∨ ∀ index data, tree.nodeAt index = some data → data.tag ≠ tag)
     (unheld : ∀ index data, tree.nodeAt index = some data →
       Ancestor tree index child → ¬ Ancestor tree index parent → (tags.remove tag).contains data.tag = false)
     (unique : ∀ index data, tree.nodeAt index = some data → data.tag = tag → index = child)
@@ -86,10 +87,6 @@ theorem parent_after_read (tree : BorrowTree) (location : LocationTree)
         normal.topology.nodes.size parent.toNat ⟨parent, holder, rfl, holderPresent⟩ index onHolder
       have actualPath : Ancestor tree lookedUp parent :=
         (ancestor_iff tree location tags depth lookedUp parent holder holderPresent).mp (by rwa [number])
-      have different : lookedUp ≠ child := by
-        intro equal
-        have back : Ancestor tree child parent := equal ▸ actualPath
-        exact separate (ancestry_antisymm tree depth parent child chain back)
       have selectedPath : index ∈ normal.topology.ancestorPath child.toNat := by
         rw [← number]
         exact (ancestor_iff tree location tags depth lookedUp child node found).mpr (ancestor_trans actualPath chain)
@@ -99,7 +96,13 @@ theorem parent_after_read (tree : BorrowTree) (location : LocationTree)
       rw [number] at projected
       have exactState := Option.some.inj (projected.symm.trans stored)
       subst before
-      have otherTag : data.tag ≠ tag := fun collision => different (unique lookedUp data present collision)
+      have otherTag : data.tag ≠ tag := by
+        rcases separate with separate | fresh
+        · intro collision
+          have equal := unique lookedUp data present collision
+          have back : Ancestor tree child parent := equal ▸ actualPath
+          exact separate (ancestry_antisymm tree depth parent child chain back)
+        · exact fresh lookedUp data present
       have protector : normal.protectedNodes.contains index = (tags.remove tag).contains data.tag := by
         rw [← number, held_at tree location tags lookedUp data present, contains_remove_other _ _ _ otherTag]
       rw [protector]
@@ -133,14 +136,16 @@ theorem parent_after_read (tree : BorrowTree) (location : LocationTree)
   rw [held] at right
   refine ⟨state, actual, ?_, ?_⟩
   · intro onParent
-    have notChild : index ≠ child := by
-      intro same
-      subst index
-      exact separate (ancestry_antisymm tree depth parent child chain onParent)
     have onChild := ancestor_trans onParent chain
     have holderMember : index.toNat ∈ normal.topology.ancestorPath parent.toNat := (ancestor_iff tree location tags depth index parent holder holderPresent).mpr onParent
     have childMember : index.toNat ∈ normal.topology.ancestorPath child.toNat := (ancestor_iff tree location tags depth index child node found).mpr onChild
-    have otherTag : data.tag ≠ tag := fun collision => notChild (unique index data present collision)
+    have otherTag : data.tag ≠ tag := by
+      rcases separate with separate | fresh
+      · intro collision
+        have equal := unique index data present collision
+        have back : Ancestor tree child parent := equal ▸ onParent
+        exact separate (ancestry_antisymm tree depth parent child chain back)
+      · exact fresh index data present
     rw [contains_remove_other _ _ _ otherTag]
     apply (same_local _ _).mp
     simpa [Required, writable, holderMember, GeneralBorrowAnchor.relation, childMember, Owned] using right
@@ -162,12 +167,13 @@ theorem parent_after_read (tree : BorrowTree) (location : LocationTree)
 /-- The actual associated read of a shared reborrow retains the earlier
 mutable holder's exclusive grant. Reader authority and the holder's
 post-release authority are independent input rights. -/
-theorem ranged_read_retains_holder_with_frame
+theorem ranged_read_retains_holder_or_fresh
     (tree : BorrowTree) (tags : ProtectedTags) (accessTag releasedTag : BorTag)
     (child parent root : UniIndex) (node holder : TreeNode)
     (found : tree.nodeAt child = some node) (holderFound : tree.nodeAt parent = some holder)
     (tagFound : tree.indexOfTag accessTag = some child)
-    (chain : Ancestor tree parent child) (separate : parent ≠ child)
+    (chain : Ancestor tree parent child)
+    (separate : parent ≠ child ∨ ∀ index data, tree.nodeAt index = some data → data.tag ≠ releasedTag)
     (unheld : ∀ index data, tree.nodeAt index = some data →
       Ancestor tree index child → ¬ Ancestor tree index parent →
         (tags.remove releasedTag).contains data.tag = false)
@@ -222,7 +228,7 @@ theorem ranged_read_retains_holder_with_frame
         .VisitChildrenOfAccessed segment.range).location := by
     intro segment _ _ _ _ initial
     obtain ⟨⟨⟨graph⟩, reader⟩, writer⟩ := initial
-    have kept := parent_after_read tree segment.data tags releasedTag child parent root node found holder holderFound
+    have kept := parent_after_read_or_fresh tree segment.data tags releasedTag child parent root node found holder holderFound
       chain separate unheld unique depth coherent.indexFits childNodes roots covered graph reader writer
       .VisitChildrenOfAccessed segment.range
     have readerKept := location_owned tree segment.data tags child root .Read .Read .VisitChildrenOfAccessed
@@ -262,6 +268,56 @@ theorem ranged_read_retains_holder_with_frame
   · intro watch previous point pos valid start stop
     exact run.2.2.2.2.2 point pos valid start stop watch previous
 
+theorem parent_after_read (tree : BorrowTree) (location : LocationTree)
+    (tags : ProtectedTags) (tag : BorTag) (child parent root : UniIndex)
+    (node : TreeNode) (found : tree.nodeAt child = some node)
+    (holder : TreeNode) (holderPresent : tree.nodeAt parent = some holder)
+    (chain : Ancestor tree parent child) (separate : parent ≠ child)
+    (unheld : ∀ index data, tree.nodeAt index = some data →
+      Ancestor tree index child → ¬ Ancestor tree index parent → (tags.remove tag).contains data.tag = false)
+    (unique : ∀ index data, tree.nodeAt index = some data → data.tag = tag → index = child)
+    (depth : ParentDepth tree.nodes) (topologyFits : tree.nodes.data.size ≤ 2 ^ 32)
+    (children : GeneralBorrowGraph.ChildNodes tree)
+    (roots : tree.roots = #[root]) (covered : GeneralBorrowGraph.RootsCover tree)
+    (forest : GeneralBorrowForest.Forest (source_normal_projection tree location tags).topology)
+    (reader : GeneralBorrowAnchor.AnchorOwned (source_normal_projection tree location tags) child.toNat .Read)
+    (parentRights : LocationRights tree location (tags.remove tag) parent)
+    (mode : ChildrenVisitMode) (range : ByteRange) :
+    let visited := tree.performTreeAccessAt location (some child) .Read tags mode range
+    LocationRights tree visited.location (tags.remove tag) parent :=
+  parent_after_read_or_fresh tree location tags tag child parent root node found holder holderPresent
+    chain (Or.inl separate) unheld unique depth topologyFits children roots covered forest reader parentRights mode range
+
+theorem ranged_read_retains_holder_with_frame
+    (tree : BorrowTree) (tags : ProtectedTags) (accessTag releasedTag : BorTag)
+    (child parent root : UniIndex) (node holder : TreeNode)
+    (found : tree.nodeAt child = some node) (holderFound : tree.nodeAt parent = some holder)
+    (tagFound : tree.indexOfTag accessTag = some child)
+    (chain : Ancestor tree parent child) (separate : parent ≠ child)
+    (unheld : ∀ index data, tree.nodeAt index = some data →
+      Ancestor tree index child → ¬ Ancestor tree index parent →
+        (tags.remove releasedTag).contains data.tag = false)
+    (unique : ∀ index data, tree.nodeAt index = some data → data.tag = releasedTag → index = child)
+    (coherent : CoherentForest tree) (roots : tree.roots = #[root])
+    (offset length : Size)
+    (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
+    (readerRights : OwnedOn (fun row => LocationAccessRights tree row tags child .Read)
+      offset.bytes (offset.bytes + length.bytes) tree.locations)
+    (holderRights : OwnedOn (fun row => LocationRights tree row (tags.remove releasedTag) parent)
+      offset.bytes (offset.bytes + length.bytes) tree.locations)
+    (vacant : OwnedOn (fun row => ∀ index, tree.nodeAt index = none → row.perms.get index = none)
+      offset.bytes (offset.bytes + length.bytes) tree.locations) :
+    let run := tree.performNormalAccessRange accessTag offset length .Read tags .VisitChildrenOfAccessed
+    run.status = .Completed ∧ run.tree = {tree with locations := run.tree.locations} ∧
+      CoherentForest run.tree ∧ run.tree.locations.size = tree.locations.size ∧
+      OwnedOn (fun row => LocationRights run.tree row (tags.remove releasedTag) parent)
+        offset.bytes (offset.bytes + length.bytes) run.tree.locations ∧
+      (∀ watch, MaterializedWithin tree watch offset.bytes (offset.bytes + length.bytes) →
+        MaterializedWithin run.tree watch offset.bytes (offset.bytes + length.bytes)) :=
+  ranged_read_retains_holder_or_fresh tree tags accessTag releasedTag child parent root node holder
+    found holderFound tagFound chain (Or.inl separate) unheld unique coherent roots offset length bounds
+    readerRights holderRights vacant
+
 /-- The associated read retains the holder's original writable rows. -/
 theorem ranged_read_retains_holder
     (tree : BorrowTree) (tags : ProtectedTags) (accessTag releasedTag : BorTag)
@@ -287,10 +343,11 @@ theorem ranged_read_retains_holder
       CoherentForest run.tree ∧ run.tree.locations.size = tree.locations.size ∧
       OwnedOn (fun row => LocationRights run.tree row (tags.remove releasedTag) parent)
         offset.bytes (offset.bytes + length.bytes) run.tree.locations := by
-  have result := ranged_read_retains_holder_with_frame tree tags accessTag releasedTag child parent root node holder
-    found holderFound tagFound chain separate unheld unique coherent roots offset length bounds readerRights
+  have result := ranged_read_retains_holder_or_fresh tree tags accessTag releasedTag child parent root node holder
+    found holderFound tagFound chain (Or.inl separate) unheld unique coherent roots offset length bounds readerRights
     holderRights vacant
   exact ⟨result.1, result.2.1, result.2.2.1, result.2.2.2.1, result.2.2.2.2.1⟩
 
-#print axioms parent_after_read
+#print axioms parent_after_read_or_fresh
+#print axioms ranged_read_retains_holder_or_fresh
 end DuplicatePrefix.SharedRelease

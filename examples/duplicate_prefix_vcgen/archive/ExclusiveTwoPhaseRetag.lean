@@ -96,6 +96,14 @@ theorem uniform_live_reborrow_unprotected [DecidableEq K] (hooks : TypedRetag.Ho
     live tracked mutable associated offset (by simpa only [length] using parentAccess)
     (by simpa only [length] using race) childReady
 
+/-- The pure tree transition of the emitted unprotected frozen reservation.
+Only the logical tree is retained here. The execution theorem below also
+proves the parent access and the child installation both complete. -/
+def reservationTree (tree : BorrowTree) (parentTag tag : BorTag) (offset size : Size)
+    (tags : ProtectedTags) : BorrowTree :=
+  let read := tree.performBorrowAccessRange (.concrete parentTag) offset size .Read tags .VisitChildrenOfAccessed
+  (read.tree.newChild offset (.concrete parentTag) tag (DedupRangeMap.new size initial) (.ReservedFrz false) false).tree
+
 /-- The concrete two-phase borrow executes the actual parent read and
 installs the new reservation. The existing caller protector ledger and
 all existing source grants used by the reborrow are retained. -/
@@ -146,6 +154,7 @@ theorem reborrow_exclusive [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budge
       after.machine.borrowTracker = some borrow ∧ after.stack = logged.stack ∧
       after.machine.user = logged.machine.user ∧ after.machine.dataRace = logged.machine.dataRace ∧
       after.machine.threads = logged.machine.threads ∧
+      tree = reservationTree entry.allocation.extra parentTag tag location.baseOffset size borrow.global.protectedTags ∧
       tree.locations.size = entry.allocation.extra.locations.size ∧ CoherentForest tree ∧ tree.roots = #[root] ∧
       tree.indexOfTag tag = some child ∧
       (∃ node, tree.nodeAt child = some node ∧ node.tag = tag) ∧
@@ -180,8 +189,10 @@ theorem reborrow_exclusive [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budge
   have actual := uniform_live_reborrow_unprotected hooks budget place size policy tag location
     before pointed resolved logged initial entry borrow .Read check resolve log rfl tracked live mutable
     imprecise freeze rfl rfl nonempty ensure raceOff readOk childOk
+  have exactTree : child.tree = reservationTree tree parentTag tag location.baseOffset size borrow.global.protectedTags := by
+    simp only [child, read, reservationTree, parentProvenance, tags, inside]
   exact ⟨after, child.tree, index, actual, withTree_live raced location.allocId updated child.tree,
-    tracked, rfl, rfl, rfl, rfl, capacity, well, stillRoot, key, node, owned⟩
+    tracked, rfl, rfl, rfl, rfl, exactTree, capacity, well, stillRoot, key, node, owned⟩
 
 end DuplicatePrefix.ExclusiveTwoPhaseRetag
 

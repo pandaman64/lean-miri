@@ -88,6 +88,10 @@ structure SharedChildFrame (original read after : BorrowTree) (parent child : Un
     RetagReleaseFootprint.MaterializedWithin read watch lower upper →
       RetagReleaseFootprint.MaterializedWithin after watch lower upper
 
+  olderExposure : ∀ query, query ≠ child →
+    (after.nodeAt query).map TreeNode.isExposed = (original.nodeAt query).map TreeNode.isExposed
+  olderTags : ∀ query, query ≠ tag → after.indexOfTag query = original.indexOfTag query
+
 private theorem under_read (original read : BorrowTree) (source index : UniIndex)
     (same : read = {original with locations := read.locations}) :
     Ancestor read index source ↔ Ancestor original index source := by
@@ -405,7 +409,7 @@ theorem concrete_shared_readable_reborrow_with_frame
       have values := Option.some.inj same
       exact ⟨previous, rfl, (congrArg Prod.fst values).symm, congrArg (fun v => v.2.2) values⟩
   have footprint : SharedChildFrame tree read.tree result.tree parent child tag offset length inside := by
-    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro index data distinct found
       obtain ⟨previous, existsBefore, tag, permission⟩ := oldNodes index data distinct found
       exact ⟨previous, by
@@ -442,6 +446,17 @@ theorem concrete_shared_readable_reborrow_with_frame
         oldTags newTags freshUnheld retained offset.bytes (offset.bytes + length.bytes) owns
     · intro watch different lower upper materialized
       exact SharedRelease.retained_materialization_after_attach frameWith different lower upper materialized
+    · intro query different
+      have ran := newChild_older_exposure read.tree offset parentTag tag parent child query mapping inside
+        .Frozen held .Read rfl rfl rfl selected readFound parentNode readHead vacant different complete
+      unfold BorrowTree.nodeAt at ran ⊢
+      rw [sameNodes] at ran
+      exact ran
+    · intro query different
+      have ran := newChild_old_key read.tree offset (.concrete parentTag) tag query inside .Frozen held
+        mapping child different selected
+      change result.tree.indexOfTag query = read.tree.indexOfTag query at ran
+      simpa only [BorrowTree.indexOfTag, sameMap] using ran
   refine ⟨readOk, complete, frameWith.1.trans readSize, coherentAfter, sameRoots.trans
     ((congrArg BorrowTree.roots frame).trans roots), child, key, childStored, footprint, ?_⟩
   intro point lower upper location indexed

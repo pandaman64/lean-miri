@@ -120,8 +120,35 @@ theorem completedPointer
     constructed, styled, reassemble, get, getThe, MonadStateOf.get, EStateM.get,
     bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
 
+/-- The actual shared receiver tree and its surviving attachment facts. -/
+def FrameGrant (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (entry : LocalAllocation Provenance BorrowTree MiriMemoryKind)
+    (id : AllocId) (parentTag tag : BorTag) (parent : UniIndex) (offset len : UInt64)
+    (protectors : ProtectedTags) : Prop :=
+  let read := entry.allocation.extra.performNormalAccessRange parentTag (Size.ofBytes offset)
+    (Size.ofBytes len) .Read protectors .VisitChildrenOfAccessed
+  let inside := DedupRangeMap.new (Size.ofBytes len) sharedState
+  let result := read.tree.newChild (Size.ofBytes offset) (.concrete parentTag) tag inside .Frozen true
+  ∃ index, machine.memory.live[id]? = some {entry with allocation := entry.allocation.setExtra result.tree} ∧
+    result.tree.indexOfTag tag = some index ∧
+    SharedChildFrame entry.allocation.extra read.tree result.tree parent index tag (Size.ofBytes offset)
+      (Size.ofBytes len) inside
+
+private theorem uniform_slot (offset length capacity : Size)
+    (bounds : offset.bytes.toNat + length.bytes.toNat ≤ capacity.bytes.toNat) :
+    ∀ segment ∈ (DedupRangeMap.new length sharedState).iterAll.toList,
+      (segment.range.start ≤ segment.range.stop ∧
+        offset.bytes.toNat + segment.range.stop.toNat ≤ capacity.bytes.toNat) ∧
+      segment.data = sharedState := by
+  intro segment member
+  by_cases empty : length.bytes = 0
+  · simp [DedupRangeMap.new, DedupRangeMap.iterAll, empty] at member
+  · simp [DedupRangeMap.new, DedupRangeMap.iterAll, beq_iff_eq, empty] at member
+    subst segment
+    exact ⟨⟨by simp, bounds⟩, rfl⟩
+
 set_option maxHeartbeats 1200000 in
-theorem run
+theorem runWithFrame
     (options : EvalConfigurationCore.Options) (remaining : Nat)
     (span : PreparedContracts.FixedSpanQuery) (fuel : Nat)
     (fuelEq : options.place.dynamicFuel = fuel+1)
@@ -176,7 +203,9 @@ theorem run
       after.user = machine.user ∧
       ∃ newTracker, after.borrowTracker = some newTracker ∧ newTracker.retagMode = .FnEntry ∧
         newTracker.global.protectedTags = borrow.global.protectedTags.insert tag .StrongProtector ∧
-        ReadGrant after entry id tag root offset len newTracker.global.protectedTags := by
+        ReadGrant after entry id tag root offset len newTracker.global.protectedTags ∧
+        after = {machine with memory := after.memory, borrowTracker := after.borrowTracker} ∧
+        FrameGrant after entry id parentTag tag parent offset len newTracker.global.protectedTags := by
   intro cfg parentPtr childPtr input output tagged
   let initial := Storage.withCurrent frames frame machine
   have roomForTag : borrow.global.nextPointerTag.value ≠ 18446744073709551615 := by
@@ -280,12 +309,93 @@ theorem run
   have newProtections : active.global.protectedTags =
       borrow.global.protectedTags.insert tag .StrongProtector := by
     simp only [active, MutableTypedRetag.registeredTracker, nextTracker, protections]
-  refine ⟨after, by rw [callback]; exact whole, rfl, active, trackerAfter, mode, newProtections, ?_⟩
-  refine ⟨child.tree, selected, afterLive, good, sameRoots, sizeEq, found, ?_, owned⟩
-  obtain ⟨fresh, present, tagged, _, frozen⟩ := node
-  exact ⟨fresh, present, tagged, frozen⟩
+  refine ⟨after, by rw [callback]; exact whole, rfl, active, trackerAfter, mode, newProtections, ?_, rfl, ?_⟩
+  · refine ⟨child.tree, selected, afterLive, good, sameRoots, sizeEq, found, ?_, owned⟩
+    obtain ⟨fresh, present, tagged, _, frozen⟩ := node
+    exact ⟨fresh, present, tagged, frozen⟩
+  · have allowed : OwnedOn (fun row => LocationAccessRights entry.allocation.extra row
+        active.global.protectedTags parent .Read) offset (offset+len) entry.allocation.extra.locations := by
+      intro position valid linear first last index node present
+      obtain ⟨state, lookup, self, foreign⟩ := owners position valid linear first last index node present
+      have unchanged : active.global.protectedTags.contains node.tag = borrow.global.protectedTags.contains node.tag := by
+        rw [newProtections]
+        exact Miri.Verification.MutableReferenceRights.contains_insert_other _ _ _ _ (freshNode index node present)
+      exact ⟨state, lookup, by rw [unchanged]; exact self, by rw [unchanged]; exact foreign⟩
+    have each := uniform_slot (Size.ofBytes offset) (Size.ofBytes len) _ bounds
+    obtain ⟨_, _, _, _, _, index, lookup, _, framed, _⟩ :=
+      concrete_shared_readable_reborrow_with_frame entry.allocation.extra active.global.protectedTags parentTag tag
+        parent root (Size.ofBytes offset) (Size.ofBytes len) (DedupRangeMap.new (Size.ofBytes len) sharedState) true
+        coherent parentNode parentStored roots parentFound depth rank tagFresh room aligned reuse clean
+        (fun segment member => (each segment member).1)
+        (fun segment member => (each segment member).2) bounds allowed
+    exact ⟨index, afterLive, lookup, framed⟩
+
+theorem run
+    (options : EvalConfigurationCore.Options) (remaining : Nat)
+    (span : PreparedContracts.FixedSpanQuery) (fuel : Nat)
+    (fuelEq : options.place.dynamicFuel = fuel+1)
+    (preciseOff : options.retag.preciseInteriorMut = false)
+    (implicitOff : options.retag.implicitWrites = false)
+    (frames : Array CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame)
+    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (ledger : FrameState) (frameLedger : frame.extra.borrowTracker = some ledger)
+    (callee : frame.functionInstance = HelperCompilerFacts.lenCall.callee)
+    (reference : LocalLayout) (referenceTy : reference.ty = 7)
+    (id : AllocId) (parentTag : BorTag) (parent root : UniIndex) (base offset len : UInt64)
+    (entry : LocalAllocation Provenance BorrowTree MiriMemoryKind) (borrow : MachineHooks.BorrowState)
+    (tracked : machine.borrowTracker = some borrow) (mode : borrow.retagMode = .FnEntry)
+    (fresh : borrow.global.nextPointerTag.value < 18446744073709551615)
+    (tag : BorTag) (tagEq : tag = borrow.global.nextPointerTag)
+    (cached : machine.user.addresses.baseAddr.find? (fun row => row.allocId == id) = some ⟨id, base⟩)
+    (live : machine.memory.live[id]? = some entry)
+    (allocationMut : entry.allocation.mutability = .Mut)
+    (raceOff : machine.dataRace = none)
+    (positive : 0 < len) (bounded : len ≤ 9223372036854775807)
+    (memoryBounds : offset.toNat + len.toNat ≤ entry.allocation.byteSize.bytes.toNat)
+    (cmp : ProjectionMetadataFacts.NullComparator)
+    (metadata : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).metadata =
+      PreparedReflection.actual.runtime)
+    (noAlias : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any
+      (·.value.ty == 2) = false)
+    (coherent : CoherentForest entry.allocation.extra) (parentNode : TreeNode)
+    (parentStored : entry.allocation.extra.nodeAt parent = some parentNode)
+    (roots : entry.allocation.extra.roots = #[root]) (parentFound : entry.allocation.extra.indexOfTag parentTag = some parent)
+    (depth : BorrowTree.ZeroProtection.ParentDepth entry.allocation.extra.nodes) (rank : depth.depth parent < entry.allocation.extra.nodes.size)
+    (tagFresh : entry.allocation.extra.indexOfTag tag = none)
+    (freshNode : ∀ index node, entry.allocation.extra.nodeAt index = some node → node.tag ≠ tag)
+    (room : entry.allocation.extra.tagMapping.deassigned.back? = none → entry.allocation.extra.tagMapping.mapping.size ≤ 4294967295)
+    (aligned : entry.allocation.extra.tagMapping.deassigned.back? = none → entry.allocation.extra.tagMapping.mapping.size = entry.allocation.extra.nodes.size)
+    (reuse : ∀ index, entry.allocation.extra.tagMapping.deassigned.back? = some index →
+      index.toNat < entry.allocation.extra.nodes.size ∧ entry.allocation.extra.nodeAt index = none)
+    (clean : ∀ index, entry.allocation.extra.nodeAt index = none →
+      ∀ position (valid : position < entry.allocation.extra.locations.entries.size),
+        entry.allocation.extra.locations.entries[position].data.perms.get index = none)
+    (bounds : offset.toNat + len.toNat ≤ entry.allocation.extra.locations.size.bytes.toNat)
+    (owners : OwnedOn (fun row => LocationAccessRights entry.allocation.extra row borrow.global.protectedTags parent .Read)
+      offset (offset+len) entry.allocation.extra.locations) :
+    let cfg := PreparedContracts.actualConfig options () remaining span
+    let parentPtr := Pointer.new (.concrete id parentTag) (Size.ofBytes (base+offset))
+    let childPtr := Pointer.new (.concrete id tag) (Size.ofBytes (base+offset))
+    let input := RetagReferencePlace.sliceValue cfg.access.runtime.base parentPtr len reference
+    let output := RetagReferencePlace.sliceValue cfg.access.runtime.base childPtr len reference
+    let tagged := {frame with extra := {frame.extra with borrowTracker := some (ledger.addProtector id tag)}}
+    ∃ after : MachineHooks.MachineState MiriMemoryKind Machine.RootUser,
+      cfg.validity.retagPointer () input reference.ty (Storage.withCurrent frames frame machine) =
+        .ok (some output) (Storage.withCurrent frames tagged after) ∧
+      after.user = machine.user ∧
+      ∃ newTracker, after.borrowTracker = some newTracker ∧ newTracker.retagMode = .FnEntry ∧
+        newTracker.global.protectedTags = borrow.global.protectedTags.insert tag .StrongProtector ∧
+        ReadGrant after entry id tag root offset len newTracker.global.protectedTags := by
+  intro cfg oldPtr newPtr input output tagged
+  obtain ⟨after, action, user, next, tracker, modeAfter, protectedAfter, read, _, _⟩ :=
+    runWithFrame options remaining span fuel fuelEq preciseOff implicitOff frames frame machine ledger frameLedger
+      callee reference referenceTy id parentTag parent root base offset len entry borrow tracked mode fresh tag tagEq
+      cached live allocationMut raceOff positive bounded memoryBounds cmp metadata noAlias coherent parentNode
+      parentStored roots parentFound depth rank tagFresh freshNode room aligned reuse clean bounds owners
+  exact ⟨after, action, user, next, tracker, modeAfter, protectedAfter, read⟩
 
 end DuplicatePrefix.CurrentLenFnEntry
 
 #print axioms DuplicatePrefix.CurrentLenFnEntry.completedPointer
+#print axioms DuplicatePrefix.CurrentLenFnEntry.runWithFrame
 #print axioms DuplicatePrefix.CurrentLenFnEntry.run
