@@ -120,25 +120,40 @@ supply individual cases of the all-count argument.
 
 ### Safety for both prepared return destinations
 
-[VerifyCanonicalSafety.lean](VerifyCanonicalSafety.lean) proves
-`DuplicatePrefix.CanonicalCallDomain.safetyForPreparedCall` for all `UInt64`
-counts and either admitted Boolean return destination. For a nonempty
-initialized slice it uses `CopySourceResources` for the source allocation.
-The permission proof covers both appended and recycled Tree Borrows keys.
-For a nonzero count on an empty slice it covers a non-null integer-address
-pointer without provenance. The proof uses the pinned compiler profile,
-resource budgets, and Shallow fixed-scheduling configuration in the
-theorem statement. It proves the exact generated obligation without
-requiring a trace or execution result.
+[VerifyCanonicalBackedSafety.lean](VerifyCanonicalBackedSafety.lean) proves
+`DuplicatePrefix.CanonicalCallDomain.safetyForPreparedCallWithBackedEmpty`.
+It discharges the exact generated safety condition for every `UInt64` count
+and either admitted Boolean return destination. The theorem uses the pinned
+compiler profile, declared resource budgets, and Shallow fixed scheduling.
+Its hypotheses describe the prepared call data and require neither a trace
+nor a successful execution result.
 
-Use `--client VerifyCanonicalSafety` in the checker command below to
-rebuild this proof.
+- For a nonempty initialized slice, the source allocation supplies
+  `CopySourceResources`. The Tree Borrows proof covers both appended and
+  recycled tag keys.
+- For a nonzero count on an empty slice, a non-null integer address without
+  provenance needs no backing allocation. A wildcard pointer needs the stock
+  zero-width lookup to select no allocation. A concrete pointer needs two
+  available retag slots and, if returning through a physical Boolean byte, a
+  return allocation distinct from the input allocation.
 
-[VerifyEmptyWildcardCanonical.lean](VerifyEmptyWildcardCanonical.lean) also
-proves the exact obligation for every count on an admitted zero-length
-wildcard slice whose zero-width address lookup selects no allocation. It
-covers both return destinations. Use `--client VerifyEmptyWildcardCanonical`
-to rebuild that proof.
+[VerifyCanonicalSafety.lean](VerifyCanonicalSafety.lean)
+is the smaller proof for integer-address empties and nonempty slices.
+[VerifyEmptyWildcardCanonical.lean](VerifyEmptyWildcardCanonical.lean) is
+the standalone proof for unresolved wildcard empties.
+
+Generate the standalone obligation and check the proof closure with the
+pinned Lean executable on `PATH` and the repository library built.
+
+```sh
+out="$PWD/scratch/duplicate-prefix-vcgen"
+mkdir -p "$out"
+tools/body-vc safety examples/duplicate_prefix_vcgen/duplicate_prefix.rs \
+  --output "$out/Representative.lean" --no-check
+python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
+  --generated "$out/Representative.lean" --client VerifyCanonicalBackedSafety \
+  --output "$PWD/scratch/duplicate-prefix-all-count"
+```
 
 ### Zero count with either return destination
 
@@ -148,7 +163,7 @@ length, with either a root physical Boolean destination or a nested cached
 Boolean destination. The proof starts from the prepared caller rights and
 uses the actual protector release and return. It also needs the pinned
 compiler control profile and the validation budget in the theorem statement.
-Use `--client VerifyZeroPhysicalCanonical` in the checker command below to
+Use `--client VerifyZeroPhysicalCanonical` in the checker command above to
 rebuild this proof.
 
 ### All counts for a nonempty slice with a cached Boolean return
@@ -163,18 +178,6 @@ fixed-scheduling, no-GC, no-race configuration. The proof derives the actual
 zero-count, rejecting, or copying execution and its return from those
 initial conditions.
 
-Generate the standalone obligation and check the proof closure with the
-pinned Lean executable on `PATH` and the repository library built.
-
-```sh
-out="$PWD/scratch/duplicate-prefix-vcgen"
-mkdir -p "$out"
-tools/body-vc safety examples/duplicate_prefix_vcgen/duplicate_prefix.rs \
-  --output "$out/Representative.lean" --no-check
-python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
-  --generated "$out/Representative.lean" --client VerifyAllCountCanonical \
-  --output "$PWD/scratch/duplicate-prefix-all-count"
-```
 
 ### Recheck migrated archive components
 

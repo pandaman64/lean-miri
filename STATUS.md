@@ -1192,11 +1192,11 @@ vector-clock backend.
   The emitted VC is also proved for every `UInt64` count of a nonempty
   initialized slice under the canonical compiler profile, backing invariants,
   and tag capacity premises, with either supported Boolean return. Both
-  appended and recycled Tree Borrows keys are covered. The
-  same theorem covers every count on an integer-address empty slice
-  without provenance. A separate exact proof covers empty wildcard slices
-  whose zero-width address lookup selects no allocation. Backed empty
-  slices at nonzero counts remain open.
+  appended and recycled Tree Borrows keys are covered. The combined proof
+  covers integer-address, unresolved wildcard, and concretely backed empty
+  inputs. A nonzero count with a backed empty source and physical output
+  requires distinct source and output allocations. Resolving wildcard
+  frames and empty source/output aliasing remain open.
 
 * **Windows / peripheral OS facilities** —
   [WindowsPlatform](Miri/Interpreter/WindowsPlatform.lean), `MiriTests/Native/`
