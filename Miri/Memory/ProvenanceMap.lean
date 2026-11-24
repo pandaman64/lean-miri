@@ -413,4 +413,69 @@ theorem insertPtr_singleton_after (offset pointerSize finish : Size) (old newPro
   unfold insertPtr
   simp [checked,empty,bind,Bind.bind,EStateM.bind,EStateM.get,EStateM.set,pure,Pure.pure,EStateM.pure]
 
+/-! Minimal public bridge equations for `ProvenanceMap.new` over module-private
+helpers (`rangeEnd`, `adjustedStart`, `rangeEntries`, `subtractSize`), used by
+`Miri.Memory.ProvenanceMapVerification`. -/
+
+/-- A freshly created empty provenance map reports no overlapping provenance
+on any non-overflowing range when the target pointer size is nonzero. -/
+theorem rangeEmpty_new (range : AllocRange) (pointerSize finish : Size)
+    (positive : pointerSize.bytes ≠ 0) (endEq : range.endExclusive = .ok finish) :
+    (new (Prov := P)).rangeEmpty range pointerSize = .ok true :=
+  empty_range range pointerSize finish positive endEq
+
+/-- Querying whole-pointer provenance entries on `ProvenanceMap.new` returns
+`.ok #[]` for any non-overflowing range and nonzero pointer size. -/
+theorem rangePtrs_new (range : AllocRange) (pointerSize finish : Size)
+    (positive : pointerSize.bytes ≠ 0) (endEq : range.endExclusive = .ok finish) :
+    (new (Prov := P)).rangePtrs range pointerSize = .ok #[] := by
+  have h_pos_beq : (pointerSize.bytes == 0) = false := beq_false_of_ne positive
+  unfold rangePtrs adjustedStart rangeEnd rangeEntries new
+  simp only [h_pos_beq, Bool.false_eq_true, ↓reduceIte, endEq, Except.mapError,
+    Bind.bind, Except.bind, Pure.pure, Except.pure, Array.filter_empty]
+
+/-- Querying byte-fragment provenance entries on `ProvenanceMap.new` returns
+`.ok #[]` for any non-overflowing range. -/
+theorem rangeBytes_new (range : AllocRange) (finish : Size)
+    (endEq : range.endExclusive = .ok finish) :
+    (new (Prov := P)).rangeBytes range = .ok #[] := by
+  unfold rangeBytes rangeEnd rangeEntries new
+  simp only [endEq, Except.mapError, Option.getD_none,
+    Bind.bind, Except.bind, Pure.pure, Except.pure, Array.filter_empty]
+
+/-- Reduction bridge for `ProvenanceMap.prepareCopy` on `ProvenanceMap.new`
+once boundary overlaps and subtraction non-underflow are discharged. -/
+theorem prepareCopy_new_of_sub_ok (range : AllocRange) (data : Array UInt8)
+    (pointerSize finish : Size)
+    (positive : pointerSize.bytes ≠ 0)
+    (endEq : range.endExclusive = .ok finish)
+    (h_start0 : (new (Prov := P)).rangePtrs (allocRange range.start Size.ZERO) pointerSize = .ok #[])
+    (h_fin0 : (new (Prov := P)).rangePtrs (allocRange finish Size.ZERO) pointerSize = .ok #[])
+    (h_sub : pointerSize.bytes ≤ range.size.bytes → ¬(finish.bytes < pointerSize.bytes - 1)) :
+    (new (Prov := P)).prepareCopy range data pointerSize = .ok ⟨#[], #[]⟩ := by
+  have h_pos_f : ¬((pointerSize.bytes == 0) = true) := by
+    rw [beq_false_of_ne positive]; exact Bool.false_ne_true
+  have h_re_end : rangeEnd range = .ok finish := by
+    unfold rangeEnd; rw [endEq]; rfl
+  unfold prepareCopy
+  rw [ite_eq_right h_pos_f]
+  dsimp only [Bind.bind, Except.bind]
+  rw [h_re_end]
+  dsimp only
+  rw [h_start0]
+  dsimp only
+  rw [h_fin0]
+  dsimp only [Pure.pure, Except.pure]
+  by_cases h_ge : pointerSize.bytes ≤ range.size.bytes
+  · have h_sub_ok : subtractSize finish (Size.ofBytes (pointerSize.bytes - 1)) =
+        .ok (Size.ofBytes (finish.bytes - (pointerSize.bytes - 1))) := by
+      unfold subtractSize Size.sub Size.ofBytes
+      rw [ite_eq_right (h_sub h_ge)]
+      rfl
+    rw [ite_eq_left h_ge]
+    rw [h_sub_ok]
+    rfl
+  · rw [ite_eq_right h_ge]
+    rfl
+
 end Miri.Memory.ProvenanceMap

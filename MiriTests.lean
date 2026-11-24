@@ -1,6 +1,7 @@
 import MiriTests.FunctionPointers.AllocationDiagnostics
 import MiriTests.ABI.ABIPrimitives
 import MiriTests.ABI.RuntimeLayout
+import MiriTests.Allocation.MemoryLemmas
 import MiriTests.Cast.Typed
 import MiriTests.Connected.Proofs.ChoiceHistory206
 import MiriTests.Connected.Proofs.ChoiceLocality220

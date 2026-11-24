@@ -639,3 +639,224 @@ run_cmd do
       for dependency in (←collectAxioms name) do
         unless #[``propext,``Quot.sound,``Classical.choice].contains dependency do
           throwError "unapproved mask write axiom {dependency} in {name}"
+
+namespace Miri.Memory.InitMask.Bridge
+
+open Miri.ABI
+open Miri.Memory
+open Miri.Memory.InitMask.WriteProof
+
+set_option autoImplicit false
+
+/-! Minimal equation bridges exposing module-private helpers (`get`,
+`materialize`, `setRangeInbounds`, `findBit`, `collectChunksAux`) in terms of
+public operations for `Miri.Memory.InitMaskVerification`. -/
+
+/-- Pointwise bit lookup equation for `InitMask.get` on `.Materialized` storage. -/
+theorem get_materialized_eq (words : Array UInt64) (len offset : Size) :
+    (InitMask.mk (.Materialized ⟨words⟩) len).get offset =
+      match words[offset.bytes.toNat / 64]? with
+      | some word => .ok (Nat.testBit word.toNat (offset.bytes.toNat % 64))
+      | none => .error (.blockIndexOutOfBounds (offset.bytes.toNat / 64) words.size) := by
+  unfold InitMask.get Miri.Memory.InitMaskMaterialized.get
+    Miri.Memory.InitMaskMaterialized.getBlock InitMaskMaterialized.bitIndex
+    Miri.Memory.sizeBytes Miri.Memory.blockSize Miri.Memory.bitAt
+  dsimp only
+  cases words[offset.bytes.toNat / 64]? <;> rfl
+
+/-- In-bounds partial `setRange` on a `.Lazy` mask with a flipped state reduces
+to `setRange` on its replicated `.Materialized` backing array. -/
+theorem setRange_lazy_materialize_eq (len : Size) (initial state : Bool)
+    (range : AllocRange) (finish : Size)
+    (endpoint : range.endExclusive = .ok finish)
+    (notFull : ¬(range.start.bytes = 0 ∧ len.bytes ≤ finish.bytes))
+    (diff : (initial == state) = false)
+    (nonzero : len.bytes.toNat ≠ 0)
+    (inBounds : finish.bytes ≤ len.bytes) :
+    (InitMask.mk (.Lazy initial) len).setRange range state =
+      (InitMask.mk (.Materialized ⟨Array.replicate (len.bytes.toNat / 64 + 1)
+        (if initial then UInt64.ofNat 18446744073709551615 else 0)⟩) len).setRange range state := by
+  have hmat := materialize_lazy_nonzero len initial nonzero
+  unfold materialize InitMask.new at hmat
+  unfold InitMask.setRange
+  simp only [endpoint, Bind.bind, Except.bind, notFull, ↓reduceIte, diff, Bool.false_eq_true,
+    inBounds, hmat]
+
+/-- Equation bridge for in-bounds non-full `InitMask.setRange` on `.Materialized`
+storage in terms of public word-array operations. -/
+theorem setRange_materialized_eq (words : Array UInt64) (len : Size) (range : AllocRange)
+    (finish : Size) (state : Bool)
+    (endpoint : range.endExclusive = .ok finish)
+    (notFull : ¬(range.start.bytes = 0 ∧ len.bytes ≤ finish.bytes))
+    (inBounds : finish.bytes ≤ len.bytes) :
+    (InitMask.mk (.Materialized ⟨words⟩) len).setRange range state =
+      let bA := range.start.bytes.toNat / 64
+      let rA := range.start.bytes.toNat % 64
+      let bB := finish.bytes.toNat / 64
+      let rB := finish.bytes.toNat % 64
+      let setW (word lo hi : Nat) : UInt64 :=
+        let mask := (2 ^ hi - 1) - (2 ^ lo - 1)
+        UInt64.ofNat (if state then Nat.lor word mask else Nat.land word (18446744073709551615 - mask))
+      let getB (ws : Array UInt64) (i : Nat) : Except InitMaskError UInt64 :=
+        match ws[i]? with | some w => .ok w | none => .error (.blockIndexOutOfBounds i ws.size)
+      let setB (ws : Array UInt64) (i : Nat) (w : UInt64) : Except InitMaskError (Array UInt64) :=
+        if h : i < ws.size then .ok (ws.set i w h) else .error (.blockIndexOutOfBounds i ws.size)
+      let upd (ws : Array UInt64) (i : Nat) (f : UInt64 → UInt64) : Except InitMaskError (Array UInt64) := do
+        let w ← getB ws i
+        setB ws i (f w)
+      let fill (i : Nat) (ws : Array UInt64) : Except InitMaskError (ForInStep (Array UInt64)) := do
+        let next ← setB ws i (if state then UInt64.ofNat 18446744073709551615 else 0)
+        return ForInStep.yield next
+      ((do
+        if bA == bB then
+          upd words bA (fun w => setW w.toNat rA (if rB == 0 then 64 else rB))
+        else
+          let initial ← upd words bA (fun w => setW w.toNat rA 64)
+          let middle ← if rB != 0 then upd initial bB (fun w => setW w.toNat 0 rB) else pure initial
+          forIn (Std.Legacy.Range.mk (bA + 1) bB 1 (by decide)) middle fill) >>= fun newWords =>
+        pure (InitMask.mk (.Materialized ⟨newWords⟩) len)) := by
+  conv =>
+    lhs
+    unfold InitMask.setRange
+    simp only [endpoint, Bind.bind, Except.bind, notFull, ↓reduceIte, inBounds]
+  have hred := set_range_inbounds_reduces ⟨words⟩ range.start finish state
+  unfold setRangeInbounds at hred
+  rw [hred]
+  change ((set_range_words words (range.start.bytes.toNat / 64) (range.start.bytes.toNat % 64)
+      (finish.bytes.toNat / 64) (finish.bytes.toNat % 64) state >>= fun ws =>
+      pure (InitMaskMaterialized.mk ws)) >>= fun v =>
+      pure (InitMask.mk (.Materialized v) len)) = _
+  rw [bind_assoc]
+  rfl
+
+/-- Equation bridge for `InitMask.isRangeInitialized` on `.Materialized` storage
+in terms of public word-array bit search. -/
+theorem isRangeInitialized_materialized_eq (words : Array UInt64) (len : Size)
+    (range : AllocRange) (finish : Size)
+    (endpoint : range.endExclusive = .ok finish)
+    (inBounds : ¬(finish.bytes > len.bytes)) :
+    (InitMask.mk (.Materialized ⟨words⟩) len).isRangeInitialized range =
+      let sizeFromN (n : Nat) : Except InitMaskError Size :=
+        if n ≤ 18446744073709551615 then .ok (Size.ofBytes (UInt64.ofNat n))
+        else .error (.sizeFromNatOverflow n)
+      let searchBlk (word : UInt64) (block startBit : Nat) (isInit : Bool) :
+          Except InitMaskError (Option Size) := do
+        let bits := if isInit then word.toNat else 18446744073709551615 - word.toNat
+        match ((List.range (64 - startBit)).find? fun offset =>
+            Nat.testBit bits (startBit + offset)).map (· + startBit) with
+        | none => return none
+        | some bit => return some (← sizeFromN (block * 64 + bit))
+      let getBlk (block : Nat) : Except InitMaskError UInt64 :=
+        match words[block]? with
+        | some w => .ok w
+        | none => .error (.blockIndexOutOfBounds block words.size)
+      let findBitPub (start fin : Size) (isInit : Bool) : Except InitMaskError (Option Size) := do
+        let startBytes := start.bytes.toNat
+        let finishBytes := fin.bytes.toNat
+        if startBytes >= finishBytes then return none
+        let (startBlock, startBit) := (startBytes / 64, startBytes % 64)
+        let endInclusive ← sizeFromN (finishBytes - 1)
+        let (endBlockInclusive, _) := (endInclusive.bytes.toNat / 64, endInclusive.bytes.toNat % 64)
+        let first ← searchBlk (← getBlk startBlock) startBlock startBit isInit
+        match first with
+        | some index =>
+          if index.bytes.toNat < finishBytes then return some index else return none
+        | none =>
+          if startBlock < endBlockInclusive then
+            for block in [startBlock + 1:endBlockInclusive + 1] do
+              match ← searchBlk (← getBlk block) block 0 isInit with
+              | some index =>
+                if index.bytes.toNat < finishBytes then return some index else return none
+              | none => pure ()
+          return none
+      do
+        match ← findBitPub range.start finish false with
+        | none => return .ok ()
+        | some uninitStart =>
+          let uninitEnd := (← findBitPub uninitStart finish true).getD finish
+          return .error (← AllocRange.fromEndpoints uninitStart uninitEnd) := by
+  conv =>
+    lhs
+    unfold InitMask.isRangeInitialized
+    simp only [endpoint, Bind.bind, Except.bind, inBounds, ↓reduceIte]
+  rfl
+
+/-- Equation bridge for `InitChunkIter.next?` on `.Materialized` storage in
+terms of public word-array bit search. -/
+theorem next?_materialized_eq (words : Array UInt64) (len : Size) (isInit : Bool)
+    (start finish : Size)
+    (h_order : ¬(start.bytes > finish.bytes))
+    (h_inBounds : ¬(finish.bytes > len.bytes))
+    (h_nonempty : ¬(start.bytes.toNat ≥ finish.bytes.toNat)) :
+    (⟨InitMask.mk (.Materialized ⟨words⟩) len, isInit, start, finish⟩ : InitChunkIter).next? =
+      let sizeFromN (n : Nat) : Except InitMaskError Size :=
+        if n ≤ 18446744073709551615 then .ok (Size.ofBytes (UInt64.ofNat n))
+        else .error (.sizeFromNatOverflow n)
+      let searchBlk (word : UInt64) (block startBit : Nat) (target : Bool) :
+          Except InitMaskError (Option Size) := do
+        let bits := if target then word.toNat else 18446744073709551615 - word.toNat
+        match ((List.range (64 - startBit)).find? fun offset =>
+            Nat.testBit bits (startBit + offset)).map (· + startBit) with
+        | none => return none
+        | some bit => return some (← sizeFromN (block * 64 + bit))
+      let getBlk (block : Nat) : Except InitMaskError UInt64 :=
+        match words[block]? with
+        | some w => .ok w
+        | none => .error (.blockIndexOutOfBounds block words.size)
+      let findBitPub : Except InitMaskError (Option Size) := do
+        let startBytes := start.bytes.toNat
+        let finishBytes := finish.bytes.toNat
+        if startBytes >= finishBytes then return none
+        let (startBlock, startBit) := (startBytes / 64, startBytes % 64)
+        let endInclusive ← sizeFromN (finishBytes - 1)
+        let (endBlockInclusive, _) := (endInclusive.bytes.toNat / 64, endInclusive.bytes.toNat % 64)
+        let first ← searchBlk (← getBlk startBlock) startBlock startBit (!isInit)
+        match first with
+        | some index =>
+          if index.bytes.toNat < finishBytes then return some index else return none
+        | none =>
+          if startBlock < endBlockInclusive then
+            for block in [startBlock + 1:endBlockInclusive + 1] do
+              match ← searchBlk (← getBlk block) block 0 (!isInit) with
+              | some index =>
+                if index.bytes.toNat < finishBytes then return some index else return none
+              | none => pure ()
+          return none
+      do
+        let chunkEnd ← do
+          let found ← findBitPub
+          pure (found.getD finish)
+        if chunkEnd.bytes ≤ start.bytes then
+          throw (.invalidChunkIterator start finish)
+        let chunk := if isInit then InitChunk.Init start chunkEnd
+          else InitChunk.Uninit start chunkEnd
+        return some (chunk, ⟨InitMask.mk (.Materialized ⟨words⟩) len, !isInit, chunkEnd, finish⟩) := by
+  conv =>
+    lhs
+    unfold InitChunkIter.next? Miri.Memory.sizeBytes
+    simp only [h_order, h_inBounds, h_nonempty, decide_false, Bool.or_self, Bool.false_eq_true,
+      ↓reduceIte, Bind.bind, Except.bind, Pure.pure, Except.pure]
+  rfl
+
+/-- Unfolding bridge for `InitMask.collectChunks` when an iterator emits
+exactly one chunk and then terminates. -/
+theorem collectChunks_single (iter next : InitChunkIter) (chunk : InitChunk)
+    (h_nonempty : iter.start.bytes.toNat < iter.finish.bytes.toNat)
+    (h_next0 : iter.next? = .ok (some (chunk, next)))
+    (h_next1 : next.next? = .ok none) :
+    InitMask.collectChunks iter = .ok #[chunk] := by
+  unfold InitMask.collectChunks Miri.Memory.sizeBytes
+  have h_pos : 1 ≤ iter.finish.bytes.toNat - iter.start.bytes.toNat :=
+    Nat.sub_pos_of_lt h_nonempty
+  have h_fuel : iter.finish.bytes.toNat - iter.start.bytes.toNat + 1 =
+      (iter.finish.bytes.toNat - iter.start.bytes.toNat - 1) + 1 + 1 :=
+    congrArg (· + 1) (Nat.sub_add_cancel h_pos).symm
+  rw [h_fuel]
+  unfold Miri.Memory.InitMask.collectChunksAux
+  rw [h_next0]
+  simp only [Bind.bind, Except.bind]
+  unfold Miri.Memory.InitMask.collectChunksAux
+  rw [h_next1]
+  rfl
+
+end Miri.Memory.InitMask.Bridge

@@ -2,8 +2,11 @@ import Miri.Memory.Identity
 import Miri.Memory.Pointer
 import Miri.Memory.CtfeProvenance
 import Miri.Memory.InitMask
+import Miri.Memory.InitMaskVerification
 import Miri.Memory.ProvenanceMap
+import Miri.Memory.ProvenanceMapVerification
 import Miri.Memory.Allocation
+import Miri.Memory.AllocationVerification
 import Miri.Memory.Access
 import Miri.Memory.AllocAddresses
 import Miri.Memory.MemoryState

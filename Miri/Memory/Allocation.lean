@@ -1204,3 +1204,765 @@ theorem tryNew_uninit_shape (size : Size) (align : Align) (allocation : Allocati
     subst allocation
     exact ⟨rfl,rfl⟩
 end Miri.Memory.Allocation
+
+namespace Miri.Memory.Allocation.Bridge
+
+open Miri.ABI
+open Miri.Memory
+open Miri.Memory.Allocation
+
+set_option autoImplicit false
+
+variable {P E E' : Type}
+
+/-! Minimal equation and step bridges exposing module-private helpers
+(`Allocation.mk`, `rawBytes`, `checkedSlice`, `checkedAlign`, `sizeForArray`,
+`pointerSize`, `targetUIntBytes`, `readTargetUInt`, `setInitialization`,
+`overwriteRawBytes`, `prepareForOverwrite`) in terms of public operations for
+`Miri.Memory.AllocationVerification`. -/
+
+private theorem full_range_endExclusive (sz : Size) :
+    (allocRange Size.ZERO sz).endExclusive = .ok sz := by
+  cases sz
+  simp [allocRange, AllocRange.endExclusive, AllocRange.end, Size.ZERO, Size.ofBytes, Size.add, Except.mapError]
+
+private theorem checkedSlice_ok (allocation : Allocation P E) (range : AllocRange) (finish : Size)
+    (storage : allocation.len = allocation.byteSize.bytes.toNat)
+    (endEq : range.endExclusive = .ok finish)
+    (startLe : range.start.bytes.toNat ≤ finish.bytes.toNat)
+    (inBounds : finish.bytes.toNat ≤ allocation.byteSize.bytes.toNat) :
+    checkedSlice allocation range =
+      .ok (allocation.rawBytes.extract range.start.bytes.toNat finish.bytes.toNat) := by
+  unfold checkedSlice
+  change allocation.rawBytes.size = allocation.size.bytes.toNat at storage
+  have h_not_s : ¬(finish.bytes < range.start.bytes) :=
+    UInt64.not_lt.mpr (UInt64.le_iff_toNat_le.mpr startLe)
+  have h_not_f : ¬(allocation.size.bytes < finish.bytes) :=
+    UInt64.not_lt.mpr (UInt64.le_iff_toNat_le.mpr inBounds)
+  simp only [storage, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte, endEq, Except.mapError,
+    Bind.bind, Except.bind, gt_iff_lt, h_not_s, h_not_f, decide_false, Bool.or_self,
+    Pure.pure, Except.pure]
+
+private theorem getBytesUnchecked_full_raw (allocation : Allocation P E)
+    (storage : allocation.len = allocation.byteSize.bytes.toNat) :
+    allocation.getBytesUnchecked (allocRange Size.ZERO allocation.byteSize) = .ok allocation.rawBytes := by
+  unfold Allocation.getBytesUnchecked
+  rw [checkedSlice_ok allocation (allocRange Size.ZERO allocation.byteSize) allocation.byteSize
+    storage (full_range_endExclusive allocation.byteSize) (Nat.zero_le _) (Nat.le_refl _)]
+  dsimp only [allocRange]
+  have h_zero : Size.ZERO.bytes.toNat = 0 := rfl
+  rw [h_zero, ← storage]
+  exact congrArg Except.ok (Array.extract_size (xs := allocation.rawBytes))
+
+/-- An allocation whose backing length matches `byteSize` returns its full byte
+array on the full range `[0, byteSize)`. -/
+theorem getBytesUnchecked_full_exists (allocation : Allocation P E)
+    (storage : allocation.len = allocation.byteSize.bytes.toNat) :
+    ∃ fullBytes,
+      allocation.getBytesUnchecked (allocRange Size.ZERO allocation.byteSize) = .ok fullBytes ∧
+      fullBytes.size = allocation.byteSize.bytes.toNat :=
+  ⟨allocation.rawBytes, getBytesUnchecked_full_raw allocation storage, storage⟩
+
+/-- Any successful `getBytesUnchecked` call implies storage-length consistency
+and in-bounds endpoints. -/
+theorem getBytesUnchecked_ok_bounds (allocation : Allocation P E) (range : AllocRange)
+    (finish : Size) (bytes : Array UInt8)
+    (endEq : range.endExclusive = .ok finish)
+    (h_ok : allocation.getBytesUnchecked range = .ok bytes) :
+    allocation.len = allocation.byteSize.bytes.toNat ∧
+    range.start.bytes.toNat ≤ finish.bytes.toNat ∧
+    finish.bytes.toNat ≤ allocation.byteSize.bytes.toNat := by
+  unfold Allocation.getBytesUnchecked checkedSlice at h_ok
+  by_cases h_mis : allocation.rawBytes.size != allocation.size.bytes.toNat
+  · simp only [h_mis, ↓reduceIte, throw, MonadExceptOf.throw, throwThe, Bind.bind, Except.bind] at h_ok
+    cases h_ok
+  · have h_raw : allocation.rawBytes.size = allocation.size.bytes.toNat := by
+      simp only [bne_iff_ne, ne_eq, Decidable.not_not] at h_mis; exact h_mis
+    simp only [h_mis, Bool.false_eq_true, ↓reduceIte, endEq, Except.mapError, Bind.bind, Except.bind] at h_ok
+    by_cases h_oob : range.start.bytes > finish.bytes || finish.bytes > allocation.size.bytes
+    · simp only [h_oob, ↓reduceIte, throw, MonadExceptOf.throw, throwThe] at h_ok
+      cases h_ok
+    · simp only [Bool.or_eq_true, not_or, decide_eq_true_eq, gt_iff_lt, UInt64.lt_iff_toNat_lt] at h_oob
+      exact ⟨h_raw, Nat.le_of_not_lt h_oob.1, Nat.le_of_not_lt h_oob.2⟩
+
+/-- Expresses any in-bounds `getBytesUnchecked` slice as `Array.extract` over
+the full byte snapshot returned on `[0, byteSize)`. -/
+theorem getBytesUnchecked_eq_extract (allocation : Allocation P E) (range : AllocRange)
+    (finish : Size) (fullBytes : Array UInt8)
+    (h_full : allocation.getBytesUnchecked (allocRange Size.ZERO allocation.byteSize) = .ok fullBytes)
+    (endEq : range.endExclusive = .ok finish)
+    (startLe : range.start.bytes.toNat ≤ finish.bytes.toNat)
+    (inBounds : finish.bytes.toNat ≤ allocation.byteSize.bytes.toNat) :
+    allocation.getBytesUnchecked range =
+      .ok (fullBytes.extract range.start.bytes.toNat finish.bytes.toNat) := by
+  have storage : allocation.len = allocation.byteSize.bytes.toNat :=
+    (getBytesUnchecked_ok_bounds allocation _ allocation.byteSize fullBytes
+      (full_range_endExclusive allocation.byteSize) h_full).1
+  have h_eq : fullBytes = allocation.rawBytes :=
+    Except.ok.inj (h_full.symm.trans (getBytesUnchecked_full_raw allocation storage))
+  subst h_eq
+  exact checkedSlice_ok allocation range finish storage endEq startLe inBounds
+
+private theorem setInitialization_mapExtra (allocation : Allocation P E) (range : AllocRange)
+    (initialized : Bool) (f : E → E') :
+    setInitialization (allocation.mapExtra f) range initialized =
+      (setInitialization allocation range initialized).map (·.mapExtra f) := by
+  unfold setInitialization
+  dsimp only [Allocation.mapExtra]
+  cases allocation.initMask.setRange range initialized <;> rfl
+
+private theorem overwriteRawBytes_mapExtra (allocation : Allocation P E) (range : AllocRange)
+    (bytes : Array UInt8) (f : E → E') :
+    overwriteRawBytes (allocation.mapExtra f) range bytes =
+      (overwriteRawBytes allocation range bytes).map (·.mapExtra f) := by
+  unfold overwriteRawBytes
+  cases range.endExclusive with
+  | error _ => rfl
+  | ok fin =>
+    dsimp only [Allocation.mapExtra, Except.mapError, Bind.bind, Except.bind]
+    by_cases h_sz : ((allocation.rawBytes.extract 0 range.start.bytes.toNat ++ bytes ++
+        allocation.rawBytes.extract fin.bytes.toNat allocation.rawBytes.size).size !=
+        allocation.size.bytes.toNat) = true
+    · simp only [h_sz, ↓reduceIte]; rfl
+    · simp only [h_sz]; rfl
+
+/-- `writeBytes` commutes with `mapExtra` on both success and failure states. -/
+theorem writeBytes_mapExtra_bridge (start : Size) (bytes : Array UInt8) (ptrSize : Size)
+    (allocation : Allocation P E) (f : E → E') :
+    Allocation.writeBytes start bytes ptrSize (allocation.mapExtra f) =
+      (match Allocation.writeBytes start bytes ptrSize allocation with
+       | .ok value state => .ok value (state.mapExtra f)
+       | .error error state => .error error (state.mapExtra f)) := by
+  have slices : ∀ r, checkedSlice (allocation.mapExtra f) r = checkedSlice allocation r := fun _ => rfl
+  unfold Allocation.writeBytes
+  dsimp only [Id.run, Bind.bind, Pure.pure]
+  cases sizeForArray bytes.size with
+  | error _ => rfl
+  | ok writeSize =>
+    dsimp only
+    rw [slices]
+    cases checkedSlice allocation (allocRange start writeSize) with
+    | error _ => rfl
+    | ok _ =>
+      dsimp only
+      by_cases h0 : (writeSize.bytes == 0) = true
+      · rw [ite_eq_left h0, ite_eq_left h0]
+      · rw [ite_eq_right h0, ite_eq_right h0]
+        change (if (allocation.mutability != .Mut) = true then _ else _) = _
+        by_cases hm : (allocation.mutability != .Mut) = true
+        · rw [ite_eq_left hm, ite_eq_left hm]
+        · rw [ite_eq_right hm, ite_eq_right hm, setInitialization_mapExtra]
+          cases setInitialization allocation (allocRange start writeSize) true with
+          | error _ => rfl
+          | ok initAlloc =>
+            dsimp only [Except.map, Allocation.mapExtra]
+            cases initAlloc.provenance.clear (allocRange start writeSize) initAlloc.rawBytes ptrSize with
+            | error _ _ => rfl
+            | ok _ prov =>
+              dsimp only
+              have h_ov := overwriteRawBytes_mapExtra { initAlloc with provenance := prov }
+                (allocRange start writeSize) bytes f
+              dsimp only [Allocation.mapExtra] at h_ov
+              rw [h_ov]
+              cases overwriteRawBytes { initAlloc with provenance := prov } (allocRange start writeSize) bytes <;> rfl
+
+/-- `clearProvenance` commutes with `mapExtra` on both success and failure states. -/
+theorem clearProvenance_mapExtra_bridge (range : AllocRange) (ptrSize : Size)
+    (allocation : Allocation P E) (f : E → E') :
+    Allocation.clearProvenance range ptrSize (allocation.mapExtra f) =
+      (match Allocation.clearProvenance range ptrSize allocation with
+       | .ok value state => .ok value (state.mapExtra f)
+       | .error error state => .error error (state.mapExtra f)) := by
+  have slices : checkedSlice (allocation.mapExtra f) range = checkedSlice allocation range := rfl
+  unfold Allocation.clearProvenance
+  rw [slices]
+  simp only [Id.run, Pure.pure, Allocation.mapExtra]
+  cases checkedSlice allocation range with
+  | error _ => rfl
+  | ok _ =>
+    dsimp only
+    cases allocation.provenance.clear range allocation.rawBytes ptrSize <;> rfl
+
+/-- Field and full-byte characterization of a successful `Allocation.fromBytes`. -/
+theorem fromBytes_ok_bridge (bytes : Array UInt8) (align : Align) (mutability : Mutability)
+    (alloc : Allocation P Unit)
+    (created : Allocation.fromBytes bytes align mutability = .ok alloc) :
+    alloc.byteSize.bytes.toNat = bytes.size ∧
+      alloc.len = bytes.size ∧
+      alloc.mutability = mutability ∧
+      alloc.extra = () ∧
+      alloc.nativeBuffer = none ∧
+      alloc.provenanceMap = ProvenanceMap.new ∧
+      alloc.initializationMask = InitMask.new alloc.byteSize true ∧
+      alloc.getBytesUnchecked (allocRange Size.ZERO alloc.byteSize) = .ok bytes := by
+  unfold Allocation.fromBytes at created
+  cases h_al : checkedAlign align with
+  | error _ => simp only [h_al, Bind.bind, Except.bind] at created; cases created
+  | ok _ =>
+    simp only [h_al, Bind.bind, Except.bind] at created
+    cases h_sz : sizeForArray bytes.size with
+    | error _ => simp only [h_sz] at created; cases created
+    | ok sz =>
+      simp only [h_sz] at created
+      by_cases h_eq : bytes.size = sz.bytes.toNat
+      · simp only [h_eq, ↓reduceDIte, Pure.pure, Except.pure, Except.ok.injEq] at created
+        subst created
+        exact ⟨h_eq.symm, rfl, rfl, rfl, rfl, rfl, rfl, getBytesUnchecked_full_raw _ h_eq⟩
+      · simp only [h_eq, ↓reduceDIte, throw, MonadExceptOf.throw, throwThe] at created; cases created
+
+/-- Existence witness bridge for `Allocation.fromBytes`. -/
+theorem fromBytes_exists_bridge (bytes : Array UInt8) (align : Align) (alignmentBytes : UInt64)
+    (mutability : Mutability)
+    (h_bytes : Align.bytes align = .ok alignmentBytes)
+    (h_norm : Align.fromBytes alignmentBytes = .ok align)
+    (h_fits : bytes.size < 2 ^ 64) :
+    ∃ alloc : Allocation P Unit,
+      Allocation.fromBytes bytes align mutability = .ok alloc ∧
+      alloc.byteSize = Size.ofBytes (UInt64.ofNat bytes.size) ∧
+      alloc.align = align := by
+  have h_ca : checkedAlign align = .ok align := by
+    unfold checkedAlign
+    simp only [h_bytes, h_norm, Except.mapError, Bind.bind, Except.bind, beq_self_eq_true,
+      ↓reduceIte, Pure.pure, Except.pure]
+  have h_not_gt : ¬(bytes.size > maxU64Nat) := Nat.not_lt.mpr (Nat.le_of_lt_succ h_fits)
+  have h_tonat : (Size.ofBytes (UInt64.ofNat bytes.size)).bytes.toNat = bytes.size := by
+    simp only [Size.ofBytes, UInt64.toNat_ofNat', Nat.mod_eq_of_lt h_fits]
+  have h_sfa : sizeForArray bytes.size = .ok (Size.ofBytes (UInt64.ofNat bytes.size)) := by
+    unfold sizeForArray
+    simp only [h_not_gt, ↓reduceIte, h_tonat, beq_self_eq_true, Pure.pure, Except.pure]
+  refine ⟨⟨bytes, Size.ofBytes (UInt64.ofNat bytes.size), ProvenanceMap.new,
+    InitMask.new (Size.ofBytes (UInt64.ofNat bytes.size)) true, align, mutability, (), none⟩,
+    ?_, rfl, rfl⟩
+  unfold Allocation.fromBytes
+  simp only [h_ca, h_sfa, h_tonat, ↓reduceDIte, Bind.bind, Except.bind, Pure.pure, Except.pure]
+
+/-- Field and full-byte characterization of a successful `Allocation.tryNew`
+backed by `Array.replicate`. -/
+theorem tryNew_ok_bridge (size : Size) (align : Align) (init : AllocInit)
+    (alloc : Allocation P Unit)
+    (created : Allocation.tryNew size align init
+      (fun n _ => some (Array.replicate n.bytes.toNat 0)) = .ok alloc) :
+    alloc.byteSize = size ∧
+      alloc.len = size.bytes.toNat ∧
+      alloc.mutability = .Mut ∧
+      alloc.extra = () ∧
+      alloc.nativeBuffer = none ∧
+      alloc.provenanceMap = ProvenanceMap.new ∧
+      (init = .Uninit → alloc.initializationMask = InitMask.new size false) ∧
+      (init = .Zero → alloc.initializationMask = InitMask.new size true) ∧
+      alloc.getBytesUnchecked (allocRange Size.ZERO alloc.byteSize) =
+        .ok (Array.replicate size.bytes.toNat 0) := by
+  unfold Allocation.tryNew at created
+  cases h_al : checkedAlign align with
+  | error _ => simp only [h_al, Bind.bind, Except.bind] at created; cases created
+  | ok normAlign =>
+    simp only [h_al, Array.size_replicate, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte,
+      ↓reduceDIte, firstNonZero_replicate, Bind.bind, Except.bind, Pure.pure, Except.pure,
+      Except.ok.injEq] at created
+    subst created
+    exact ⟨rfl, Array.size_replicate, rfl, rfl, rfl, rfl,
+      fun h => by subst h; rfl, fun h => by subst h; rfl,
+      getBytesUnchecked_full_raw _ Array.size_replicate⟩
+
+/-- Existence witness bridge for `Allocation.tryNew` backed by `Array.replicate`. -/
+theorem tryNew_exists_bridge (size : Size) (align : Align) (alignmentBytes : UInt64) (init : AllocInit)
+    (h_bytes : Align.bytes align = .ok alignmentBytes)
+    (h_norm : Align.fromBytes alignmentBytes = .ok align) :
+    ∃ alloc : Allocation P Unit,
+      Allocation.tryNew size align init
+        (fun n _ => some (Array.replicate n.bytes.toNat 0)) = .ok alloc ∧
+      alloc.align = align := by
+  have h_ca : checkedAlign align = .ok align := by
+    unfold checkedAlign
+    simp only [h_bytes, h_norm, Except.mapError, Bind.bind, Except.bind, beq_self_eq_true,
+      ↓reduceIte, Pure.pure, Except.pure]
+  refine ⟨⟨Array.replicate size.bytes.toNat 0, size, ProvenanceMap.new,
+    InitMask.new size (match init with | .Uninit => false | .Zero => true), align, .Mut, (), none⟩,
+    ?_, rfl⟩
+  unfold Allocation.tryNew
+  simp only [h_ca, Array.size_replicate, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte,
+    ↓reduceDIte, firstNonZero_replicate, Bind.bind, Except.bind, Pure.pure, Except.pure]
+
+/-- Bridge for `getBytesStripProvenance` when `isRangeInitialized` reports an
+uninitialized subrange. -/
+theorem getBytesStripProvenance_uninit_bridge [PointerProvenance P]
+    (allocation : Allocation P E) (layout : TargetDataLayout)
+    (range bad : AllocRange)
+    (h_uninit : allocation.initializationMask.isRangeInitialized range = .ok (.error bad)) :
+    allocation.getBytesStripProvenance layout range =
+      .error (.invalidUninitBytes (some ⟨range, bad⟩)) := by
+  unfold Allocation.getBytesStripProvenance
+  have h' : allocation.initMask.isRangeInitialized range = .ok (.error bad) := h_uninit
+  rw [h']
+  rfl
+
+/-- Bridge for `getBytesStripProvenance` on an initialized, provenance-safe range. -/
+theorem getBytesStripProvenance_ok_bridge [PointerProvenance P]
+    (allocation : Allocation P E) (layout : TargetDataLayout) (range : AllocRange)
+    (h_init : allocation.initializationMask.isRangeInitialized range = .ok (.ok ()))
+    (h_prov : PointerProvenance.offsetIsAddr (Prov := P) = true ∨
+      allocation.provenanceMap.rangeEmpty range (Size.fromBits layout.pointerWidth.bits) = .ok true) :
+    allocation.getBytesStripProvenance layout range = allocation.getBytesUnchecked range := by
+  unfold Allocation.getBytesStripProvenance Allocation.getBytesUnchecked pointerSize
+  have hi : allocation.initMask.isRangeInitialized range = .ok (.ok ()) := h_init
+  rw [hi]
+  rcases h_prov with h_addr | h_empty
+  · simp only [h_addr, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+      Except.mapError, Bind.bind, Except.bind]
+  · by_cases h_addr : PointerProvenance.offsetIsAddr (Prov := P) = true
+    · simp only [h_addr, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+        Except.mapError, Bind.bind, Except.bind]
+    · have h_addr_f : PointerProvenance.offsetIsAddr (Prov := P) = false :=
+        Bool.eq_false_iff.mpr h_addr
+      have he : allocation.provenance.rangeEmpty range (Size.fromBits layout.pointerWidth.bits) = .ok true := h_empty
+      simp only [h_addr_f, Bool.not_false, ↓reduceIte, he, Bool.not_true, Bool.false_eq_true,
+        Except.mapError, Bind.bind, Except.bind]
+
+/-- Definitional bridge exposing `readScalar` (including `readTargetUInt`) in
+terms of public accessors and stdlib loop operations. -/
+theorem readScalar_eq [DecidableEq P] [PointerProvenance P]
+    (allocation : Allocation P E) (layout : TargetDataLayout)
+    (range : AllocRange) (readProvenance : Bool) :
+    allocation.readScalar layout range readProvenance =
+      let readUInt (bytes : Array UInt8) : Except AllocError U128 := do
+        if bytes.size > 16 then throw (.scalarBytesTooWide (Size.ofBytes (UInt64.ofNat bytes.size)))
+        let mut value := 0
+        for index in [:bytes.size] do
+          let some byte := bytes[index]? | throw (.invalidSliceEndpoints index (index + 1) bytes.size)
+          let valueIndex := if layout.endian == .little then index else bytes.size - index - 1
+          value := value + byte.toNat * 2 ^ (8 * valueIndex)
+        return BitVec.ofNat 128 value
+      (do
+        match ← (allocation.initializationMask.isRangeInitialized range).mapError AllocError.memory with
+        | .error bad => throw (.invalidUninitBytes (some ⟨range, bad⟩))
+        | .ok () => pure ()
+        let bytes ← allocation.getBytesUnchecked range
+        let bits ← readUInt bytes
+        if readProvenance then
+          let targetSize := Size.fromBits layout.pointerWidth.bits
+          if range.size != targetSize then
+            throw (.scalarPointerNotTargetSized range.size targetSize)
+          let provenance ← match allocation.provenanceMap.readPtr range.start targetSize with
+            | .ok provenance => pure provenance
+            | .error (.readPartialPointer offset) => throw (.readPartialPointer offset)
+            | .error reason => throw (.provenance reason)
+          match provenance with
+          | some provenance =>
+            if bits.toNat > 18446744073709551615 then
+              throw (.pointerBitsDoNotFitOffset bits)
+            return Scalar.fromPointer layout
+              (Pointer.new provenance (Size.ofBytes (UInt64.ofNat bits.toNat)))
+          | none =>
+            let scalar ← (Scalar.fromUInt bits range.size).mapError AllocError.scalar
+            return scalar
+        else
+          if PointerProvenance.offsetIsAddr (Prov := P) then
+            let scalar ← (Scalar.fromUInt bits range.size).mapError AllocError.scalar
+            return scalar
+          let isEmpty ← (allocation.provenanceMap.rangeEmpty range (Size.fromBits layout.pointerWidth.bits)).mapError AllocError.provenance
+          if isEmpty then
+            let scalar ← (Scalar.fromUInt bits range.size).mapError AllocError.scalar
+            return scalar
+          throw (.readPointerAsInt none)) :=
+  rfl
+
+/-- Step bridge for `Allocation.writeScalar` once initialization, provenance,
+endian serialization, and spliced-length side conditions are discharged. -/
+theorem writeScalar_step_bridge (layout : TargetDataLayout)
+    (allocation : Allocation P E) (range : AllocRange) (value : Scalar P)
+    (converted : ScalarBitsOrPointer P) (bits : U128) (nextMask : InitMask)
+    (cleared nextProvenance : ProvenanceMap P)
+    (fullBytes sliceBytes data : Array UInt8)
+    (h_bits : bits = match converted with
+      | .bits b => b
+      | .pointer p => BitVec.ofNat 128 p.offset.bytes.toNat)
+    (h_full : allocation.getBytesUnchecked (allocRange Size.ZERO allocation.byteSize) = .ok fullBytes)
+    (h_mut : allocation.mutability = .Mut)
+    (h_conv : value.toBitsOrPtrInternal range.size = .ok converted)
+    (h_slice : allocation.getBytesUnchecked range = .ok sliceBytes)
+    (h_mask : allocation.initializationMask.setRange range true = .ok nextMask)
+    (h_clear : allocation.provenanceMap.clear range fullBytes (Size.fromBits layout.pointerWidth.bits) = .ok () cleared)
+    (h_data :
+      (do
+        if range.size.bytes > 16 then throw (.scalarBytesTooWide range.size)
+        let count := range.size.bytes.toNat
+        let mut result := #[]
+        for index in [:count] do
+          let valueIndex := if layout.endian == .little then index else count - index - 1
+          let byte := (bits.toNat / 2 ^ (8 * valueIndex)) % 256
+          result := result.push (UInt8.ofNat byte)
+        return result : Except AllocError (Array UInt8)) = .ok data)
+    (h_spliced_sz :
+      (fullBytes.extract 0 range.start.bytes.toNat ++ data ++
+        fullBytes.extract (range.start.bytes.toNat + range.size.bytes.toNat) fullBytes.size).size =
+        allocation.byteSize.bytes.toNat)
+    (h_insert : match converted with
+      | .bits _ => nextProvenance = cleared
+      | .pointer pointer => range.size = Size.fromBits layout.pointerWidth.bits ∧
+          cleared.insertPtr range.start pointer.provenance
+            (Size.fromBits layout.pointerWidth.bits) = .ok () nextProvenance) :
+    ∃ updated,
+      Allocation.writeScalar layout range value allocation = .ok () updated ∧
+      updated.byteSize = allocation.byteSize ∧
+      updated.len = allocation.len ∧
+      updated.mutability = allocation.mutability ∧
+      updated.align = allocation.align ∧
+      updated.extra = allocation.extra ∧
+      updated.nativeBuffer = allocation.nativeBuffer ∧
+      updated.initializationMask = nextMask ∧
+      updated.provenanceMap = nextProvenance ∧
+      updated.getBytesUnchecked (allocRange Size.ZERO updated.byteSize) =
+        .ok (fullBytes.extract 0 range.start.bytes.toNat ++ data ++
+          fullBytes.extract (range.start.bytes.toNat + range.size.bytes.toNat) fullBytes.size) := by
+  have storage : allocation.len = allocation.byteSize.bytes.toNat :=
+    (getBytesUnchecked_ok_bounds allocation _ allocation.byteSize fullBytes
+      (full_range_endExclusive allocation.byteSize) h_full).1
+  have h_raw_eq : fullBytes = allocation.rawBytes :=
+    Except.ok.inj (h_full.symm.trans (getBytesUnchecked_full_raw allocation storage))
+  subst h_raw_eq
+  let spliced := allocation.rawBytes.extract 0 range.start.bytes.toNat ++ data ++
+    allocation.rawBytes.extract (range.start.bytes.toNat + range.size.bytes.toNat) allocation.rawBytes.size
+  let updated : Allocation P E :=
+    ⟨spliced, allocation.byteSize, nextProvenance, nextMask, allocation.align,
+      allocation.mutability, allocation.extra, allocation.nativeBuffer⟩
+  refine ⟨updated, ?_, rfl, h_spliced_sz.trans storage.symm, rfl, rfl, rfl, rfl, rfl, rfl,
+    getBytesUnchecked_full_raw updated h_spliced_sz⟩
+  have h_slice' : checkedSlice allocation range = .ok sliceBytes := h_slice
+  have h_mask' : allocation.initMask.setRange range true = .ok nextMask := h_mask
+  have h_clear' : allocation.provenance.clear range allocation.rawBytes (pointerSize layout) = .ok () cleared := h_clear
+  have h_data' : targetUIntBytes layout range.size bits = .ok data := h_data
+  have h_sz_bne : ¬((spliced.size != allocation.size.bytes.toNat) = true) := by
+    have h : (spliced.size != allocation.byteSize.bytes.toNat) = false := by
+      rw [h_spliced_sz]; exact bne_self_eq_false _
+    change (spliced.size != allocation.byteSize.bytes.toNat) ≠ true
+    rw [h]; exact Bool.false_ne_true
+  dsimp only [spliced] at h_sz_bne
+  unfold Allocation.writeScalar
+  dsimp only [Id.run, Bind.bind, Pure.pure]
+  rw [ite_eq_right (by rw [h_mut]; exact Bool.false_ne_true), h_conv]
+  dsimp only
+  rw [h_slice']
+  dsimp only
+  rw [h_mask']
+  dsimp only
+  rw [h_clear']
+  dsimp only
+  cases converted with
+  | bits _ =>
+    dsimp only at h_bits h_insert
+    subst h_bits
+    dsimp only
+    rw [h_data']
+    dsimp only
+    rw [ite_eq_right h_sz_bne]
+    dsimp only [updated, spliced]; rw [h_mut, h_insert]; rfl
+  | pointer pointer =>
+    dsimp only at h_bits h_insert
+    subst h_bits
+    dsimp only
+    rw [h_data']
+    dsimp only
+    rw [ite_eq_right h_sz_bne]
+    rcases h_insert with ⟨sizeEq, inserted⟩
+    have h_psz : ¬((range.size != pointerSize layout) = true) := by
+      change (range.size != Size.fromBits layout.pointerWidth.bits) ≠ true
+      rw [sizeEq, bne_self_eq_false]; exact Bool.false_ne_true
+    have h_ins' : cleared.insertPtr range.start pointer.provenance (pointerSize layout) = .ok () nextProvenance := inserted
+    rw [ite_eq_right h_psz]
+    rw [h_ins']
+    dsimp only [updated, spliced]; rw [h_mut]; rfl
+
+/-- Step bridge for `Allocation.writeBytes` on an empty byte array. -/
+theorem writeBytes_zero_bridge (start ptrSize : Size) (bytes : Array UInt8)
+    (allocation : Allocation P E)
+    (h_empty : bytes.size = 0)
+    (h_slice : allocation.getBytesUnchecked (allocRange start Size.ZERO) = .ok #[]) :
+    Allocation.writeBytes start bytes ptrSize allocation = .ok () allocation := by
+  have h_sfa : sizeForArray 0 = .ok Size.ZERO := rfl
+  have h_slice' : checkedSlice allocation (allocRange start Size.ZERO) = .ok #[] := h_slice
+  unfold Allocation.writeBytes
+  rw [h_empty, h_sfa]
+  simp only [Id.run, Bind.bind, Pure.pure, h_slice']
+  rfl
+
+/-- Step bridge for nonempty `Allocation.writeBytes`. -/
+theorem writeBytes_step_bridge (start ptrSize finish : Size) (bytes : Array UInt8)
+    (allocation : Allocation P E) (nextMask : InitMask) (nextProvenance : ProvenanceMap P)
+    (fullBytes sliceBytes : Array UInt8)
+    (h_full : allocation.getBytesUnchecked (allocRange Size.ZERO allocation.byteSize) = .ok fullBytes)
+    (h_fits : bytes.size < 2 ^ 64)
+    (h_nz : bytes.size ≠ 0)
+    (h_slice : allocation.getBytesUnchecked (allocRange start (Size.ofBytes (UInt64.ofNat bytes.size))) = .ok sliceBytes)
+    (h_mut : allocation.mutability = .Mut)
+    (h_mask : allocation.initializationMask.setRange
+      (allocRange start (Size.ofBytes (UInt64.ofNat bytes.size))) true = .ok nextMask)
+    (h_clear : allocation.provenanceMap.clear
+      (allocRange start (Size.ofBytes (UInt64.ofNat bytes.size))) fullBytes ptrSize = .ok () nextProvenance)
+    (h_end : (allocRange start (Size.ofBytes (UInt64.ofNat bytes.size))).endExclusive = .ok finish)
+    (h_spliced_sz :
+      (fullBytes.extract 0 start.bytes.toNat ++ bytes ++
+        fullBytes.extract finish.bytes.toNat fullBytes.size).size = allocation.byteSize.bytes.toNat) :
+    ∃ updated,
+      Allocation.writeBytes start bytes ptrSize allocation = .ok () updated ∧
+      updated.byteSize = allocation.byteSize ∧
+      updated.len = allocation.len ∧
+      updated.mutability = allocation.mutability ∧
+      updated.align = allocation.align ∧
+      updated.extra = allocation.extra ∧
+      updated.nativeBuffer = allocation.nativeBuffer ∧
+      updated.initializationMask = nextMask ∧
+      updated.provenanceMap = nextProvenance ∧
+      updated.getBytesUnchecked (allocRange Size.ZERO updated.byteSize) =
+        .ok (fullBytes.extract 0 start.bytes.toNat ++ bytes ++
+          fullBytes.extract finish.bytes.toNat fullBytes.size) := by
+  have storage : allocation.len = allocation.byteSize.bytes.toNat :=
+    (getBytesUnchecked_ok_bounds allocation _ allocation.byteSize fullBytes
+      (full_range_endExclusive allocation.byteSize) h_full).1
+  have h_raw_eq : fullBytes = allocation.rawBytes :=
+    Except.ok.inj (h_full.symm.trans (getBytesUnchecked_full_raw allocation storage))
+  subst h_raw_eq
+  let writeSize := Size.ofBytes (UInt64.ofNat bytes.size)
+  have h_not_gt : ¬(bytes.size > maxU64Nat) := Nat.not_lt.mpr (Nat.le_of_lt_succ h_fits)
+  have h_tonat : (Size.ofBytes (UInt64.ofNat bytes.size)).bytes.toNat = bytes.size := by
+    simp only [Size.ofBytes, UInt64.toNat_ofNat', Nat.mod_eq_of_lt h_fits]
+  have h_sfa : sizeForArray bytes.size = .ok writeSize := by
+    unfold sizeForArray
+    simp only [h_not_gt, ↓reduceIte, h_tonat, beq_self_eq_true, Pure.pure, Except.pure]
+    rfl
+  have h_wsz_nz : (writeSize.bytes == 0) = false :=
+    beq_false_of_ne (fun h0 => h_nz (h_tonat.symm.trans (congrArg UInt64.toNat h0)))
+  let spliced := allocation.rawBytes.extract 0 start.bytes.toNat ++ bytes ++
+    allocation.rawBytes.extract finish.bytes.toNat allocation.rawBytes.size
+  let updated : Allocation P E :=
+    ⟨spliced, allocation.byteSize, nextProvenance, nextMask, allocation.align,
+      allocation.mutability, allocation.extra, allocation.nativeBuffer⟩
+  refine ⟨updated, ?_, rfl, h_spliced_sz.trans storage.symm, rfl, rfl, rfl, rfl, rfl, rfl,
+    getBytesUnchecked_full_raw updated h_spliced_sz⟩
+  have h_slice' : checkedSlice allocation (allocRange start writeSize) = .ok sliceBytes := h_slice
+  have h_mask' : allocation.initMask.setRange (allocRange start writeSize) true = .ok nextMask := h_mask
+  have h_clear' : allocation.provenance.clear (allocRange start writeSize) allocation.rawBytes ptrSize = .ok () nextProvenance := h_clear
+  have h_end' : (allocRange start writeSize).endExclusive = .ok finish := h_end
+  have h_sz_bne : (spliced.size != allocation.size.bytes.toNat) = false := by
+    change (spliced.size != allocation.byteSize.bytes.toNat) = false
+    rw [h_spliced_sz]; exact bne_self_eq_false _
+  have h_si : setInitialization allocation (allocRange start writeSize) true =
+      .ok { allocation with initMask := nextMask } := by
+    unfold setInitialization
+    rw [h_mask']; rfl
+  have h_ov : overwriteRawBytes { allocation with initMask := nextMask, provenance := nextProvenance }
+      (allocRange start writeSize) bytes = .ok updated := by
+    unfold overwriteRawBytes
+    rw [h_end']
+    dsimp only [Except.mapError, Bind.bind, Except.bind, allocRange]
+    dsimp only [spliced] at h_sz_bne
+    rw [ite_eq_right (by rw [h_sz_bne]; exact Bool.false_ne_true)]
+    rfl
+  unfold Allocation.writeBytes
+  rw [h_sfa]
+  dsimp only [Id.run, Bind.bind, Pure.pure]
+  rw [h_slice', ite_eq_right (by rw [h_wsz_nz]; exact Bool.false_ne_true),
+    ite_eq_right (by rw [h_mut]; exact Bool.false_ne_true), h_si]
+  dsimp only
+  rw [h_clear']
+  dsimp only
+  rw [h_ov]
+
+/-- Step bridge for zero-sized `Allocation.writeUninit`. -/
+theorem writeUninit_zero_bridge (range : AllocRange) (ptrSize : Size)
+    (allocation : Allocation P E) (sliceBytes : Array UInt8)
+    (h_zero : range.size.bytes = 0)
+    (h_slice : allocation.getBytesUnchecked range = .ok sliceBytes) :
+    Allocation.writeUninit range ptrSize allocation = .ok () allocation := by
+  have h_slice' : checkedSlice allocation range = .ok sliceBytes := h_slice
+  unfold Allocation.writeUninit
+  simp only [Id.run, Pure.pure, h_slice', h_zero, beq_self_eq_true, ↓reduceIte]
+
+/-- Step bridge for nonempty `Allocation.writeUninit`. -/
+theorem writeUninit_step_bridge (range : AllocRange) (ptrSize : Size)
+    (allocation : Allocation P E) (nextMask : InitMask) (nextProvenance : ProvenanceMap P)
+    (fullBytes sliceBytes : Array UInt8)
+    (h_full : allocation.getBytesUnchecked (allocRange Size.ZERO allocation.byteSize) = .ok fullBytes)
+    (h_nz : range.size.bytes ≠ 0)
+    (h_slice : allocation.getBytesUnchecked range = .ok sliceBytes)
+    (h_mut : allocation.mutability = .Mut)
+    (h_mask : allocation.initializationMask.setRange range false = .ok nextMask)
+    (h_clear : allocation.provenanceMap.clear range fullBytes ptrSize = .ok () nextProvenance) :
+    ∃ updated,
+      Allocation.writeUninit range ptrSize allocation = .ok () updated ∧
+      updated.byteSize = allocation.byteSize ∧
+      updated.len = allocation.len ∧
+      updated.mutability = allocation.mutability ∧
+      updated.align = allocation.align ∧
+      updated.extra = allocation.extra ∧
+      updated.nativeBuffer = allocation.nativeBuffer ∧
+      updated.initializationMask = nextMask ∧
+      updated.provenanceMap = nextProvenance ∧
+      ∀ (anyRange : AllocRange),
+        updated.getBytesUnchecked anyRange = allocation.getBytesUnchecked anyRange := by
+  have storage : allocation.len = allocation.byteSize.bytes.toNat :=
+    (getBytesUnchecked_ok_bounds allocation _ allocation.byteSize fullBytes
+      (full_range_endExclusive allocation.byteSize) h_full).1
+  have h_raw_eq : fullBytes = allocation.rawBytes :=
+    Except.ok.inj (h_full.symm.trans (getBytesUnchecked_full_raw allocation storage))
+  subst h_raw_eq
+  let updated : Allocation P E :=
+    ⟨allocation.rawBytes, allocation.byteSize, nextProvenance, nextMask, allocation.align,
+      allocation.mutability, allocation.extra, allocation.nativeBuffer⟩
+  refine ⟨updated, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, fun _ => rfl⟩
+  have h_slice' : checkedSlice allocation range = .ok sliceBytes := h_slice
+  have h_mask' : allocation.initMask.setRange range false = .ok nextMask := h_mask
+  have h_clear' : allocation.provenance.clear range allocation.rawBytes ptrSize = .ok () nextProvenance := h_clear
+  have h_nz_beq : (range.size.bytes == 0) = false := beq_false_of_ne h_nz
+  unfold Allocation.writeUninit setInitialization
+  simp only [Id.run, Bind.bind, Pure.pure, h_slice', h_nz_beq, Bool.false_eq_true, ↓reduceIte,
+    h_mut, bne_self_eq_false, h_mask', Except.mapError, Except.bind, Except.pure]
+  rw [h_clear']
+  dsimp only [updated]; rw [h_mut]; rfl
+
+/-- Step bridge for `Allocation.copyRepeatedly` on an initialized source range. -/
+theorem copyRepeatedly_step_bridge
+    (source state : Allocation P E)
+    (sourceRange : AllocRange) (srcFinish destStart totalSize destFinish ptrSize : Size)
+    (repeatCount : UInt64) (sameAllocation nonoverlapping : Bool)
+    (srcFull stFull srcBytes destSliceBytes copiedBytes : Array UInt8)
+    (initCopy : InitCopy) (provCopy : ProvenanceCopy P)
+    (mask1 mask2 : InitMask) (clearedProv finalProv : ProvenanceMap P)
+    (h_srcFull : source.getBytesUnchecked (allocRange Size.ZERO source.byteSize) = .ok srcFull)
+    (h_srcSlice : source.getBytesUnchecked sourceRange = .ok srcBytes)
+    (h_mul : Size.mul sourceRange.size repeatCount = .ok totalSize)
+    (h_destFull : state.getBytesUnchecked (allocRange Size.ZERO state.byteSize) = .ok stFull)
+    (h_destSlice : state.getBytesUnchecked (allocRange destStart totalSize) = .ok destSliceBytes)
+    (h_prepProv : source.provenanceMap.prepareCopy sourceRange srcFull ptrSize = .ok provCopy)
+    (h_prepInit : source.initializationMask.prepareCopy sourceRange = .ok initCopy)
+    (h_totNz : (totalSize.bytes == 0) = false)
+    (h_mut : state.mutability = .Mut)
+    (h_mask1 : state.initializationMask.setRange (allocRange destStart totalSize) true = .ok mask1)
+    (h_clearProv : state.provenanceMap.clear (allocRange destStart totalSize) stFull ptrSize = .ok () clearedProv)
+    (h_srcEnd : sourceRange.endExclusive = .ok srcFinish)
+    (h_destEnd : (allocRange destStart totalSize).endExclusive = .ok destFinish)
+    (h_noOverlap : sameAllocation = true → nonoverlapping = true →
+      ¬((sourceRange.start.bytes ≤ destStart.bytes ∧ destStart.bytes < srcFinish.bytes) ∨
+        (destStart.bytes ≤ sourceRange.start.bytes ∧ sourceRange.start.bytes < destFinish.bytes)))
+    (h_repChk : (repeatCount > 1 && !nonoverlapping) = false)
+    (h_notNoInit : initCopy.noBytesInit = false)
+    (h_rcNz : (repeatCount == 0) = false)
+    (h_loop : forIn (m := Id) [:repeatCount.toNat] #[] (fun _ acc => pure (ForInStep.yield (acc ++ srcBytes))) = copiedBytes)
+    (h_spliced_sz :
+      (stFull.extract 0 destStart.bytes.toNat ++ copiedBytes ++
+        stFull.extract destFinish.bytes.toNat stFull.size).size = state.byteSize.bytes.toNat)
+    (h_applyInit : mask1.applyCopy initCopy (allocRange destStart sourceRange.size) repeatCount = .ok mask2)
+    (h_applyProv : clearedProv.applyCopy provCopy (allocRange destStart sourceRange.size) repeatCount = .ok () finalProv) :
+    ∃ updated,
+      Allocation.copyRepeatedly source sourceRange destStart repeatCount
+        ptrSize sameAllocation nonoverlapping state = .ok () updated ∧
+      updated.byteSize = state.byteSize ∧
+      updated.len = state.len ∧
+      updated.mutability = state.mutability ∧
+      updated.align = state.align ∧
+      updated.extra = state.extra ∧
+      updated.nativeBuffer = state.nativeBuffer ∧
+      updated.initializationMask = mask2 ∧
+      updated.provenanceMap = finalProv ∧
+      updated.getBytesUnchecked (allocRange Size.ZERO updated.byteSize) =
+        .ok (stFull.extract 0 destStart.bytes.toNat ++ copiedBytes ++
+          stFull.extract destFinish.bytes.toNat stFull.size) := by
+  have srcStorage : source.len = source.byteSize.bytes.toNat :=
+    (getBytesUnchecked_ok_bounds source _ source.byteSize srcFull
+      (full_range_endExclusive source.byteSize) h_srcFull).1
+  have h_srcRaw : srcFull = source.rawBytes :=
+    Except.ok.inj (h_srcFull.symm.trans (getBytesUnchecked_full_raw source srcStorage))
+  subst h_srcRaw
+  have destStorage : state.len = state.byteSize.bytes.toNat :=
+    (getBytesUnchecked_ok_bounds state _ state.byteSize stFull
+      (full_range_endExclusive state.byteSize) h_destFull).1
+  have h_destRaw : stFull = state.rawBytes :=
+    Except.ok.inj (h_destFull.symm.trans (getBytesUnchecked_full_raw state destStorage))
+  subst h_destRaw
+  let spliced := state.rawBytes.extract 0 destStart.bytes.toNat ++ copiedBytes ++
+    state.rawBytes.extract destFinish.bytes.toNat state.rawBytes.size
+  let updated : Allocation P E :=
+    ⟨spliced, state.byteSize, finalProv, mask2, state.align,
+      state.mutability, state.extra, state.nativeBuffer⟩
+  refine ⟨updated, ?_, rfl, h_spliced_sz.trans destStorage.symm, rfl, rfl, rfl, rfl, rfl, rfl,
+    getBytesUnchecked_full_raw updated h_spliced_sz⟩
+  have h_srcSlice' : checkedSlice source sourceRange = .ok srcBytes := h_srcSlice
+  have h_destSlice' : checkedSlice state (allocRange destStart totalSize) = .ok destSliceBytes := h_destSlice
+  have h_prepProv' : source.provenance.prepareCopy sourceRange source.rawBytes ptrSize = .ok provCopy := h_prepProv
+  have h_prepInit' : source.initMask.prepareCopy sourceRange = .ok initCopy := h_prepInit
+  have h_mask1' : state.initMask.setRange (allocRange destStart totalSize) true = .ok mask1 := h_mask1
+  have h_clearProv' : state.provenance.clear (allocRange destStart totalSize) state.rawBytes ptrSize = .ok () clearedProv := h_clearProv
+  have h_sz_bne : (spliced.size != state.size.bytes.toNat) = false := by
+    change (spliced.size != state.byteSize.bytes.toNat) = false
+    rw [h_spliced_sz]; exact bne_self_eq_false _
+  have h_si : setInitialization state (allocRange destStart totalSize) true =
+      .ok { state with initMask := mask1 } := by
+    unfold setInitialization; rw [h_mask1']; rfl
+  have h_prep : prepareForOverwrite (allocRange destStart totalSize) ptrSize state =
+      .ok () { state with initMask := mask1, provenance := clearedProv } := by
+    have h_tnz : ((allocRange destStart totalSize).size.bytes == 0) = false := h_totNz
+    have h_mb : (state.mutability != .Mut) = false := by rw [h_mut]; rfl
+    unfold prepareForOverwrite runProvenanceMutation
+    dsimp only [Id.run, Bind.bind, Pure.pure]
+    rw [h_destSlice']
+    dsimp only
+    rw [h_tnz, ite_eq_right Bool.false_ne_true, h_mb, ite_eq_right Bool.false_ne_true, h_si]
+    dsimp only
+    rw [h_clearProv']
+    rfl
+  have h_ov : overwriteRawBytes { state with initMask := mask1, provenance := clearedProv }
+      (allocRange destStart totalSize) copiedBytes =
+      .ok { state with rawBytes := spliced, initMask := mask1, provenance := clearedProv } := by
+    unfold overwriteRawBytes
+    rw [h_destEnd]
+    dsimp only [Except.mapError, Bind.bind, Except.bind, allocRange]
+    dsimp only [spliced] at h_sz_bne
+    rw [ite_eq_right (by rw [h_sz_bne]; exact Bool.false_ne_true)]
+    rfl
+  have h_loop' : forIn (m := Id) [:repeatCount.toNat] #[] (fun _ acc => ForInStep.yield (acc ++ srcBytes)) = copiedBytes := h_loop
+  have h_ov_loop : overwriteRawBytes { state with initMask := mask1, provenance := clearedProv }
+      (allocRange destStart totalSize)
+      (forIn (m := Id) [:repeatCount.toNat] #[] fun _ acc => ForInStep.yield (acc ++ srcBytes)) =
+      .ok { state with rawBytes := spliced, initMask := mask1, provenance := clearedProv } := by
+    rw [h_loop']; exact h_ov
+  have h_ovl_check : ∀ (k : EStateM.Result AllocError (Allocation P E) Unit),
+      (if (sameAllocation && nonoverlapping) = true then
+        match sourceRange.endExclusive with
+        | .ok sourceFinish =>
+          match (allocRange destStart totalSize).endExclusive with
+          | .ok firstDestFinish =>
+            if ((sourceRange.start.bytes ≤ destStart.bytes && destStart.bytes < sourceFinish.bytes) ||
+                (destStart.bytes ≤ sourceRange.start.bytes && sourceRange.start.bytes < firstDestFinish.bytes)) = true then
+              EStateM.Result.error .copyRangesOverlap { state with initMask := mask1, provenance := clearedProv }
+            else k
+          | .error reason => EStateM.Result.error (.memory reason) { state with initMask := mask1, provenance := clearedProv }
+        | .error reason => EStateM.Result.error (.memory reason) { state with initMask := mask1, provenance := clearedProv }
+      else k) = k := by
+    intro k
+    by_cases h_sn : (sameAllocation && nonoverlapping) = true
+    · rw [ite_eq_left h_sn, h_srcEnd, h_destEnd]
+      dsimp only
+      simp only [Bool.and_eq_true] at h_sn
+      have h_ovl_f : (((sourceRange.start.bytes ≤ destStart.bytes && destStart.bytes < srcFinish.bytes) ||
+          (destStart.bytes ≤ sourceRange.start.bytes && sourceRange.start.bytes < destFinish.bytes)) = true) = False := by
+        simp only [Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, eq_iff_iff, iff_false]
+        exact h_noOverlap h_sn.1 h_sn.2
+      rw [ite_eq_right (by rw [h_ovl_f]; exact False.elim)]
+    · rw [ite_eq_right h_sn]
+  unfold Allocation.copyRepeatedly
+  dsimp only [Id.run, Bind.bind, Pure.pure]
+  rw [h_srcSlice', h_mul]
+  dsimp only
+  rw [h_destSlice', h_prepProv', h_prepInit', h_prep]
+  dsimp only
+  refine (h_ovl_check _).trans ?_
+  rw [ite_eq_right (by rw [h_repChk]; exact Bool.false_ne_true),
+    ite_eq_right (by rw [h_notNoInit]; exact Bool.false_ne_true),
+    ite_eq_right (by rw [h_rcNz, Bool.and_false, Bool.false_and]; exact Bool.false_ne_true),
+    h_ov_loop]
+  dsimp only
+  rw [h_applyInit]
+  dsimp only
+  rw [h_applyProv]
+  rfl
+
+end Miri.Memory.Allocation.Bridge
