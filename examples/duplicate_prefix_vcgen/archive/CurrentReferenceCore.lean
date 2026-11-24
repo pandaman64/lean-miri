@@ -11,12 +11,12 @@ set_option maxRecDepth 65536
 set_option maxHeartbeats 12000000
 set_option backward.isDefEq.respectTransparency false
 
-theorem validatePositive
+theorem validatePositiveAcrossFrame
     (options : EvalConfigurationCore.Options) (remaining : Nat)
     (span : PreparedContracts.FixedSpanQuery)
     (fuel sizeFuel : Nat) (dynamicFuel : options.place.dynamicFuel = sizeFuel + 1)
     (debugOff : options.place.debugAssertions = false)
-    (frames : Array CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame)
+    (frames : Array CompilerFrameContext.ActualFrame) (frame afterFrame : CompilerFrameContext.ActualFrame)
     (machine after : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
     (localId : MIR.LocalId) (valid : localId < frame.locals.size)
     (reference : LocalLayout) (mutable : Bool) (ty : reference.ty = refTy mutable)
@@ -31,6 +31,9 @@ theorem validatePositive
     (nonzero : base + offset ≠ 0)
     (positive : 0 < len) (bounded : len ≤ 9223372036854775807)
     (bounds : offset.toNat + len.toNat ≤ entry.allocation.byteSize.bytes.toNat)
+    (sameLocals : afterFrame.locals = frame.locals)
+    (sameDestination : LocalPlaces.localRuntimePlace frames.size frame localId reference =
+      LocalPlaces.localRuntimePlace frames.size afterFrame localId reference)
     (cached : frame.locals[localId].layout = some reference)
     (inactive : machine.user.payload.ghost = false)
     (activeAfter : after.user.payload.ghost = true)
@@ -48,10 +51,10 @@ theorem validatePositive
     let value := RetagReferencePlace.sliceValue cfg.access.runtime.base parent len reference
     let replacement := RetagReferencePlace.sliceValue cfg.access.runtime.base child len reference
     frame.locals[localId].value = .live (.immediate value.imm) →
-    cfg.validity.retagPointer () value reference.ty active = .ok (some replacement) (Storage.withCurrent frames frame after) →
+    cfg.validity.retagPointer () value reference.ty active = .ok (some replacement) (Storage.withCurrent frames afterFrame after) →
     ValidityMachine.validateRuntime cfg.validity () (fuel + 1)
       (LocalPlaces.localRuntimePlace frames.size frame localId reference) true before =
-      .ok () (Storage.withCurrent frames (CurrentReferenceLocalWrite.written frame localId replacement.imm valid)
+      .ok () (Storage.withCurrent frames (CurrentReferenceLocalWrite.written afterFrame localId replacement.imm (by simpa [sameLocals] using valid))
         {after with user := {after.user with payload := {after.user.payload with ghost := false}}}) := by
   intro cfg before active parent child value replacement hasValue retagged
   obtain ⟨pointers, compiler, fields, debugField, abiField, pointer, arithmetic, resolve⟩ :=
@@ -104,8 +107,57 @@ theorem validatePositive
       (by simpa only [pointeeTy] using CurrentReferenceMetadata.metadataTail options remaining span)
       (by simpa only [pointeeTy] using CurrentReferenceMetadata.inhabited options remaining span)
       (refName mutable) mutable frames frame machine localId valid hasValue cached sized pa pb ra rb pairOffset repr debug noDebug
-      inactive configFields.retainTouched cachedAddress liveMemory frame after rfl rfl activeAfter sizeAt retagged named classified
+      inactive configFields.retainTouched cachedAddress liveMemory afterFrame after sameLocals sameDestination activeAfter sizeAt retagged named classified
+
+theorem validatePositive
+    (options : EvalConfigurationCore.Options) (remaining : Nat)
+    (span : PreparedContracts.FixedSpanQuery)
+    (fuel sizeFuel : Nat) (dynamicFuel : options.place.dynamicFuel = sizeFuel + 1)
+    (debugOff : options.place.debugAssertions = false)
+    (frames : Array CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame)
+    (machine after : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (localId : MIR.LocalId) (valid : localId < frame.locals.size)
+    (reference : LocalLayout) (mutable : Bool) (ty : reference.ty = refTy mutable)
+    (sized : reference.layout.isSized = true)
+    (pa pb : Primitive) (ra rb : WrappingRange) (pairOffset : Size)
+    (repr : reference.layout.backendRepr = .ScalarPair (a := .Initialized (value := pa) (validRange := ra))
+      (b := .Initialized (value := pb) (validRange := rb)) (bOffset := pairOffset))
+    (id : AllocId) (parentTag childTag : BorTag) (base offset len : UInt64)
+    (entry : LocalAllocation Provenance Miri.TreeBorrows.BorrowTree MiriMemoryKind)
+    (cachedAddress : machine.user.addresses.baseAddr.find? (fun row => row.allocId == id) = some ⟨id, base⟩)
+    (liveMemory : machine.memory.live[id]? = some entry)
+    (nonzero : base + offset ≠ 0)
+    (positive : 0 < len) (bounded : len ≤ 9223372036854775807)
+    (bounds : offset.toNat + len.toNat ≤ entry.allocation.byteSize.bytes.toNat)
+    (cached : frame.locals[localId].layout = some reference)
+    (inactive : machine.user.payload.ghost = false)
+    (activeAfter : after.user.payload.ghost = true)
+    (shallow : machine.user.payload.validation = .Shallow)
+    (comparator : ProjectionMetadataFacts.NullComparator)
+    (metadata : (EvalProjectionMachine.arrays.get
+      (Storage.withCurrent frames frame machine)).metadata = PreparedReflection.actual.runtime)
+    (noArrayAlias : (EvalProjectionMachine.arrays.get
+      (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false) :
+    let cfg := PreparedContracts.actualConfig options () remaining span
+    let before := Storage.withCurrent frames frame machine
+    let active := CurrentReferenceVisitor.ghost before true
+    let parent := Pointer.new (.concrete id parentTag) (Size.ofBytes (base + offset))
+    let child := Pointer.new (.concrete id childTag) (Size.ofBytes (base + offset))
+    let value := RetagReferencePlace.sliceValue cfg.access.runtime.base parent len reference
+    let replacement := RetagReferencePlace.sliceValue cfg.access.runtime.base child len reference
+    frame.locals[localId].value = .live (.immediate value.imm) →
+    cfg.validity.retagPointer () value reference.ty active = .ok (some replacement) (Storage.withCurrent frames frame after) →
+    ValidityMachine.validateRuntime cfg.validity () (fuel + 1)
+      (LocalPlaces.localRuntimePlace frames.size frame localId reference) true before =
+      .ok () (Storage.withCurrent frames (CurrentReferenceLocalWrite.written frame localId replacement.imm valid)
+        {after with user := {after.user with payload := {after.user.payload with ghost := false}}}) := by
+  intro cfg before active parent child value replacement hasValue retagged
+  exact validatePositiveAcrossFrame options remaining span fuel sizeFuel dynamicFuel debugOff
+    frames frame frame machine after localId valid reference mutable ty sized pa pb ra rb pairOffset repr
+    id parentTag childTag base offset len entry cachedAddress liveMemory nonzero positive bounded bounds
+    rfl rfl cached inactive activeAfter shallow comparator metadata noArrayAlias hasValue retagged
 
 end DuplicatePrefix.CurrentReferenceCore
 
 #print axioms DuplicatePrefix.CurrentReferenceCore.validatePositive
+#print axioms DuplicatePrefix.CurrentReferenceCore.validatePositiveAcrossFrame

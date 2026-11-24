@@ -51,17 +51,18 @@ theorem partition_eq {A : Type} {left right : DedupRangeMap A}
 
 /-- A successful actual split/merge/update preserves byte-local rights
 through a pure update under independently supplied allocation bounds. -/
-theorem modify_of_bounded {A : Type} [DecidableEq A] (map : DedupRangeMap A)
+theorem modify_of_bounded_inside {A : Type} [DecidableEq A] (map : DedupRangeMap A)
     (offset length : Size) (modify : ByteRange → A → A) (holds : UInt64 → A → Prop)
     (well : map.WellFormed) (bounds : offset.bytes.toNat + length.bytes.toNat ≤ map.size.bytes.toNat)
     (ready : EachByte map holds)
-    (preserve : ∀ range point value, range.start ≤ point → point < range.stop →
-      holds point value → holds point (modify range value)) :
+    (preserve : ∀ range point value, offset.bytes.toNat ≤ point.toNat →
+      point.toNat < (offset.bytes + length.bytes).toNat →
+      range.start ≤ point → point < range.stop → holds point value → holds point (modify range value)) :
     let result := map.modifyRange offset length modify
     result.outcome = .ok () ∧ result.state.WellFormed ∧ result.state.size = map.size ∧
       EachByte result.state holds := by
   let prepared := map.iterMut offset length
-  obtain ⟨good, origins, _⟩ := GeneralRangeMapOriginPrepare.iter_mut map offset length well bounds
+  obtain ⟨good, origins, within⟩ := GeneralRangeMapOriginPrepare.iter_mut map offset length well bounds
   have positions : ∀ position ∈ prepared.positions.toList, position < prepared.state.entries.size := by
     intro position member
     obtain ⟨cursor, bounded, equal⟩ := Array.mem_iff_getElem.mp (Array.mem_def.mpr member)
@@ -72,11 +73,38 @@ theorem modify_of_bounded {A : Type} [DecidableEq A] (map : DedupRangeMap A)
       ⟨index, valid, UInt64.le_iff_toNat_le.mp start, UInt64.lt_iff_toNat_lt.mp stop, rfl⟩
     exact equal ▸ ready point origin bounded (UInt64.le_iff_toNat_le.mpr lo) (UInt64.lt_iff_toNat_lt.mpr hi)
   let result := map.modifyRange offset length modify
-  have changed := modifier_preserves map offset length modify holds prepared rfl good.outcome positions
-    transferred preserve
+  let scope (range : ByteRange) : Prop :=
+    offset.bytes.toNat ≤ range.start.toNat ∧ range.stop.toNat ≤ (offset.bytes + length.bytes).toNat
+  have selected : ∀ position (member : position ∈ prepared.positions.toList),
+      scope (prepared.state.entries[position]'(positions position member)).range := by
+    intro position member
+    obtain ⟨cursor, valid, same⟩ := Array.mem_iff_getElem.mp (Array.mem_def.mpr member)
+    subst position
+    obtain ⟨bounded, aligned⟩ := good.selected cursor valid
+    rw [← aligned]
+    exact within cursor (by rwa [← good.lengths])
+  have changed := modifier_preserves_where map offset length modify holds prepared rfl good.outcome
+    positions scope selected transferred (fun range point value inRange lo hi previous =>
+      preserve range point value
+        (Nat.le_trans inRange.1 (UInt64.le_iff_toNat_le.mp lo))
+        (Nat.lt_of_lt_of_le (UInt64.lt_iff_toNat_lt.mp hi) inRange.2) lo hi previous)
   have shape : result.state.entries.map (·.range) = prepared.state.entries.map (·.range) := changed.2.2
   have size : result.state.size = prepared.state.size := by
     rw [GeneralRangeMapState.size_from_ranges result.state, shape, ← GeneralRangeMapState.size_from_ranges]
   exact ⟨changed.1, (partition_eq shape).mpr good.wellFormed, size.trans (congrArg Size.ofBytes good.capacity), changed.2.1⟩
+
+/-- Pointwise updates whose callback law is independent of the selected
+interval use the same checked range traversal. -/
+theorem modify_of_bounded {A : Type} [DecidableEq A] (map : DedupRangeMap A)
+    (offset length : Size) (modify : ByteRange → A → A) (holds : UInt64 → A → Prop)
+    (well : map.WellFormed) (bounds : offset.bytes.toNat + length.bytes.toNat ≤ map.size.bytes.toNat)
+    (ready : EachByte map holds)
+    (preserve : ∀ range point value, range.start ≤ point → point < range.stop →
+      holds point value → holds point (modify range value)) :
+    let result := map.modifyRange offset length modify
+    result.outcome = .ok () ∧ result.state.WellFormed ∧ result.state.size = map.size ∧
+      EachByte result.state holds :=
+  modify_of_bounded_inside map offset length modify holds well bounds ready
+    (fun range point value _ _ => preserve range point value)
 
 end DuplicatePrefix.RetagRangeFrame

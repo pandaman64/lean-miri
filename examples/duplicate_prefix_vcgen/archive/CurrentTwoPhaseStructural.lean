@@ -12,7 +12,7 @@ set_option maxRecDepth 65536
 set_option maxHeartbeats 16000000
 set_option backward.isDefEq.respectTransparency false
 
-private theorem ownedOn (before : RootState) (length : UInt64) (tag : BorTag)
+theorem ownedOn (before : RootState) (length : UInt64) (tag : BorTag)
     (storage : InitializedRegion before length) (loan : ExclusiveRegion before length storage tag)
     (extent : storage.relativeStart.bytes.toNat + length.toNat ≤ storage.entry.allocation.extra.locations.size.bytes.toNat) :
     OwnedOn (fun location => LocationRights storage.entry.allocation.extra location

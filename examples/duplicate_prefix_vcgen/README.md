@@ -207,6 +207,8 @@ concrete forest rights with the actual typed reborrow and final location state.
 `TypedSharedReborrow` checks the actual shared reborrow under its structural
 and pointer premises. `RootTwoPhaseComplete` checks the mutable reference
 assignment at the selected root instruction and its resulting permissions.
+`ProtectedSharedReborrow` derives the coherent readable region from actual
+shared FnEntry retag under its stated initialized-region and pointer premises.
 
 After the standalone example script builds `SourceDomain.olean`, the
 optional `ExclusiveCopyStep` target verifies the actual positive copy
