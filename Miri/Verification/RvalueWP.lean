@@ -76,6 +76,228 @@ theorem actionPre_eq_wp (action : RvalueM S A) (post : A → S → Prop)
   simp only [actionPre, wp, WP.wpTrans]
   cases action before <;> rfl
 
+/-- Check the operand representation and its scalar width against the typed
+layout before passing it to the interpreter's integer arithmetic. -/
+def integerOperand [PointerProvenance P] (value : RvalueImmTy P)
+    (kind : IntegerKind) : Except StepError IntegerValue := do
+  let raw ← value.imm.toScalar.mapError ScalarOps.immediateError
+  let scalar ← raw.toScalarInt.mapError ScalarOps.scalarError
+  let _ ← scalar.toBits value.layout.layout.size |>.mapError ScalarOps.scalarIntError
+  return ⟨scalar, ⟨value.layout.layout.size, kind⟩⟩
+
+/-- Route a pure scalar check to the success or typed error continuation in
+the current state. -/
+def scalarCheckPre (result : Except StepError A) (post : A → S → Prop)
+    (onError : StepError → S → Prop) (state : S) : Prop :=
+  match result with
+  | .ok value => post value state
+  | .error error => onError error state
+
+private def liftScalarCheck (result : Except StepError A) : RvalueM S A :=
+  match result with
+  | .ok value => pure value
+  | .error error => throw error
+
+private theorem actionPre_scalarCheck (result : Except StepError A) (next : A → RvalueM S B)
+    (post : B → S → Prop) (onError : StepError → S → Prop) :
+    actionPre (liftScalarCheck result >>= next) post onError =
+      scalarCheckPre result (fun value => actionPre (next value) post onError) onError := by
+  cases result <;> rfl
+
+private theorem liftScalarCheck_bind (result : Except StepError A) (next : A → Except StepError B) :
+    (liftScalarCheck (result >>= next) : RvalueM S B) =
+      liftScalarCheck result >>= fun value => liftScalarCheck (next value) := by
+  cases result <;> rfl
+
+private def integerOperandAction [PointerProvenance P] (value : RvalueImmTy P)
+    (kind : IntegerKind) : RvalueM S IntegerValue := do
+  let raw ← liftScalarCheck (value.imm.toScalar.mapError ScalarOps.immediateError)
+  let scalar ← liftScalarCheck (raw.toScalarInt.mapError ScalarOps.scalarError)
+  let _ ← liftScalarCheck (scalar.toBits value.layout.layout.size |>.mapError ScalarOps.scalarIntError)
+  pure ⟨scalar, ⟨value.layout.layout.size, kind⟩⟩
+
+private theorem liftIntegerOperand [PointerProvenance P] (value : RvalueImmTy P)
+    (kind : IntegerKind) :
+    (integerOperandAction value kind : RvalueM S IntegerValue) =
+    liftScalarCheck (integerOperand value kind) := by
+  simp only [integerOperandAction, integerOperand, liftScalarCheck_bind]
+  rfl
+
+/-- Pull unary evaluation back through classification, scalar representation
+checks, and the concrete integer operator. Layout queries, float execution,
+and pointer validation use their own success and failure states. -/
+theorem actionPre_unary [PointerProvenance P] (h : ScalarOpsHooks P S C)
+    (choice : C) (op : UnOp) (operand : RvalueImmTy P) (post : RvalueImmTy P → S → Prop)
+    (onError : StepError → S → Prop) :
+    actionPre (ScalarOps.unary h choice op operand) post onError =
+      actionPre (h.classify choice operand.layout.ty) (fun type =>
+        match type with
+        | .boolean =>
+          scalarCheckPre (operand.imm.toScalar.mapError ScalarOps.immediateError) (fun scalar =>
+            scalarCheckPre (scalar.toBool.mapError ScalarOps.scalarError) (fun value =>
+              if op != .Not then onError (.invalidProgram "invalid boolean unary operation")
+              else actionPre (h.boolLayout choice) (fun layout =>
+                post ⟨.scalar (.fromBool (!value)), layout⟩) onError) onError) onError
+        | .integer kind =>
+          scalarCheckPre (integerOperand operand kind) (fun value =>
+            scalarCheckPre (IntegerOps.unary op value |>.mapError ScalarOps.integerError)
+              (fun scalar => post ⟨.scalar (.fromScalarInt scalar), operand.layout⟩)
+              onError) onError
+        | .floating =>
+          scalarCheckPre (operand.imm.toScalar.mapError ScalarOps.immediateError) (fun _ =>
+            if op != .Neg then onError (.invalidProgram "invalid float unary operation")
+            else actionPre (h.floatUnary choice op operand) post onError) onError
+        | .pointer =>
+          if op != .PtrMetadata then onError (.invalidProgram "invalid pointer unary operation")
+          else actionPre (h.derefValidity choice operand) (fun _ =>
+            scalarCheckPre (operand.imm.toScalarAndMeta.mapError ScalarOps.immediateError)
+              (fun (_, metadata) =>
+                match metadata with
+                | .metadata scalar =>
+                  actionPre (h.metadataLayout choice operand.layout.ty)
+                    (fun layout => post ⟨.scalar scalar, layout⟩) onError
+                | .none =>
+                  actionPre (h.unitLayout choice) (fun layout => post ⟨.uninit, layout⟩) onError)
+              onError) onError
+        | .character => onError (.invalidProgram "invalid character unary operation")
+        | .functionPointer => onError (.invalidProgram "invalid function-pointer unary operation"))
+        onError := by
+  rw [ScalarOps.unary, actionPre_bind_fun]
+  congr 1
+  funext type
+  cases type with
+  | boolean =>
+    change actionPre (liftScalarCheck (operand.imm.toScalar.mapError ScalarOps.immediateError) >>= _) _ _ = _
+    rw [actionPre_scalarCheck]
+    congr 1
+    funext scalar
+    change actionPre (liftScalarCheck (scalar.toBool.mapError ScalarOps.scalarError) >>= _) _ _ = _
+    rw [actionPre_scalarCheck]
+    congr 1
+    funext value
+    split
+    · rfl
+    · exact actionPre_bind_fun (h.boolLayout choice) _ _ _
+  | integer kind =>
+    change actionPre (integerOperandAction operand kind >>= _) _ _ = _
+    rw [liftIntegerOperand, actionPre_scalarCheck]
+    congr 1
+    funext value
+    change actionPre (liftScalarCheck (IntegerOps.unary op value |>.mapError ScalarOps.integerError) >>= _) _ _ = _
+    rw [actionPre_scalarCheck]
+    rfl
+  | floating =>
+    change actionPre (liftScalarCheck (operand.imm.toScalar.mapError ScalarOps.immediateError) >>= _) _ _ = _
+    rw [actionPre_scalarCheck]
+    congr 1
+    funext _
+    split <;> rfl
+  | pointer =>
+    by_cases invalid : (op != .PtrMetadata) = true
+    · simp only [invalid, ↓reduceIte]; rfl
+    · simp only [invalid]
+      change actionPre (h.derefValidity choice operand >>= _) _ _ = _
+      rw [actionPre_bind_fun]
+      congr 1
+      funext _
+      change actionPre (liftScalarCheck (operand.imm.toScalarAndMeta.mapError ScalarOps.immediateError) >>= _) _ _ = _
+      rw [actionPre_scalarCheck]
+      congr 1
+      funext pair
+      rcases pair with ⟨_, metadata⟩
+      cases metadata <;> apply actionPre_bind_fun
+  | character | functionPointer => rfl
+
+/-- Pull a successful integer result back through its selected layout query.
+Overflow-reporting operations write a pair, even when the overflow bit is set. -/
+def integerResultPre [PointerProvenance P] (h : ScalarOpsHooks P S C) (choice : C)
+    (input : LocalLayout) (post : RvalueImmTy P → S → Prop)
+    (onError : StepError → S → Prop) : IntegerResult → S → Prop
+  | .scalar scalar => post ⟨.scalar (.fromScalarInt scalar), input⟩
+  | .withOverflow scalar overflow =>
+    actionPre (h.overflowLayout choice input) (fun layout =>
+      post ⟨.scalarPair (.fromScalarInt scalar) (.fromBool overflow), layout⟩) onError
+  | .boolean value =>
+    actionPre (h.boolLayout choice) (fun layout => post ⟨.scalar (.fromBool value), layout⟩) onError
+  | .ordering value =>
+    actionPre (h.orderingLayout choice) (fun layout =>
+      let encoded : Int := match value with | .lt => -1 | .eq => 0 | .gt => 1
+      scalarCheckPre (Scalar.fromInt encoded (Size.ofBytes 1) |>.mapError ScalarOps.scalarError)
+        (fun scalar => post ⟨.scalar scalar, layout⟩) onError) onError
+
+private theorem actionPre_finishInteger [PointerProvenance P] (h : ScalarOpsHooks P S C)
+    (choice : C) (input : LocalLayout) (post : RvalueImmTy P → S → Prop)
+    (onError : StepError → S → Prop) (result : IntegerResult) :
+    actionPre (ExecutionScalar.finish (ExecutionScalar.Leaves.ofHooks h) choice input result)
+      post onError = integerResultPre h choice input post onError result := by
+  cases result with
+  | scalar => rfl
+  | withOverflow | boolean => exact actionPre_bind_fun _ _ _ _
+  | ordering ordering =>
+    change actionPre (h.orderingLayout choice >>= _) _ _ = _
+    rw [actionPre_bind_fun]
+    congr 1
+    funext layout
+    change actionPre (liftScalarCheck _ >>= _) _ _ = _
+    rw [actionPre_scalarCheck]
+    rfl
+
+/-- After left classification selects the integral branch, read both checked
+scalar widths, enforce matching non-shift type IDs, and use the interpreter's
+integer result. Division by zero, signed division overflow, and unchecked
+arithmetic overflow reach the typed error continuation before any write. -/
+theorem actionPre_binary_integer [PointerProvenance P] (h : ScalarOpsHooks P S C)
+    (choice : C) (op : BinOp) (left right : RvalueImmTy P)
+    (post : RvalueImmTy P → S → Prop) (onError : StepError → S → Prop)
+    (before classified : S) (leftKind : IntegerKind)
+    (classification : h.classify choice left.layout.ty before = .ok (.integer leftKind) classified) :
+    actionPre (ScalarOps.binary h choice op left right) post onError before =
+      actionPre (h.classify choice right.layout.ty) (fun rightType =>
+        match rightType with
+        | .integer rightKind =>
+          scalarCheckPre (integerOperand left leftKind) (fun lhs =>
+            scalarCheckPre (integerOperand right rightKind) (fun rhs =>
+              if !(op == .Shl || op == .ShlUnchecked || op == .Shr || op == .ShrUnchecked) &&
+                  left.layout.ty != right.layout.ty then
+                onError (.invalidProgram "asymmetric scalar operand types")
+              else
+                scalarCheckPre (IntegerOps.binary op lhs rhs |>.mapError ScalarOps.integerError)
+                  (integerResultPre h choice left.layout post onError) onError) onError) onError
+        | _ => onError (.invalidProgram "integer binary RHS is not integral"))
+        onError classified := by
+  rw [ScalarOps.binary, actionPre_bind_fun, actionPre_ok classification]
+  change actionPre (h.classify choice right.layout.ty >>= _) _ _ _ = _
+  rw [actionPre_bind_fun]
+  congr 1
+  funext type
+  cases type with
+  | integer rightKind =>
+    change actionPre (integerOperandAction left leftKind >>= _) _ _ = _
+    rw [liftIntegerOperand, actionPre_scalarCheck]
+    congr 1
+    funext lhs
+    change actionPre (integerOperandAction right rightKind >>= _) _ _ = _
+    rw [liftIntegerOperand, actionPre_scalarCheck]
+    congr 1
+    funext rhs
+    let isShift := op == .Shl || op == .ShlUnchecked || op == .Shr || op == .ShrUnchecked
+    let same := left.layout.ty == right.layout.ty
+    let compute : RvalueM S (RvalueImmTy P) :=
+      liftScalarCheck (IntegerOps.binary op lhs rhs |>.mapError ScalarOps.integerError) >>=
+      ExecutionScalar.finish (ExecutionScalar.Leaves.ofHooks h) choice left.layout
+    change actionPre (if !isShift then
+      (if same then pure () else throw (.invalidProgram "asymmetric scalar operand types")) >>= fun _ => compute
+      else compute) post onError =
+      if !isShift && !same then onError (.invalidProgram "asymmetric scalar operand types") else _
+    cases isShift <;> cases same <;>
+      simp only [Bool.not_false, Bool.not_true, Bool.false_eq_true, ↓reduceIte, Bool.true_and,
+        Bool.false_and, compute, actionPre_scalarCheck, actionPre_finishInteger]
+    all_goals first
+      | rfl
+      | change actionPre compute post onError = _
+        simp only [compute, actionPre_scalarCheck, actionPre_finishInteger]
+  | _ => rfl
+
 /-- Check the destination first and pull the postcondition through each
 operation selected by the rvalue. A retag scope is a higher-order hook, so its
 body remains an action until a concrete implementation of the scope is known. -/

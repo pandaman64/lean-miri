@@ -3,7 +3,7 @@ import Miri.Verification.AggregateWP
 
 namespace MiriTests.Verification.AggregateWP
 
-open Miri.Interpreter Miri.Memory Miri.Verification
+open Miri.ABI Miri.Interpreter Miri.Memory Miri.Verification
 open RvalueWP
 
 variable {K U C O X Host : Type} [DecidableEq K]
@@ -21,7 +21,8 @@ with the state returned by that check. -/
 theorem zero_repeat_failure (config : Config) (limits : ExecutionMachine.Limits)
     (choice : C) (place : Miri.MIR.Place) (operand : Miri.MIR.Operand)
     (count : Miri.MIR.TypeConstId) (dest allocated : RuntimePlace Provenance)
-    (source : OpTy Provenance) (before evaluatedDestination evaluatedSource forced measured failed : State)
+    (source : OpTy Provenance) (before evaluatedDestination evaluatedSource forced failed : State)
+    (stride : Size)
     (error : StepError) (post : State → Prop) (onError : StepError → State → Prop)
     (destinationOk : PlaceDynamic.evalPlace
       (ExecutionMachine.projectionHooks (ExecutionMachine.withValidation config limits))
@@ -31,15 +32,15 @@ theorem zero_repeat_failure (config : Config) (limits : ExecutionMachine.Limits)
     (sized : source.layout.layout.isSized = true)
     (allocationOk : (ExecutionMachine.aggregateHooks config limits).forceAllocation choice dest
       evaluatedSource = .ok allocated forced)
-    (lengthOk : (ExecutionMachine.aggregateHooks config limits).length choice allocated forced =
-      .ok 0 measured)
+    (allocatedSized : allocated.layout.layout.isSized = true)
+    (shape : allocated.layout.layout.fields = .Array stride 0)
     (accessFailed : (ExecutionMachine.aggregateHooks config limits).getPlaceAllocMut choice allocated
-      measured = .error error failed) :
+      forced = .error error failed) :
     evalPre (ExecutionMachine.rvalueHooks config limits) choice (.Repeat operand count) place
       post onError before = onError error failed := by
   simp only [miri_rvalue, actionPre_ok destinationOk, actionPre_ok operandOk, sized,
-    Bool.not_true, Bool.false_eq_true, ↓reduceIte, actionPre_ok allocationOk, actionPre_ok lengthOk,
-    beq_self_eq_true, actionPre_error accessFailed]
+    Bool.not_true, Bool.false_eq_true, ↓reduceIte, actionPre_ok allocationOk,
+    allocatedSized, shape, beq_self_eq_true, actionPre_error accessFailed]
 
 /-- Construction of a two-field tuple threads the successful first write
 into the failed second write. -/
@@ -70,6 +71,26 @@ theorem tuple_second_copy_failure (config : Config) (limits : ExecutionMachine.L
       some operand1 from rfl, Option.getD_none, Option.isSome_none, Bool.false_and,
     Bool.false_eq_true, ↓reduceIte, actionPre_ok project0, actionPre_ok eval0,
     actionPre_ok copy0, actionPre_ok project1, actionPre_ok eval1, actionPre_error copy1]
+
+/-- Uninitialized data in a raw-pointer aggregate fails before the metadata
+operand is evaluated, in the state left by the successful operand read. -/
+theorem raw_pointer_uninitialized_data (config : Config) (limits : ExecutionMachine.Limits)
+    (choice : C) (pointee : Miri.MIR.TyId) (mutability : Miri.MIR.Mutability)
+    (data metadata : Miri.MIR.Operand) (source : OpTy Provenance)
+    (dest : RuntimePlace Provenance) (before evaluated readState : State)
+    (post : Unit → State → Prop) (onError : StepError → State → Prop)
+    (operandOk : (ExecutionMachine.aggregateHooks config limits).evalOperand choice data none
+      before = .ok source evaluated)
+    (readOk : PlaceMachine.readImmediate config.access source evaluated =
+      .ok ⟨.uninit, source.layout⟩ readState) :
+    actionPre ((ExecutionMachine.rvalueHooks config limits).writeAggregate choice
+      (.RawPtr pointee mutability) #[data, metadata] dest) post onError before =
+      onError (.invalidProgram "uninitialized immediate reached scalar operator") readState := by
+  simp only [miri_rvalue, show (#[data, metadata] : Array Miri.MIR.Operand).size = 2 from rfl,
+    show (#[data, metadata] : Array Miri.MIR.Operand)[0]? = some data from rfl,
+    show (#[data, metadata] : Array Miri.MIR.Operand)[1]? = some metadata from rfl,
+    show ((2 : Nat) != 2) = false from rfl, Bool.false_eq_true, ↓reduceIte,
+    actionPre_ok operandOk, actionPre_ok readOk] <;> rfl
 
 /-- When the source aliases the first destination element, the continue
 condition takes its bytes from that element in the post-copy state. -/

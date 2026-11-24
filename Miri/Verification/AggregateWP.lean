@@ -260,6 +260,58 @@ local notation "Config" => ExecutionMachine.Config K U C O X Host
     (ExecutionMachine.rvalueHooks config limits).writeAggregate choice kind operands dest =
       writeAggregate (ExecutionMachine.aggregateHooks config limits) choice kind operands dest := rfl
 
+/-- The length of a sized repeat destination comes entirely from its layout.
+A non-array reaches the typed error at the state left by allocation. -/
+@[miri_rvalue] theorem actionPre_canonical_length_sized (config : Config)
+    (limits : ExecutionMachine.Limits) (choice : C) (dest : RuntimePlace Provenance)
+    (post : UInt64 → MachineHooks.State K U → Prop)
+    (onError : StepError → MachineHooks.State K U → Prop)
+    (sized : dest.layout.layout.isSized = true) :
+    actionPre ((ExecutionMachine.aggregateHooks config limits).length choice dest) post onError =
+      match dest.layout.layout.fields with
+      | .Array _ count => post count
+      | _ => onError (.invalidProgram "length of non-array") := by
+  change actionPre (PlaceDynamic.length
+    (ExecutionMachine.projectionHooks (ExecutionMachine.withValidation config limits)) choice dest)
+      post onError = _
+  simp only [PlaceDynamic.length, sized, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+  cases dest.layout.layout.fields <;> rfl
+
+private theorem aggregateLiftPre (result : Except StepError A)
+    (post : A → S → Prop) (onError : StepError → S → Prop) :
+    actionPre (aggregateLift result) post onError = scalarCheckPre result post onError := by
+  cases result <;> rfl
+
+/-- The data operand of a raw-pointer aggregate must decode as a pointer.
+The read's failure state and the subsequent decoding errors remain distinct. -/
+@[miri_rvalue] theorem actionPre_canonical_readPointer (config : Config)
+    (limits : ExecutionMachine.Limits) (choice : C) (source : OpTy Provenance)
+    (post : Pointer (Option Provenance) → MachineHooks.State K U → Prop)
+    (onError : StepError → MachineHooks.State K U → Prop) :
+    actionPre ((ExecutionMachine.aggregateHooks config limits).readPointer choice source) post onError =
+      actionPre (PlaceMachine.readImmediate config.access source) (fun value =>
+        scalarCheckPre (value.imm.toScalar.mapError ScalarOps.immediateError) (fun scalar =>
+          scalarCheckPre (scalar.toPointer config.access.runtime.base |>.mapError ScalarOps.scalarError)
+            post onError) onError) onError := by
+  change actionPre (PlaceMachine.readImmediate config.access source >>= fun value =>
+    aggregateLift (value.imm.toScalar.mapError ScalarOps.immediateError) >>= fun scalar =>
+      aggregateLift (scalar.toPointer config.access.runtime.base |>.mapError ScalarOps.scalarError))
+      post onError = _
+  simp only [actionPre_bind_fun, aggregateLiftPre]
+
+/-- Scalar metadata decoding is a pure check after the operand read has
+committed its access effects. -/
+@[miri_rvalue] theorem actionPre_canonical_readScalar (config : Config)
+    (limits : ExecutionMachine.Limits) (choice : C) (source : OpTy Provenance)
+    (post : Scalar Provenance → MachineHooks.State K U → Prop)
+    (onError : StepError → MachineHooks.State K U → Prop) :
+    actionPre ((ExecutionMachine.aggregateHooks config limits).readScalar choice source) post onError =
+      actionPre (PlaceMachine.readImmediate config.access source) (fun value =>
+        scalarCheckPre (value.imm.toScalar.mapError ScalarOps.immediateError) post onError) onError := by
+  change actionPre (PlaceMachine.readImmediate config.access source >>= fun value =>
+    aggregateLift (value.imm.toScalar.mapError ScalarOps.immediateError)) post onError = _
+  simp only [actionPre_bind_fun, aggregateLiftPre]
+
 end Canonical
 
 end Miri.Verification.AggregateWP
