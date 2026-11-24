@@ -203,6 +203,10 @@ selection of `Return`, for any surrounding frames under its stated premises.
 [RootRejectedAfterLen.lean](RootRejectedAfterLen.lean) continues through
 the active protector release and writes `false` to the caller's local
 Boolean destination.
+`RejectionFromEnteredLength.lean` starts at the entered length helper and
+checks length, protector release, and the root rejection return.
+`VerifyRejectionGenerated.lean` links a checked root-to-post-length trace
+to the emitted safety VC.
 
 The optional `RetagFrozenChild` target checks actual child insertion and
 the resulting range and permission frame under its concrete fresh-tag premises.

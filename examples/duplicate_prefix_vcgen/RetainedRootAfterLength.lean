@@ -1,5 +1,6 @@
 import RejectionEntryAfterLength
 import duplicate_prefix.ReleaseFromHolderRights
+import duplicate_prefix.StackPopRelease
 
 namespace DuplicatePrefix.RootZeroShallowReturn
 open Miri Miri.ABI Miri.Input Miri.MIR Miri.Memory Miri.Interpreter
@@ -42,4 +43,47 @@ noncomputable def RetainedRootBorrow.ofRights
       found coherent roots lower upper extent vacant rights⟩
 
 #print axioms RetainedRootBorrow.ofRights
+end DuplicatePrefix.RootZeroShallowReturn
+
+namespace DuplicatePrefix.RootZeroShallowReturn
+open Miri Miri.ABI Miri.Input Miri.MIR Miri.Memory Miri.Interpreter
+open Miri.TreeBorrows Miri.DataStructures Miri.Concurrency
+open SourceDomain ArchiveForestProjection RetagReleaseFootprint GeneralRangeMapOrigins
+
+/-- Specialize the root release proof to the actual keyed heap and protector
+updates produced by the nested Len return. -/
+noncomputable def RetainedRootBorrow.ofLengthRelease
+    (older : Array CompilerFrameContext.ActualFrame) (caller frame : CompilerFrameContext.ActualFrame)
+    (initial entered final : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (root : ActiveCaller older caller frame initial)
+    (old : LocalAllocation Provenance BorrowTree MiriMemoryKind) (after : BorrowTree)
+    (tracker : MachineHooks.BorrowState) (ledger : FrameState) (helperTag : BorTag)
+    (owned : ledger.protectedTags = #[(root.id, helperTag)])
+    (memory : final.memory = StackPopRelease.commitTree entered.memory root.id old after)
+    (tracked : final.borrowTracker = some {tracker with global := tracker.global.endCall ledger})
+    (indexed : after.indexOfTag root.tag = some root.source) (roots : after.roots = #[root.root])
+    (node : TreeNode) (found : after.nodeAt root.source = some node) (unexposed : node.isExposed = false)
+    (coherent : CoherentForest after)
+    (lower upper : UInt64) (extent : MaterializedWithin after root.source lower upper)
+    (vacant : VacantRows after)
+    (rights : OwnedOn (fun row => LocationRights after row (tracker.global.protectedTags.remove helperTag)
+      root.source) lower upper after.locations) :
+    RetainedRootBorrow older caller frame initial final root := by
+  let entry := {old with allocation := old.allocation.setExtra after}
+  have present : final.memory.live[root.id]? = some entry := by
+    rw [memory]
+    simp [StackPopRelease.commitTree, entry]
+  have protectors : (tracker.global.endCall ledger).protectedTags =
+      tracker.global.protectedTags.remove helperTag := by
+    unfold GlobalState.endCall
+    rw [owned]
+    rfl
+  exact RetainedRootBorrow.ofRights older caller frame initial final root entry present
+    {tracker with global := tracker.global.endCall ledger} tracked indexed roots node found unexposed
+    coherent lower upper extent vacant (by
+      change OwnedOn (fun row => LocationRights after row (tracker.global.endCall ledger).protectedTags root.source) lower upper after.locations
+      rw [protectors]
+      exact rights)
+
+#print axioms RetainedRootBorrow.ofLengthRelease
 end DuplicatePrefix.RootZeroShallowReturn
