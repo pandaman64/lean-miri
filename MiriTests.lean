@@ -44,6 +44,7 @@ import MiriTests.Step.Driver
 import MiriTests.Verification.StepWP
 import MiriTests.Verification.CallReturnWP
 import MiriTests.Verification.InstructionWP
+import MiriTests.Verification.BranchControlWP
 import MiriTests.Verification.MemoryWP
 import MiriTests.Verification.ScalarMemoryWP
 import MiriTests.Verification.RvalueWP
@@ -53,6 +54,7 @@ import MiriTests.Verification.TreeRangeInitWP
 import MiriTests.Verification.AggregateWP
 import MiriTests.Verification.CallWP
 import MiriTests.Verification.TreeSiblingWP
+import MiriTests.Verification.TreeTopologyWP
 import MiriTests.Verification.TreeVisitWP
 import MiriTests.Verification.WholeBodyReplay
 import MiriTests.Verification.WholeBodyWP

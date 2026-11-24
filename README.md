@@ -117,6 +117,12 @@ The generated precondition covers every permitted choice. Use
 canonical assignment's place, operand, and copy effects. See the
 [assignment proof fixture](MiriTests/Verification/RvalueWP.lean).
 
+For a ranged Tree Borrows access whose error postcondition is `False`,
+the `miri_tree_range_wp` tactic rewrites the WP to tag lookup, range
+preparation and checks on the initial segments. It also handles a read
+followed by a write and retains both diagnostic traces for the success
+postcondition. See the [ranged access examples](MiriTests/Verification/TreeBorrowsWP.lean).
+
 Build the Goto/Nop, Call/Return, and protected-alias proof fixtures.
 
 ```bash

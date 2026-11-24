@@ -1177,15 +1177,31 @@ vector-clock backend.
   [Read/write composition](Miri/Verification/TreeReadWriteWP.lean) characterizes
   successful consecutive accesses at a normal tree location from its initial
   node states, when each access schedule visits each node at most once. It
-  reconstructs write pruning after the read. General ranged accesses still
-  carry obligations for range preparation, other roots and cache updates.
+  reconstructs write pruning after the read. [Topology rules](Miri/Verification/TreeTopologyWP.lean)
+  discharge the no-repeat premise from consistent rooted links and duplicate-free
+  child lists. [Range rules](Miri/Verification/TreeRangeAccess.lean) express
+  access success in terms of tag resolution, range preparation and independent
+  checks on the initial segments, including the wildcard case. The segment
+  checks account for permissions, other roots and cache updates. With access
+  errors rejected, consecutive ranged reads and writes support postconditions
+  on both diagnostic traces and the final tree. Their successful updates
+  preserve commit order for overlapping ranges. The original ranged rule
+  carries the partial tree and diagnostics to a caller-supplied error
+  postcondition.
   [Call rules](Miri/Verification/CallWP.lean) expose argument passing, dispatch
-  and tail-call cleanup. Direct MIR dispatch retains a frame-initialization
-  obligation. [Aggregate rules](Miri/Verification/AggregateWP.lean) expose
+  and tail-call cleanup. Frame initialization exposes the convention,
+  ordinary-argument and return-ABI checks and the hooks that allocate and
+  protect the frame. The generic argument fold retains the closure, variadic
+  and spread actions.
+  [Branch rules](Miri/Verification/BranchControlWP.lean) expose switch
+  comparisons and the Boolean decoding check in assertions.
+  [Aggregate rules](Miri/Verification/AggregateWP.lean) expose
   ordered copies and validation, including repeated-element construction.
   [Scalar memory examples](MiriTests/Verification/ScalarMemoryWP.lean) reduce
-  indirect Boolean loads and stores to byte, initialization and provenance
-  facts after access resolution.
+  scalar loads and stores to byte, initialization and provenance facts after
+  access resolution, including target-endian integer decoding and pointer
+  provenance. The error postcondition receives the retained state of a failed
+  load or partially completed mutation.
   [Whole-body VC generation](Miri/Verification/BodyVCGen.lean)
   constructs a weakest liberal precondition for a supplied MIR body using
   shared control-flow equations. Generation takes the interpreter configuration,

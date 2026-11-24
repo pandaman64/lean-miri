@@ -6,8 +6,10 @@ import Miri.Verification.RvalueWP
 import Miri.Verification.TreeBorrowSetupWP
 import Miri.Verification.TreeDiagnosticWP
 import Miri.Verification.TreeEffectsWP
+import Miri.Verification.TreeRangeAccess
 import Miri.Verification.TreeRangeInitWP
 import Miri.Verification.TreeReadWriteWP
+import Miri.Verification.TreeTopologyWP
 import Miri.Verification.TreeVisitWP
 import Miri.Verification.TypedRetagWP
 
