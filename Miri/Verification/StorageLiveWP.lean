@@ -1,4 +1,5 @@
 import Miri.Verification.CanonicalStepWP
+import Miri.Verification.StackAllocationWP
 import Miri.Input.CompilerStorage
 import Lean.Elab.Tactic.Conv
 
@@ -342,4 +343,11 @@ macro "miri_storage_live" : tactic =>
     Miri.Verification.StorageLiveWP.currentFramePre, Miri.Verification.StorageLiveWP.setCurrentFramePre, Miri.Verification.RvalueWP.scalarCheckPre,
     Miri.Interpreter.MemPlaceMeta.hasMeta,
     Miri.Verification.StorageLiveWP.actionPre_computeLocalLayout,
-    Miri.Verification.StorageLiveWP.actionPre_compilerAllocateDyn])
+    Miri.Verification.StorageLiveWP.actionPre_compilerAllocateDyn,
+    Miri.Verification.StackAllocationWP.actionPre_allocateStackRaw,
+    Miri.Verification.StackAllocationWP.allocateStackRawPre,
+    Miri.Verification.StackAllocationWP.actionPre_initializeAllocation,
+    Miri.Verification.StackAllocationWP.initializeAllocationPre,
+    Miri.Verification.StackAllocationWP.initStackExtraPre,
+    Miri.Verification.StackAllocationWP.machinePre_evalConfigurationTail,
+    Miri.Verification.StackAllocationWP.actionPre_evalConfigurationRootAddress])

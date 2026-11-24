@@ -1,3 +1,4 @@
+import Init.Internal.Order.While
 import Miri.Verification.StorageLiveWP
 
 namespace MiriTests.Verification.StorageLiveWP
@@ -88,5 +89,90 @@ theorem generatedEmptyStack (hooks : MachineHooks.StorageHooks K U) (id : LocalI
   subst state
   simpa [Miri.Verification.StorageLiveWP.storageLiveDynPre,
     Miri.Verification.StorageLiveWP.currentFramePre, empty] using handled
+
+open Miri.ABI Miri.Input Miri.Memory.AllocAddresses StackAllocationWP
+
+attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail
+
+private abbrev TestState := EvalConfiguration.State Unit Unit Unit Unit Unit Unit Unit Unit Unit
+private abbrev TestUser := EvalConfiguration.User Unit Unit Unit Unit Unit Unit Unit Unit Unit
+
+private def testedId : AllocId := ⟨1, by decide⟩
+
+private def configuredExtras : MemoryExtras.Hooks MiriMemoryKind TestUser Unit :=
+  EvalCoreMachine.extras (fun _ _ => throw (.invalidProgram "unexpected synchronization access"))
+    (fun _ => .invalidProgram "unexpected weak-memory error")
+
+private def configuredAllocation : PlaceMachine.AllocationConfig MiriMemoryKind TestUser :=
+  EvalConfiguration.allocation (Size.ofBytes 64)
+    (fun size _ => some (Array.replicate size.bytes.toNat 0)) (fun _ _ _ => pure ())
+    { arithmetic := ⟨Size.ofBytes 8⟩
+      externalAddress := fun _ _ => throw (.invalidProgram "unexpected external allocation")
+      ensureTreeExtra := fun _ => throw (.invalidProgram "unexpected global materialization")
+      diagnosticIntToPtr := throw (.invalidProgram "unexpected integer cast")
+      strictIntToPtr := .invalidProgram "strict integer cast"
+      classifyAddressError := fun _ => .resourceExhaustion "managed stack address failure" }
+    configuredExtras
+
+private def allocationInput (ambient : TestState) (tape : ExecutionChoices.Tape) : TestState :=
+  let addresses : GlobalAddressState :=
+    {provenanceMode := .default, addressMode := .managed,
+      generation := some ⟨AddressGenerator.new 1024 2048, ⟨0.0, 0.0, #[]⟩⟩}
+  let tracker : MachineHooks.BorrowState := ⟨Miri.TreeBorrows.GlobalState.new, .Default⟩
+  let user := ambient.machine.user
+  let world := user.payload.payload.user
+  let world := {world with backend := .none, runtime := {world.runtime with extras := {}}}
+  let user := {user with addresses, payload := {user.payload with payload :=
+    {user.payload.payload with user := world}}}
+  EvalCoreMachine.tape.put
+    {ambient with machine := {ambient.machine with
+      memory := .empty, borrowTracker := some tracker, dataRace := none,
+      threads := .initial false, raceAllocations := {}, allocationSpans := #[], user}} tape
+
+private def stackEntryFacts (state : TestState) : Prop :=
+  let memory := state.machine.memory
+  memory.nextAllocId = 2 ∧
+  (state.machine.borrowTracker.bind fun tracker => tracker.global.rootTag? testedId) = some BorTag.one ∧
+  (MemoryExtras.lookup configuredExtras state.machine testedId).isOk = true ∧
+  match memory.live[testedId]? with
+  | none => False
+  | some entry =>
+    entry.kind = .stack ∧ entry.allocation.byteSize = Size.ofBytes 4 ∧
+      entry.allocation.initializationMask = InitMask.new (Size.ofBytes 4) false
+
+set_option maxRecDepth 8192 in
+set_option cbv.maxSteps 1000000 in
+/-- The production allocator reserves an ID, initializes uninitialized storage,
+installs the root tag and extras, and caches the address from the supplied draw. -/
+theorem configuredAllocationSuccess (ambient : TestState) :
+    actionPre (PlaceMachine.allocateStackRaw configuredAllocation (Size.ofBytes 4) Align.ONE)
+      (fun pointer state =>
+        pointer = Pointer.new (some (.concrete testedId BorTag.one)) (Size.ofBytes 1027) ∧
+        stackEntryFacts state ∧
+        (EvalCoreMachine.tape.get state).cursor = 1 ∧
+        (state.machine.user.addresses.baseAddr.find? (·.allocId == testedId)).map (·.address) =
+          some 1027)
+      (fun _ _ => False) (allocationInput ambient {inputs := #[.index .addressSlack 3]}) := by
+  unfold configuredAllocation
+  miri_storage_live
+  cbv
+  exact ⟨rfl, rfl⟩
+
+set_option maxRecDepth 8192 in
+set_option cbv.maxSteps 1000000 in
+/-- When the configured allocator exhausts its tape at address assignment,
+the issued ID, live bytes, root tag and extras reach the error continuation. -/
+theorem configuredAllocationAddressFailure (ambient : TestState) :
+    actionPre (PlaceMachine.allocateStackRaw configuredAllocation (Size.ofBytes 4) Align.ONE)
+      (fun _ _ => False)
+      (fun error state =>
+        error = .callback "choice input unknown: tape exhausted" ∧
+        stackEntryFacts state ∧
+        (EvalCoreMachine.tape.get state).cursor = 0 ∧
+        state.machine.user.addresses.baseAddr = #[])
+      (allocationInput ambient {inputs := #[]}) := by
+  unfold configuredAllocation
+  miri_storage_live
+  cbv
 
 end MiriTests.Verification.StorageLiveWP
