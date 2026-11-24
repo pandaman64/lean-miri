@@ -3988,3 +3988,11 @@
 @@ -77 +77 @@
 -    .ZeroSized 2 (sourceSpan kind) (some CopyHelperUnit.layout) .uninit CopyHelperUnit.layout
 +    .ZeroSized 5 (sourceSpan kind) (some CopyHelperUnit.layout) .uninit CopyHelperUnit.layout
+--- a/examples/duplicate_prefix/BoundUnitValidation.lean
++++ b/examples/duplicate_prefix/BoundUnitValidation.lean
+@@ -46 +46 @@
+-  have typeEq : layout.ty = 2 := by decide +kernel
++  have typeEq : layout.ty = 5 := by decide +kernel
+@@ -60 +60 @@
+-    change (CompilerFactAdapters.validityHooks PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts base).opsemInhabited () 2 active = _
++    change (CompilerFactAdapters.validityHooks PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts base).opsemInhabited () 5 active = _

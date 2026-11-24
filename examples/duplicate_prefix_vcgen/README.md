@@ -199,6 +199,11 @@ the stated machine, frame and Tree Borrows premises.
 `--target ExclusiveCopyCurrentCall` derives the needed Tree Borrows access
 from the prepared exclusive region and checks the same return and byte update.
 
+The `LanguageGuardCurrent*` archive modules check the retained implementation
+of the language-UB check helper in individual steps.
+`--target PointerAddCurrentGuardTail` checks the selected current pointer-add
+guard suffix. These targets use the standalone example's prebuilt local imports.
+
 ```sh
 LEAN_PATH="$PWD/scratch/duplicate-prefix-vcgen" \
   python3 tools/check-duplicate-prefix-archive.py \

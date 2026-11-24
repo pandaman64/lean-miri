@@ -47,6 +47,15 @@ LOCAL = {
     "ExclusiveTypedRetag",
     "RetagKeyFrame",
     "VacantRetagRead",
+    "LanguageGuardCurrentControl",
+    "LanguageGuardCurrentFacts",
+    "LanguageGuardCurrentFalse",
+    "LanguageGuardCurrentReturn",
+    "LanguageGuardCurrentRuntime",
+    "LanguageGuardCurrentStorage",
+    "LanguageGuardCurrentSwitch",
+    "LanguageGuardCurrentUnit",
+    "PointerAddCurrentGuardTail",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 ALLOWED = {"propext", "Quot.sound", "Classical.choice"}
