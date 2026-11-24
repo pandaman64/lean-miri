@@ -4,6 +4,11 @@ import Miri.Input.ExecutionChoicePolicy
 import Miri.Verification.ExactWP
 import Miri.Verification.TreeRangeAccess
 import Miri.Verification.MutableReferenceRights
+import Miri.Verification.MutableRetagRights
+import Miri.Verification.MutableRetagFootprint
+import Miri.Verification.RangeModifyLaw
+import Miri.Verification.RetagPermissionSifa
+import Miri.Verification.MutableTypedRetag
 import MiriTests
 import Lean
 
