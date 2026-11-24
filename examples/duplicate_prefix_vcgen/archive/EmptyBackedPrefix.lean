@@ -97,7 +97,13 @@ theorem reaches_return
       final.user.payload.payload.user.types = machine.user.payload.payload.user.types ∧
       final.user.payload.payload.user.backend = machine.user.payload.payload.user.backend ∧
       final.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras ∧
-      ∃ threadAfter, final.threads.activeThread? = some threadAfter := by
+      (∃ threadAfter, final.threads.activeThread? = some threadAfter) ∧
+      EmptySharedWriteFrame.Transfer entry.allocation.extra newEntry.allocation.extra
+        [tracker.global.nextPointerTag, (allocatedTracker tracker fresh).global.nextPointerTag] ∧
+      newEntry = {entry with allocation := entry.allocation.setExtra newEntry.allocation.extra} ∧
+      (∀ index, newEntry.allocation.extra.nodeAt index = none →
+        ∀ position (valid : position < newEntry.allocation.extra.locations.entries.size),
+          newEntry.allocation.extra.locations.entries[position].data.perms.get index = none) := by
   let ticked := tick options remaining span machine
   have sameUserBackend : ticked.user.payload.payload.user.backend = machine.user.payload.payload.user.backend := by
     unfold ticked tick SourceControl.accounted
@@ -141,7 +147,7 @@ theorem reaches_return
     simpa [materialized, sharedFrame, CopyHelperSteps.advance, ActualLocalCopy.written, LocalPlaces.cachePlaceLayout] using valid11
   let returned := LenCallResultFrame.resultFrame materialized validLength 0
   obtain ⟨afterLen, newEntry, attached, disjoint, key, kept, dormant, traceLen, sameTracker, gh, sh, dr, fix, un, gc,
-    addresses, types, back, extras, someThread⟩ :=
+    addresses, types, back, extras, someThread, outputTransfer, sameAllocation, vacantAfter⟩ :=
     returns_length options limits remaining budget dispatchFuel span preciseOff implicitOff debug cmp source
       dynamicFuel fuel dynamicEq validationFuel older shared ticked base offset nonNull id entry parentTag backed backedBase
       parent parentNode parentKey parentPresent parentTagEq parentHidden parentDormant forest capacity space
@@ -214,7 +220,7 @@ theorem reaches_return
     preserve (fun st => st.user.payload.ghost = false) (fun m => congrArg (· = false) (tick_ghost options remaining span m)) gh,
     preserve (fun st => st.user.payload.validation = .Shallow) (fun m => congrArg (· = .Shallow) (tick_shallow options remaining span m)) sh,
     dr, fix, preserve (fun st => (control st.user).checkedArithmetic = false) (fun m => congrArg (· = false) (tick_flags options remaining span m).1) un,
-    preserve (fun st => (control st.user).gcInterval = 0) (fun m => congrArg (· = 0) (tick_flags options remaining span m).2) gc, ?_, ?_, ?_, ?_, someThread⟩
+    preserve (fun st => (control st.user).gcInterval = 0) (fun m => congrArg (· = 0) (tick_flags options remaining span m).2) gc, ?_, ?_, ?_, ?_, someThread, outputTransfer, sameAllocation, vacantAfter⟩
   · refine endpoints _ (·.addresses) ?_ addresses
     intro m
     unfold next tick SourceControl.accounted

@@ -1,3 +1,4 @@
+import duplicate_prefix.EmptySharedWriteFrame
 import ProtectedTagFresh
 import duplicate_prefix.EmptyBackedShared
 import duplicate_prefix.EmptyBackedRootLenCall
@@ -101,7 +102,13 @@ theorem returns_length
       after.user.payload.payload.user.types = machine.user.payload.payload.user.types ∧
       after.user.payload.payload.user.backend = machine.user.payload.payload.user.backend ∧
       after.user.payload.payload.user.runtime.extras = machine.user.payload.payload.user.runtime.extras ∧
-      ∃ threadAfter, after.threads.activeThread? = some threadAfter := by
+      (∃ threadAfter, after.threads.activeThread? = some threadAfter) ∧
+      EmptySharedWriteFrame.Transfer entry.allocation.extra newEntry.allocation.extra
+        [tracker.global.nextPointerTag, (allocatedTracker tracker fresh).global.nextPointerTag] ∧
+      newEntry = {entry with allocation := entry.allocation.setExtra newEntry.allocation.extra} ∧
+      (∀ index, newEntry.allocation.extra.nodeAt index = none →
+        ∀ position (valid : position < newEntry.allocation.extra.locations.entries.size),
+          newEntry.allocation.extra.locations.entries[position].data.perms.get index = none) := by
   let afterReference := sharedFrame frame valid12
       (PreparedContracts.actualConfig options () (remaining+1) span).access.runtime.base id tracker.global.nextPointerTag (base+offset)
   let original := entry.allocation.extra
@@ -304,8 +311,15 @@ theorem returns_length
     | some node => exact ⟨node,rfl,by simpa [picked, priorHidden] using older₂⟩
   have cleanFirst := EmptySharedCapacity.preserveAbsentRow original.locations first index₁ parent different₁ framed₁ parentDormant
   have cleanSecond := EmptySharedCapacity.preserveAbsentRow first.locations second index₂ parent different₂ framed₂ cleanFirst
+  have frame₁ := EmptySharedWriteFrame.transferOfChild original (Size.ofBytes offset) parentTag tag₁ parent index₁
+    parentNode map₁ false forest installed₁ parentKey parentPresent vacancy₁ finished₁ framed₁ forest₁ roots₁
+  have frame₂ := EmptySharedWriteFrame.transferOfChild first (Size.ofBytes offset) tag₁ tag₂ index₁ index₂
+    node₁ map₂ true forest₁ installed₂ key₁ present₁ vacancy₂ finished₂ framed₂ forest₂ roots₂
+  have joined := frame₁.trans frame₂
+  have vacantAfter := EmptySharedCapacity.preserveVacancy first (Size.ofBytes offset) tag₁ tag₂ index₁ index₂
+    node₁ map₂ true nextReady installed₂ key₁ present₁ vacancy₂ finished₂ framed₂
   refine ⟨after,resultEntry,?_,?_,parentSecond,kept,cleanSecond,.next referenceStep trace, ?_,
-    gh, sh, raceOff, fix, un, gc, addr, ty, be, ex, thread⟩
+    gh, sh, raceOff, fix, un, gc, addr, ty, be, ex, thread, joined, rfl, vacantAfter⟩
   · rw [memory]
     simp [RetagEntry.updatedMemory, firstEntry, resultEntry, Allocation.setExtra, Allocation.mapExtra]
   · intro key other

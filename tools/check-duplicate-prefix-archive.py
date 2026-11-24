@@ -296,6 +296,7 @@ LOCAL = {
     "EmptyBackedShared",
     "EmptySharedCapacity",
     "EmptySharedTree",
+    "EmptySharedWriteFrame",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 CLIENT_IMPORTS = re.compile(rb"^import ([A-Za-z][A-Za-z0-9_]*)(?:\.([A-Za-z0-9_]+))?\s*$", re.MULTILINE)

@@ -27,9 +27,7 @@ theorem emptyBackedPhysicalRejects
     (positive : count ≠ 0)
     (admitted : Admitted program options remaining preparedTagHeadroom span before frame pointer 0 count)
     (compiler : InitialCompilerControl before frame) (physical : PhysicalBoolDestination before frame pointer 0)
-    (stack : before.stack.frames = #[frame]) (continues : frame.returnContinuation = .stop true)
-    (distinct : ∀ place key accessTag, frame.returnPlace = .memory place →
-      place.mplace.ptr.provenance = some (.concrete key accessTag) → key ≠ id) :
+    (stack : before.stack.frames = #[frame]) (continues : frame.returnContinuation = .stop true) :
     GeneratedBodySafety.requiredForEveryChoiceAt
       (PreparedContracts.actualConfig options () (remaining+1) span) limits before := by
   let cfg := PreparedContracts.actualConfig options () (remaining+1) span
@@ -41,6 +39,7 @@ theorem emptyBackedPhysicalRejects
   obtain ⟨initialTracker, tracked, protectedTags⟩ := post.sameProtections
   obtain ⟨treeNode, node, hidden⟩ := post.node
   obtain ⟨thread, active⟩ := post.active
+  obtain ⟨old, fresh, originalLive, sameBytes, transfer, vacant, ranks, unheld⟩ := post.transfer
   have originalDestination : PhysicalBoolDestination (Storage.withCurrent #[] frame machine) frame pointer 0 := by
     rw [← state]
     exact physical
@@ -51,7 +50,7 @@ theorem emptyBackedPhysicalRejects
     emptyBackedPhysicalTail options limits remaining fuel span validation admitted.profile.debugOff
       frame result machine final pointer id tag concrete initialTracker tracker tracked post.tracked protectedTags.symm
       updated post.sourceLive holder treeNode post.tagAt node hidden post.dormant thread active originalDestination
-      distinct preparedTagHeadroom allocationProfile post.returnPlace (congrArg (·.borrowTracker) post.extra)
+      old originalLive sameBytes fresh transfer vacant ranks unheld preparedTagHeadroom allocationProfile post.returnPlace (congrArg (·.borrowTracker) post.extra)
       post.addresses post.extras post.otherLive post.body post.location post.resultSlot
       ((congrArg (·.dataRace) post.extra).trans admitted.stack.calleeClocksOff)
       (post.continuation.trans continues) post.immediate (post.varargs.trans admitted.stack.noVarargs)

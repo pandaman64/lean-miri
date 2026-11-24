@@ -134,9 +134,10 @@ nor a successful execution result.
 - For a nonzero count on an empty slice, a non-null integer address without
   provenance needs no backing allocation. A wildcard pointer needs the stock
   zero-width lookup to select no allocation. A concrete pointer needs two
-  available retag slots and, if returning through a physical Boolean byte, a
-  return allocation distinct from the input allocation. The empty backing
-  can have several Tree Borrows roots.
+  available retag slots. The proof covers a physical Boolean byte in the
+  same allocation as the empty source, as well as a distinct output
+  allocation. An empty backing may have several Tree Borrows roots. The
+  physical output allocation must satisfy the stated one-root condition.
 
 [VerifyCanonicalSafety.lean](VerifyCanonicalSafety.lean)
 is the smaller proof for integer-address empties and nonempty slices.

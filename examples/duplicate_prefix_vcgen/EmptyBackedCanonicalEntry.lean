@@ -57,6 +57,15 @@ structure EmptyBackedEndpoint
   backend : final.user.payload.payload.user.backend = .none
   extras : final.user.payload.payload.user.runtime.extras = before.machine.user.payload.payload.user.runtime.extras
   active : ∃ thread, final.threads.activeThread? = some thread
+  transfer : ∃ old fresh,
+    before.machine.memory.live[id]? = some old ∧
+    updated = {old with allocation := old.allocation.setExtra updated.allocation.extra} ∧
+    EmptySharedWriteFrame.Transfer old.allocation.extra updated.allocation.extra fresh ∧
+    (∀ index, updated.allocation.extra.nodeAt index = none →
+      ∀ position (valid : position < updated.allocation.extra.locations.entries.size),
+        updated.allocation.extra.locations.entries[position].data.perms.get index = none) ∧
+    (∀ index node, old.allocation.extra.nodeAt index = some node → node.tag ∉ fresh) ∧
+    (∀ freshTag ∈ fresh, finalTracker.global.protectedTags.contains freshTag = false)
 
 theorem emptyBackedReachesReturn
     (program : BodyVCGen.LoadedProgram) (loaded : GeneratedBodySafety.loaded = .ok program)
@@ -158,7 +167,7 @@ theorem emptyBackedReachesReturn
   have k13 := admitted.initialTemporarySlot loaded compiler 13 (by decide) (by decide)
   obtain ⟨result, final, updated, trace, resultBody, resultIdentity, resultFn, pc, boolValue, resultExtra,
     resultPlace, resultContinue, resultArgs, immediate, liveFinal, otherLive, tagFinal, hiddenFinal, dormantFinal, tracking, ghost, shallow, race, fixed, unchecked,
-    noGc, addresses, types, backend, extras, finalActive⟩ :=
+    noGc, addresses, types, backend, extras, finalActive, outputTransfer, sameAllocation, vacantAfter⟩ :=
     EmptyBackedPrefix.reaches_return options limits remaining dispatch calling span profile.preciseInteriorMutOff
       profile.implicitWritesOff profile.debugOff ProjectionMetadataFacts.nullComparator compilerSourceComparator
       dynamicFuel fuel sizing validation frames frame machine base start.bytes count nonzeroAddress positive id entry tag found cachedAddress holder node tagAt nodeAt
@@ -174,9 +183,39 @@ theorem emptyBackedReachesReturn
       profile.compilerRuntime profile.noSyntheticSliceCache profile.unchecked profile.noGc profile.fixed
   let finalTracker := allocatedTracker (allocatedTracker tracker fresh) freshAgain
   refine ⟨result,final,updated,holder,finalTracker,?_⟩
-  exact ⟨state.symm ▸ trace,resultBody.trans body,pc,boolValue,resultExtra,resultPlace,resultContinue,resultArgs,
+  refine ⟨state.symm ▸ trace,resultBody.trans body,pc,boolValue,resultExtra,resultPlace,resultContinue,resultArgs,
     immediate,liveFinal,otherLive,tagFinal,hiddenFinal,dormantFinal,tracking,⟨tracker,tracked,rfl⟩,
-    ghost,shallow,race,fixed,unchecked,noGc,addresses,types,backend.trans profile.backendOff,extras,finalActive⟩
+    ghost,shallow,race,fixed,unchecked,noGc,addresses,types,backend.trans profile.backendOff,extras,finalActive,?_⟩
+  refine ⟨entry, _, found, sameAllocation, outputTransfer, vacantAfter, ?_, ?_⟩
+  · intro index data nodePresent
+    have older := allOld id entry index data found nodePresent
+    simp only [List.mem_cons, List.not_mem_nil, or_false, not_or]
+    constructor
+    · intro eq
+      rw [eq] at older
+      exact UInt64.lt_irrefl _ older
+    · intro eq
+      rw [eq] at older
+      exact UInt64.lt_asymm older nextAge
+  · intro selected member
+    change tracker.global.protectedTags.contains selected = false
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at member
+    rcases member with eq | eq
+    · subst selected
+      apply Bool.eq_false_iff.mpr
+      intro yes
+      unfold ProtectedTags.contains ProtectedTags.get at yes
+      cases choose : tracker.global.protectedTags.entries.find?
+          (fun row => row.1 == tracker.global.nextPointerTag) with
+      | none => simp [choose] at yes
+      | some row =>
+        have old := protectorsOld row (Array.mem_of_find?_eq_some choose)
+        have accepted := Array.find?_some (p := fun row : BorTag × ProtectorKind =>
+          row.1 == tracker.global.nextPointerTag) choose
+        rw [beq_iff_eq.mp accepted] at old
+        exact UInt64.lt_irrefl _ old
+    · rw [eq]
+      exact unprotected
 
 #print axioms emptyBackedReachesReturn
 end

@@ -10,14 +10,12 @@ set_option maxRecDepth 65536
 set_option backward.isDefEq.respectTransparency false
 
 /-- The concrete empty source needs room for the two zero-width reborrows.
-A physical output may use any admitted byte window on a disjoint allocation. -/
+A physical output may use an admitted byte window in that allocation or in a separate one. -/
 structure EmptyBackedResources
     (before : MachineHooks.State MiriMemoryKind Machine.RootUser)
-    (frame : CompilerFrameContext.ActualFrame) (id : AllocId) : Prop where
+    (id : AllocId) : Prop where
   capacity : ∀ entry, before.machine.memory.live[id]? = some entry →
     RetagInsertionCapacity.Ready entry.allocation.extra ∧ entry.allocation.extra.nodes.size + 2 < 2^32
-  disjoint : ∀ place key tag, frame.returnPlace = .memory place →
-    place.mplace.ptr.provenance = some (.concrete key tag) → key ≠ id
 
 /-- The safety VC from the saved standalone MIR holds for each prepared
 count, with the physical or cached return protocol. Empty inputs may have
@@ -40,7 +38,7 @@ theorem safetyForPreparedCallWithBackedEmpty
       ∀ allocation, before.machine.memory.live[id]? = some allocation → CopySourceResources allocation)
     (empty : length = 0 → count ≠ 0 → match pointer.provenance with
       | none => True
-      | some (.concrete id _) => EmptyBackedResources before frame id
+      | some (.concrete id _) => EmptyBackedResources before id
       | some .wildcard => EmptyWildcardLocalValidator.Unresolved
           before.machine.user.addresses before.machine.memory pointer.offset.bytes) :
     GeneratedBodySafety.requiredForEveryChoiceAt
@@ -66,7 +64,7 @@ theorem safetyForPreparedCallWithBackedEmpty
         | physicalRoot stack continuation physical =>
           exact emptyBackedPhysicalRejects program loaded options limits remaining sizeFuel fuel dispatch span dynamic
             validation dispatchFuel before frame pointer count id tag actual resource.capacity nonzeroCount admitted compiler
-            physical stack continuation resource.disjoint
+            physical stack continuation
         | cachedCaller destination ledger =>
           exact emptyBackedCachedRejects program loaded options limits remaining sizeFuel fuel dispatch span dynamic
             validation dispatchFuel before frame pointer count id tag actual resource.capacity nonzeroCount admitted compiler
