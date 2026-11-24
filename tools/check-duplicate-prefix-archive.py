@@ -37,6 +37,7 @@ LOCAL = {
     "PointerAddCurrentReturn",
     "RootThinPointerCopy",
     "RootThinPointerWrite",
+    "ArchiveCatalogRoot",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 ALLOWED = {"propext", "Quot.sound", "Classical.choice"}

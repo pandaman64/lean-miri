@@ -114,8 +114,8 @@ modules against the current interpreter. It pins the old source revision and
 applies [ArchiveMigration.patch](ArchiveMigration.patch) only in a fresh
 output directory. Its default target set covers the typed compiler metadata,
 the root's exact ABI and declaration spans, canonical frame initialization
-queries, and selected allocation, retagging and copy bridges. The complete
-archived zero and all-count call proofs still need further migration.
+queries, and selected allocation, retagging and copy bridges. The all-count
+archive still needs further migration.
 
 ```sh
 git fetch origin 7950c01b18013969c360df535b8b888dd6181dff
@@ -143,7 +143,19 @@ premises, with any surrounding frame array.
 `--target RootZeroComplete` checks the whole zero-count root call with a
 physical Boolean destination and the stated release profile, down to the
 actual memory update and root stop. The nested caller-return case has a
-separate proof boundary.
+separate proof boundary. [RootZeroPhysicalVC.lean](RootZeroPhysicalVC.lean)
+applies the checked physical-root proof to the exact emitted `requiredAt`
+for every allowed `Unit` choice policy, under the same machine premises.
+
+```sh
+out="$PWD/scratch/duplicate-prefix-vcgen"
+archive="$PWD/scratch/duplicate-prefix-physical-zero"
+python3 tools/check-duplicate-prefix-archive.py "$out/Representative.mir.json" \
+  --output "$archive" --target RootZeroComplete \
+  --target ArchiveCatalogRoot --target ArchiveTraceToVC
+LEAN_PATH="$out:$archive:$PWD/.lake/build/lib/lean" \
+  lean -j1 examples/duplicate_prefix_vcgen/RootZeroPhysicalVC.lean
+```
 
 The optional `RetagFrozenChild` target checks actual child insertion and
 the resulting range and permission frame under its concrete fresh-tag premises.
