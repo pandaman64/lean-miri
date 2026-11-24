@@ -350,4 +350,10 @@ macro "miri_storage_live" : tactic =>
     Miri.Verification.StackAllocationWP.initializeAllocationPre,
     Miri.Verification.StackAllocationWP.initStackExtraPre,
     Miri.Verification.StackAllocationWP.machinePre_evalConfigurationTail,
-    Miri.Verification.StackAllocationWP.actionPre_evalConfigurationRootAddress])
+    Miri.Verification.StackAllocationWP.actionPre_evalConfigurationRootAddress,
+    Miri.Verification.StackAllocationWP.evalRootAddressPre,
+    Miri.Verification.StackAllocationWP.actionPre_addressChoice,
+    Miri.Verification.StackAllocationWP.stackAddressChoicePre,
+    Miri.Verification.StackAllocationWP.actionPre_stackAssignment,
+    Miri.Verification.StackAllocationWP.stackAssignmentPre,
+    Miri.Verification.StackAllocationWP.freshStackAddress])

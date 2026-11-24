@@ -122,7 +122,10 @@ After selecting a MIR instruction in the generated VC, use
 `PlaceMention`, statement intrinsics, `Drop`, `Assert` or `UnwindTerminate`. Each rule keeps the
 state at which an error occurs. For example, `miri_drop_wp` further exposes
 the empty-glue jump and the dispatch request for a destructor.
-See the [Drop step fixture](MiriTests/Verification/DropWP.lean).
+For managed fresh stack storage, `miri_storage_live` also exposes the
+reserved allocation ID, root tag, address draw, aligned base address and
+publication in the address maps. See the [Drop step fixture](MiriTests/Verification/DropWP.lean)
+and the [storage activation examples](MiriTests/Verification/StorageLiveWP.lean).
 
 For a ranged Tree Borrows read followed by a write, `miri_tree_range_wp`
 pulls both continuations through the prepared segments in order. A read

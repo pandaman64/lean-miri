@@ -447,4 +447,181 @@ theorem actionPre_managedStackAddress {K U : Type}
   · simp only [support, ↓reduceDIte]
     rfl
 
+open Miri.Memory.AllocAddresses
+
+/-- Managed assignments for fresh stack allocations generate an address and
+publish it in the base and inverse maps. The generator's partial state is
+retained on exhaustion. A cache failure retains the publication prefix. -/
+def freshStackAddress (addresses : GlobalAddressState) (id : AllocId)
+    (size : Size) (align : Align) (slack : Fin 16) : AddressStateResult UInt64 :=
+  match addresses.generation with
+  | none => ⟨addresses, .error .missingAddressGeneration⟩
+  | some generation =>
+    let generated := generation.generator.generate size align slack
+    let generation := {generation with generator := generated.state}
+    let after := {addresses with generation := some generation}
+    match generated.outcome with
+    | .error error => ⟨after, .error (.addressGenerator error)⟩
+    | .ok address =>
+      let remaining := generated.state.getRemaining
+      let pool := if remaining.start > remaining.stop / 2 then
+          generation.reusePool.addressSpaceShortage
+        else generation.reusePool
+      let cached := ({after with generation := some {generation with reusePool := pool}}).cacheAddress id address
+      ⟨cached.state, cached.outcome.map (fun () => address)⟩
+
+theorem addrFromAllocId_freshStack
+    (addresses : GlobalAddressState) (id : AllocId)
+    (size : Size) (align : Align) (slack : Fin 16) (thread : AddressThreadId)
+    (uncached : addresses.baseAddr.find? (fun entry => entry.allocId == id) = none)
+    (managed : addresses.addressMode = .managed) :
+    addresses.addrFromAllocId id (some ⟨.liveData, true, size, align, some .stack, thread⟩)
+      ⟨false, false, 0, slack⟩ =
+      let result := freshStackAddress addresses id size align slack
+      ⟨result.state, result.outcome.map AddressAssignment.ready⟩ := by
+  have notDead : (AllocationAddressKind.liveData == .dead) = false := rfl
+  have notTypeId : (AllocationAddressKind.liveData == .typeId) = false := rfl
+  have isStack : (AddressMemoryKind.stack == .stack) = true := rfl
+  unfold GlobalAddressState.addrFromAllocId
+  simp only [Id.run, pure, Pure.pure, notDead, notTypeId, Bool.not_true, Bool.or_false, Bool.false_eq_true,
+    ↓reduceIte, managed, ReusePool.takeAddr, isStack]
+  split
+  next address cached =>
+    change (Option.map BaseAddressEntry.address (addresses.baseAddr.find?
+      (fun entry => entry.allocId == id))) = some address at cached
+    simp [uncached] at cached
+  next cached =>
+    unfold freshStackAddress
+    cases generationEq : addresses.generation
+    case none => rfl
+    case some generation =>
+      dsimp only
+      cases generated : (generation.generator.generate size align slack).outcome
+      case error error => rfl
+      case ok address =>
+        dsimp only
+        let generator := (generation.generator.generate size align slack).state
+        let remaining := generator.getRemaining
+        let pool := if remaining.start > remaining.stop / 2 then
+            generation.reusePool.addressSpaceShortage else generation.reusePool
+        let ready := {addresses with generation := some ⟨generator, pool⟩}
+        let published := ready.cacheAddress id address
+        change (match published.outcome with
+          | .ok _ => ⟨published.state, .ok (.ready address)⟩
+          | .error error => ⟨published.state, .error error⟩ : AddressStateResult AddressAssignment) =
+          ⟨published.state, (published.outcome.map (fun () => address)).map AddressAssignment.ready⟩
+        cases published.outcome <;> rfl
+
+local notation "AddressState" => PointerMachine.State K U
+local notation "AddressErrors" => StepError → AddressState → Prop
+
+/-- Continue through the original address operation for states outside the
+fresh managed allocation domain. -/
+def addressFallbackPre (action : PointerMachine.M K U UInt64)
+    (post : UInt64 → AddressState → Prop) (onError : AddressErrors) : AddressState → Prop :=
+  actionPre action post onError
+
+/-- Evaluate the pure address generation and publication result on a fresh live
+stack entry, retaining the result's address state on either exit. -/
+def stackAssignmentPre (pointers : PointerMachine.Hooks K U) (id : AllocId) (slack : Fin 16)
+    (post : UInt64 → AddressState → Prop) (onError : AddressErrors) (before : AddressState) : Prop :=
+  let fallback := addressFallbackPre
+    (PointerMachine.addrFromAllocId pointers id (some .stack) ⟨false, false, 0, slack⟩) post onError before
+  let machine := before.machine
+  match machine.user.addresses.baseAddr.find? (fun entry => entry.allocId == id), machine.memory.getAllocInfo id with
+  | none, .ok info =>
+    if machine.memory.isAllocLive id = true ∧ info.kind = .liveData ∧
+        machine.user.addresses.addressMode = .managed then
+      let result := freshStackAddress machine.user.addresses id info.size info.align slack
+      let after := {before with machine := {machine with user := {machine.user with addresses := result.state}}}
+      match result.outcome with
+      | .ok address => post address after
+      | .error error => onError (pointers.classifyAddressError error) after
+    else fallback
+  | _, _ => fallback
+
+theorem actionPre_stackAssignment (pointers : PointerMachine.Hooks K U) (id : AllocId) (slack : Fin 16)
+    (post : UInt64 → AddressState → Prop) (onError : AddressErrors) (before : AddressState) :
+    actionPre (PointerMachine.addrFromAllocId pointers id (some .stack) ⟨false, false, 0, slack⟩)
+      post onError before = stackAssignmentPre pointers id slack post onError before := by
+  unfold stackAssignmentPre
+  dsimp only
+  cases uncached : before.machine.user.addresses.baseAddr.find? (fun entry => entry.allocId == id)
+  case some entry => rfl
+  case none =>
+    cases metadata : before.machine.memory.getAllocInfo id
+    case error error => rfl
+    case ok info =>
+      by_cases domain : before.machine.memory.isAllocLive id = true ∧
+          info.kind = .liveData ∧ before.machine.user.addresses.addressMode = .managed
+      · simp only [domain, ↓reduceIte]
+        obtain ⟨live, kind, managed⟩ := domain
+        unfold actionPre
+        rw [PointerMachine.addrFromAllocId_managedFresh pointers id slack before info uncached metadata live kind managed _
+          (addrFromAllocId_freshStack _ _ _ _ _ _ uncached managed)]
+        cases (freshStackAddress before.machine.user.addresses id info.size info.align slack).outcome <;> rfl
+      · simp only [domain, ↓reduceIte, addressFallbackPre]
+
+/-- Managed stack address selection consumes a slack request at the source
+event site, then uses the address result of the state left by that request. -/
+def stackAddressChoicePre (tape : ExecutionChoices.Access AddressState)
+    (pointers : PointerMachine.Hooks K U) (id : AllocId)
+    (post : UInt64 → AddressState → Prop) (onError : AddressErrors) (before : AddressState) : Prop :=
+  let fallback := addressFallbackPre
+    (ExecutionAddressChoices.addrFromAllocId tape pointers id (some .stack)) post onError before
+  let machine := before.machine
+  match machine.user.addresses.baseAddr.find? (fun entry => entry.allocId == id),
+      machine.memory.getAllocInfo id, machine.user.addresses.generation with
+  | none, .ok info, some _ =>
+    if machine.memory.isAllocLive id = true ∧ info.kind = .liveData ∧
+        machine.user.addresses.addressMode = .managed then
+      actionPre (ExecutionChoices.index tape .addressSlack 16) (fun selected state =>
+        if support : selected < 16 then
+          stackAssignmentPre pointers id ⟨selected, support⟩ post onError state
+        else onError (.invalidProgram "checked address slack exceeded support") state) onError before
+    else fallback
+  | _, _, _ => fallback
+
+theorem actionPre_stackAddressChoice (tape : ExecutionChoices.Access AddressState)
+    (pointers : PointerMachine.Hooks K U) (id : AllocId)
+    (post : UInt64 → AddressState → Prop) (onError : AddressErrors) (before : AddressState) :
+    actionPre (ExecutionAddressChoices.addrFromAllocId tape pointers id (some .stack)) post onError before =
+      stackAddressChoicePre tape pointers id post onError before := by
+  unfold stackAddressChoicePre
+  dsimp only
+  cases uncached : before.machine.user.addresses.baseAddr.find? (fun entry => entry.allocId == id)
+  case some entry => rfl
+  case none =>
+    cases metadata : before.machine.memory.getAllocInfo id
+    case error error => rfl
+    case ok info =>
+      cases generated : before.machine.user.addresses.generation
+      case none => rfl
+      case some generation =>
+        by_cases domain : before.machine.memory.isAllocLive id = true ∧
+            info.kind = .liveData ∧ before.machine.user.addresses.addressMode = .managed
+        · simp only [domain]
+          obtain ⟨live, kind, managed⟩ := domain
+          rw [actionPre_managedStackAddress tape pointers id post onError before info generation
+            uncached metadata live kind managed generated]
+          simp only [actionPre_stackAssignment, true_and, ↓reduceIte]
+        · simp only [domain, ↓reduceIte, addressFallbackPre]
+
+/-- Select the managed stack reduction even when the memory kind is still
+computed from a symbolic live entry. Other kinds use their source operation. -/
+theorem actionPre_addressChoice (tape : ExecutionChoices.Access AddressState)
+    (pointers : PointerMachine.Hooks K U) (id : AllocId) (kind : Option AddressMemoryKind)
+    (post : UInt64 → AddressState → Prop) (onError : AddressErrors) (before : AddressState) :
+    actionPre (ExecutionAddressChoices.addrFromAllocId tape pointers id kind) post onError before =
+      match kind with
+      | some .stack => stackAddressChoicePre tape pointers id post onError before
+      | _ => addressFallbackPre (ExecutionAddressChoices.addrFromAllocId tape pointers id kind)
+          post onError before := by
+  cases kind with
+  | none => rfl
+  | some kind =>
+    cases kind with
+    | stack => exact actionPre_stackAddressChoice tape pointers id post onError before
+    | other => rfl
+
 end Miri.Verification.StackAllocationWP

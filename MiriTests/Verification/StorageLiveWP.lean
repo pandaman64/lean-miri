@@ -111,13 +111,16 @@ private def configuredAllocation : PlaceMachine.AllocationConfig MiriMemoryKind 
       ensureTreeExtra := fun _ => throw (.invalidProgram "unexpected global materialization")
       diagnosticIntToPtr := throw (.invalidProgram "unexpected integer cast")
       strictIntToPtr := .invalidProgram "strict integer cast"
-      classifyAddressError := fun _ => .resourceExhaustion "managed stack address failure" }
+      classifyAddressError := fun
+        | .addressGenerator (.addressSpaceFull ..) => .resourceExhaustion "managed stack address space exhausted"
+        | _ => .resourceExhaustion "managed stack address failure" }
     configuredExtras
 
-private def allocationInput (ambient : TestState) (tape : ExecutionChoices.Tape) : TestState :=
+private def allocationInput (ambient : TestState) (tape : ExecutionChoices.Tape)
+    (addressLimit : UInt64 := 2048) : TestState :=
   let addresses : GlobalAddressState :=
     {provenanceMode := .default, addressMode := .managed,
-      generation := some ⟨AddressGenerator.new 1024 2048, ⟨0.0, 0.0, #[]⟩⟩}
+      generation := some ⟨AddressGenerator.new 1024 addressLimit, ⟨0.0, 0.0, #[]⟩⟩}
   let tracker : MachineHooks.BorrowState := ⟨Miri.TreeBorrows.GlobalState.new, .Default⟩
   let user := ambient.machine.user
   let world := user.payload.payload.user
@@ -145,18 +148,20 @@ set_option cbv.maxSteps 1000000 in
 /-- The production allocator reserves an ID, initializes uninitialized storage,
 installs the root tag and extras, and caches the address from the supplied draw. -/
 theorem configuredAllocationSuccess (ambient : TestState) :
-    actionPre (PlaceMachine.allocateStackRaw configuredAllocation (Size.ofBytes 4) Align.ONE)
+    actionPre (PlaceMachine.allocateStackRaw configuredAllocation (Size.ofBytes 4) Align.EIGHT)
       (fun pointer state =>
-        pointer = Pointer.new (some (.concrete testedId BorTag.one)) (Size.ofBytes 1027) ∧
+        pointer = Pointer.new (some (.concrete testedId BorTag.one)) (Size.ofBytes 1032) ∧
         stackEntryFacts state ∧
         (EvalCoreMachine.tape.get state).cursor = 1 ∧
         (state.machine.user.addresses.baseAddr.find? (·.allocId == testedId)).map (·.address) =
-          some 1027)
+          some 1032 ∧
+        state.machine.user.addresses.intToPtrMap = #[⟨1032, testedId⟩] ∧
+        (state.machine.user.addresses.generation.map (·.generator.nextBaseAddr)) = some 1036)
       (fun _ _ => False) (allocationInput ambient {inputs := #[.index .addressSlack 3]}) := by
   unfold configuredAllocation
   miri_storage_live
   cbv
-  exact ⟨rfl, rfl⟩
+  exact ⟨rfl, rfl, rfl, rfl⟩
 
 set_option maxRecDepth 8192 in
 set_option cbv.maxSteps 1000000 in
@@ -171,6 +176,25 @@ theorem configuredAllocationAddressFailure (ambient : TestState) :
         (EvalCoreMachine.tape.get state).cursor = 0 ∧
         state.machine.user.addresses.baseAddr = #[])
       (allocationInput ambient {inputs := #[]}) := by
+  unfold configuredAllocation
+  miri_storage_live
+  cbv
+
+set_option maxRecDepth 8192 in
+set_option cbv.maxSteps 1000000 in
+/-- Address-space exhaustion occurs after the generated next address and slack
+event have been committed. It leaves both address maps empty. -/
+theorem configuredAllocationGenerationFailure (ambient : TestState) :
+    actionPre (PlaceMachine.allocateStackRaw configuredAllocation (Size.ofBytes 4) Align.EIGHT)
+      (fun _ _ => False)
+      (fun error state =>
+        error = .resourceExhaustion "managed stack address space exhausted" ∧
+        stackEntryFacts state ∧
+        (EvalCoreMachine.tape.get state).cursor = 1 ∧
+        state.machine.user.addresses.baseAddr = #[] ∧
+        state.machine.user.addresses.intToPtrMap = #[] ∧
+        (state.machine.user.addresses.generation.map (·.generator.nextBaseAddr)) = some 1036)
+      (allocationInput ambient {inputs := #[.index .addressSlack 3]} 1035) := by
   unfold configuredAllocation
   miri_storage_live
   cbv
