@@ -23,7 +23,7 @@ def ActiveByteRights (tree : BorrowTree) (tags : ProtectedTags) (source : UniInd
     LocationRights tree row tags source ∧
       (∀ index, tree.nodeAt index = none → row.perms.get index = none)
 
-private theorem owned_replaced (predicate : α → Prop) (lower upper : UInt64)
+theorem owned_replaced (predicate : α → Prop) (lower upper : UInt64)
     (table : DedupRangeMap α) (position : Nat) (bound : position < table.entries.size) (fresh : α)
     (before : OwnedOn predicate lower upper table) (after : predicate fresh) :
     OwnedOn predicate lower upper (replaced table position bound fresh) := by
@@ -35,7 +35,7 @@ private theorem owned_replaced (predicate : α → Prop) (lower upper : UInt64)
     simpa [replaced] using after
   · simpa [replaced, Array.getElem_set, same] using before index oldBound positive start stop
 
-private theorem forest_children (tree : BorrowTree) (coherent : CoherentForest tree) :
+theorem forest_children (tree : BorrowTree) (coherent : CoherentForest tree) :
     ∀ index node, tree.nodeAt index = some node →
       node.children.toList.Nodup ∧
         (∀ child ∈ node.children.toList, ∃ childNode,
@@ -69,7 +69,7 @@ private theorem authorize (tree : BorrowTree) (tags : ProtectedTags)
   rw [path]
   exact index_self root
 
-private theorem frame_access (tree : BorrowTree) (table : DedupRangeMap LocationTree)
+theorem frame_access (tree : BorrowTree) (table : DedupRangeMap LocationTree)
     (tags : ProtectedTags) (source : UniIndex) (kind : AccessKind)
     (slot : RangeMapSegment LocationTree) :
     ({tree with locations := table} : BorrowTree).performTreeAccessAt slot.data (some source)
@@ -91,7 +91,7 @@ private theorem ancestry_table (tree : BorrowTree) (table : DedupRangeMap Locati
     | self => exact .self _
     | parent _ data found edge ih => exact .parent ih data found edge
 
-private theorem rights_table (tree : BorrowTree) (table : DedupRangeMap LocationTree) (row : LocationTree)
+theorem rights_table (tree : BorrowTree) (table : DedupRangeMap LocationTree) (row : LocationTree)
     (tags : ProtectedTags) (source : UniIndex) (before : LocationRights tree row tags source) :
     LocationRights {tree with locations := table} row tags source := by
   intro index data found

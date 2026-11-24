@@ -1,3 +1,6 @@
+import duplicate_prefix.SharedHolderAttach
+import duplicate_prefix.RetagReleaseFootprint
+import duplicate_prefix.SharedReleaseRange
 import duplicate_prefix.SharedReadOwnership
 import duplicate_prefix.InheritedSharedRights
 import duplicate_prefix.RetagGraphFrame
@@ -57,7 +60,159 @@ private theorem read_owned_byte {tree : BorrowTree} {protectors : ProtectedTags}
   rw [exact] at rights
   exact rights
 
-theorem concrete_shared_readable_reborrow
+/-- Frame facts from a successful shared child creation. The holder grant is
+transported through actual installation using the rights at its post-read
+rows, under the chosen current or prospective protector map. -/
+structure SharedChildFrame (original read after : BorrowTree) (parent child : UniIndex)
+    (tag : BorTag) (offset length : Size) (inside : DedupRangeMap LocationState) : Prop where
+  readMetadata : read = {original with locations := read.locations}
+  attached : MutableSliceRights.Attachment read after parent child
+  olderNodes : ∀ index node, index ≠ child → after.nodeAt index = some node →
+    ∃ prior, original.nodeAt index = some prior ∧ prior.tag = node.tag ∧
+      node.defaultInitialPermission = prior.defaultInitialPermission
+  unexposed : ∀ node, after.nodeAt child = some node → node.isExposed = false
+  frozen : GeneralRangeMapState.Every
+    (fun row => ∀ state, row.perms.get child = some state → state.permission = .Frozen) after.locations
+  extent : (∀ segment ∈ inside.iterAll.toList, segment.range.stop.toNat ≤ length.bytes.toNat) →
+    RetagReleaseFootprint.MaterializedWithin after child offset.bytes (offset.bytes + length.bytes) ∧
+      RetagReleaseFootprint.VacantRows after
+  unique : (∀ index node, original.nodeAt index = some node → node.tag ≠ tag) →
+    ∀ index node, after.nodeAt index = some node → node.tag = tag → index = child
+  holder : ∀ (source : UniIndex) (oldTags newTags : ProtectedTags),
+    (∃ node, read.nodeAt source = some node) → newTags.contains tag = false →
+    (∀ index node, read.nodeAt index = some node → newTags.contains node.tag = oldTags.contains node.tag) →
+    OwnedOn (fun row => LocationRights read row oldTags source) offset.bytes (offset.bytes + length.bytes) read.locations →
+      OwnedOn (fun row => LocationRights after row newTags source) offset.bytes (offset.bytes + length.bytes) after.locations
+
+private theorem under_read (original read : BorrowTree) (source index : UniIndex)
+    (same : read = {original with locations := read.locations}) :
+    Ancestor read index source ↔ Ancestor original index source := by
+  rw [same]
+  constructor
+  · intro path
+    induction path with
+    | self => exact .self _
+    | parent _ data found edge ih => exact .parent ih data found edge
+  · intro path
+    induction path with
+    | self => exact .self _
+    | parent _ data found edge ih => exact .parent ih data found edge
+
+/-- Shared construction extends the old ancestor chain and leaves prior
+unprotected intermediates unprotected under the eventual release map. -/
+theorem SharedChildFrame.releaseLineage {original read after : BorrowTree}
+    {parent child holder : UniIndex} {tag : BorTag} {offset length : Size} {inside : DedupRangeMap LocationState}
+    (frame : SharedChildFrame original read after parent child tag offset length inside)
+    (holderPresent : ∃ node, original.nodeAt holder = some node)
+    (chain : Ancestor original holder parent)
+    (newTag : ∀ node, after.nodeAt child = some node → node.tag = tag)
+    (tags : ProtectedTags)
+    (unheld : ∀ index node, original.nodeAt index = some node →
+      Ancestor original index parent → ¬ Ancestor original index holder →
+        (tags.remove tag).contains node.tag = false) :
+    Ancestor after holder child ∧ holder ≠ child ∧
+      ∀ index node, after.nodeAt index = some node →
+        Ancestor after index child → ¬ Ancestor after index holder →
+          (tags.remove tag).contains node.tag = false := by
+  have holderOld : ∃ node, read.nodeAt holder = some node := by
+    rw [frame.readMetadata]
+    exact holderPresent
+  have distinct : holder ≠ child := by
+    intro same
+    obtain ⟨node, found⟩ := holderOld
+    rw [same, frame.attached.fresh] at found
+    contradiction
+  have linked : Ancestor read holder parent := (under_read original read parent holder frame.readMetadata).mpr chain
+  refine ⟨frame.attached.ancestry.mpr (.inr linked), distinct, ?_⟩
+  intro index node found lineage foreign
+  rcases frame.attached.ancestry.mp lineage with fresh | previous
+  · subst index
+    simp [newTag node found, ProtectedTags.contains]
+  · by_cases same : index = child
+    · subst index
+      simp [newTag node found, ProtectedTags.contains]
+    obtain ⟨data, present, sameTag, _⟩ := frame.olderNodes index node same found
+    have oldParent := (under_read original read parent index frame.readMetadata).mp previous
+    have oldForeign : ¬ Ancestor original index holder := by
+      intro old
+      have readPath := (under_read original read holder index frame.readMetadata).mpr old
+      have retained := (SharedRelease.holder_ancestry frame.attached distinct).2 readPath
+      exact foreign retained
+    rw [← sameTag]
+    exact unheld index data present oldParent oldForeign
+
+private theorem ownership_from_bytes (table : DedupRangeMap LocationTree)
+    (lower upper : UInt64) (well : table.WellFormed) (property : LocationTree → Prop)
+    (owned : ∀ point : UInt64, lower.toNat ≤ point.toNat → point.toNat < upper.toNat →
+      ∀ row, ValueAt table point row → property row) :
+    OwnedOn property lower upper table := by
+  intro position inside positive start stop
+  let entry := table.entries[position]
+  have nonempty : table.entries.size ≠ 0 := by omega
+  simp only [DedupRangeMap.WellFormed, nonempty, ↓reduceDIte] at well
+  have nonsingle : entry.range.start.toNat < entry.range.stop.toNat :=
+    UInt64.lt_iff_toNat_lt.mp (well.2.1 position inside)
+  let point := if lower.toNat ≤ entry.range.start.toNat then entry.range.start else lower
+  change entry.range.start.toNat < upper.toNat at start
+  change lower.toNat < entry.range.stop.toNat at stop
+  have left : lower.toNat ≤ point.toNat := by unfold point; split <;> omega
+  have right : point.toNat < upper.toNat := by unfold point; split <;> omega
+  have inRow : ValueAt table point entry.data := by
+    refine ⟨position, inside, ?_, ?_, rfl⟩
+    · change entry.range.start.toNat ≤ point.toNat
+      unfold point
+      split <;> omega
+    · change point.toNat < entry.range.stop.toNat
+      unfold point
+      split <;> omega
+  exact owned point left right entry.data inRow
+
+/-- Use the exact installed shared child and its footprint to release protection
+and restore the earlier holder's write grants over the same initialized region. -/
+theorem SharedChildFrame.releaseHolder {original read after : BorrowTree}
+    {parent child holder root : UniIndex} {tag : BorTag} {offset length : Size}
+    {inside : DedupRangeMap LocationState}
+    (frame : SharedChildFrame original read after parent child tag offset length inside)
+    (tags : ProtectedTags) (coherent : CoherentForest after) (roots : after.roots = #[root])
+    (selected : after.indexOfTag tag = some child)
+    (node : TreeNode) (stored : after.nodeAt child = some node) (tagged : node.tag = tag)
+    (holderPresent : ∃ data, original.nodeAt holder = some data)
+    (chain : Ancestor original holder parent)
+    (unheld : ∀ index data, original.nodeAt index = some data →
+      Ancestor original index parent → ¬ Ancestor original index holder →
+        (tags.remove tag).contains data.tag = false)
+    (fresh : ∀ index data, original.nodeAt index = some data → data.tag ≠ tag)
+    (extent : ∀ segment ∈ inside.iterAll.toList, segment.range.stop.toNat ≤ length.bytes.toNat)
+    (readRights : ∀ point : UInt64, offset.bytes.toNat ≤ point.toNat →
+      point.toNat < (offset.bytes + length.bytes).toNat →
+      ∀ row, ValueAt after.locations point row → LocationAccessRights after row tags child .Read)
+    (holderRights : OwnedOn (fun row => LocationRights read row (tags.remove tag) holder) offset.bytes
+      (offset.bytes + length.bytes) read.locations) :
+    ∃ finished, finished = {after with locations := finished.locations} ∧ CoherentForest finished ∧
+      finished.locations.size = after.locations.size ∧
+      OwnedOn (fun row => LocationRights finished row (tags.remove tag) holder)
+        offset.bytes (offset.bytes + length.bytes) finished.locations ∧
+      ∀ post failure, Miri.Verification.ProtectorReleaseWP.releasePre tag tags post failure after ↔ post finished := by
+  have oldHolder : ∃ data, read.nodeAt holder = some data := by
+    rw [frame.readMetadata]
+    exact holderPresent
+  obtain ⟨parentNode, parentMem⟩ := oldHolder
+  obtain ⟨holderNode, holderKnown, _⟩ := frame.attached.oldEdges holder parentNode parentMem
+  have installedTag : ∀ data, after.nodeAt child = some data → data.tag = tag := by
+    intro data found
+    have same := Option.some.inj (found.symm.trans stored)
+    simpa only [same] using tagged
+  obtain ⟨path, distinct, intermediate⟩ := frame.releaseLineage holderPresent chain installedTag tags unheld
+  obtain ⟨rangeFrame, vacancy⟩ := frame.extent extent
+  have writable := frame.holder holder (tags.remove tag) (tags.remove tag) ⟨parentNode, parentMem⟩
+    (by simp [ProtectedTags.contains]) (fun _ _ _ => rfl) holderRights
+  have readable := ownership_from_bytes after.locations offset.bytes (offset.bytes + length.bytes)
+    coherent.ranges _ readRights
+  exact SharedRelease.release_retains_holder after tags tag child holder root node holderNode
+    stored (frame.unexposed node stored) holderKnown selected path distinct intermediate (frame.unique fresh)
+    coherent roots offset.bytes (offset.bytes + length.bytes) rangeFrame vacancy frame.frozen readable writable
+
+theorem concrete_shared_readable_reborrow_with_frame
     (tree : BorrowTree) (protectors : ProtectedTags)
     (parentTag tag : BorTag) (parent root : UniIndex)
     (offset length : Size) (inside : DedupRangeMap LocationState) (held : Bool)
@@ -87,6 +242,7 @@ theorem concrete_shared_readable_reborrow
       ∃ child, result.tree.indexOfTag tag = some child ∧
         (∃ node, result.tree.nodeAt child = some node ∧
           node.tag = tag ∧ node.parent = some parent ∧ node.defaultInitialPermission = .Frozen) ∧
+        SharedChildFrame tree read.tree result.tree parent child tag offset length inside ∧
         ∀ point : UInt64, offset.bytes.toNat ≤ point.toNat →
           point.toNat < (offset.bytes + length.bytes).toNat →
           ∀ location, ValueAt result.tree.locations point location →
@@ -163,7 +319,7 @@ theorem concrete_shared_readable_reborrow
     .Frozen held selected readFound parentNode readHead vacant complete child
   have childStored : ∃ node, result.tree.nodeAt child = some node ∧
       node.tag = tag ∧ node.parent = some parent ∧ node.defaultInitialPermission = .Frozen := by
-    simp only [ite_eq_left rfl] at metadata
+    rw [ite_eq_left (Eq.refl child)] at metadata
     change nodeMetadata result.tree child = some (tag, some parent, .Frozen) at metadata
     unfold nodeMetadata at metadata
     cases found : result.tree.nodeAt child with
@@ -202,7 +358,7 @@ theorem concrete_shared_readable_reborrow
     intro index node other found
     have same := metadataBefore index
     change nodeMetadata result.tree index = _ at same
-    simp only [if_neg other] at same
+    simp only [ite_eq_right other] at same
     unfold nodeMetadata at same
     simp only [found, Option.map_some] at same
     cases prior : read.tree.nodeAt index with
@@ -211,8 +367,44 @@ theorem concrete_shared_readable_reborrow
       simp only [prior, Option.map_some] at same
       have values := Option.some.inj same
       exact ⟨previous, rfl, (congrArg Prod.fst values).symm, congrArg (fun v => v.2.2) values⟩
+  have footprint : SharedChildFrame tree read.tree result.tree parent child tag offset length inside := by
+    refine ⟨frame, attachment, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · intro index data distinct found
+      obtain ⟨previous, existsBefore, tag, permission⟩ := oldNodes index data distinct found
+      exact ⟨previous, by
+        unfold BorrowTree.nodeAt at existsBefore
+        rwa [sameNodes] at existsBefore, tag, permission⟩
+    · exact newChild_initial_unexposed read.tree offset parentTag tag parent child mapping inside .Frozen held .Read
+        rfl rfl rfl selected readFound parentNode readHead vacant complete
+    · intro position bounded state stored
+      have hasRows : result.tree.locations.entries.size ≠ 0 := by omega
+      have geometry := frameWith.2.1
+      change result.tree.locations.WellFormed at geometry
+      simp only [DedupRangeMap.WellFormed, hasRows, ↓reduceDIte] at geometry
+      let point := result.tree.locations.entries[position].range.start
+      exact ((frameWith.2.2 point position bounded (UInt64.le_iff_toNat_le.mpr (Nat.le_refl _))
+        (geometry.2.1 position bounded)).2 state stored).1
+    · intro extent
+      exact RetagReleaseFootprint.materialized_and_vacant read.tree offset length parentTag tag parent child
+        parentNode mapping inside .Frozen held readCoherent selected readFound readHead vacant
+        (fun index empty position valid => cleanAll position valid index empty) (by rw [readSize]; exact bounds)
+        (fun segment member => ⟨(span segment member).1, extent segment member⟩) complete
+    · intro fresh index node stored hasTag
+      by_cases equal : index = child
+      · exact equal
+      exfalso
+      have different := equal
+      obtain ⟨prior, priorFound, sameTag, _⟩ := oldNodes index node different stored
+      have originalFound : tree.nodeAt index = some prior := by
+        unfold BorrowTree.nodeAt at priorFound
+        rwa [sameNodes] at priorFound
+      exact fresh index prior originalFound (sameTag.trans hasTag)
+    · intro source oldTags newTags holderPresent freshUnheld retained owns
+      exact SharedRelease.retained_holder_after_shared_child read.tree offset parentTag tag parent child source
+        parentNode mapping inside held readCoherent selected readFound readHead vacant holderPresent complete frameWith
+        oldTags newTags freshUnheld retained offset.bytes (offset.bytes + length.bytes) owns
   refine ⟨readOk, complete, frameWith.1.trans readSize, coherentAfter, sameRoots.trans
-    ((congrArg BorrowTree.roots frame).trans roots), child, key, childStored, ?_⟩
+    ((congrArg BorrowTree.roots frame).trans roots), child, key, childStored, footprint, ?_⟩
   intro point lower upper location indexed
   obtain ⟨pos, valid, start, stop, selectedLocation⟩ := indexed
   have pointFrame := frameWith.2.2 point pos valid
@@ -227,6 +419,46 @@ theorem concrete_shared_readable_reborrow
     subst node
     exact ⟨tagged, defPermission⟩
   · exact oldNodes
+
+theorem concrete_shared_readable_reborrow
+    (tree : BorrowTree) (protectors : ProtectedTags)
+    (parentTag tag : BorTag) (parent root : UniIndex)
+    (offset length : Size) (inside : DedupRangeMap LocationState) (held : Bool)
+    (coherent : CoherentForest tree) (parentNode : TreeNode)
+    (parentStored : tree.nodeAt parent = some parentNode)
+    (roots : tree.roots = #[root]) (parentFound : tree.indexOfTag parentTag = some parent)
+    (depth : BorrowTree.ZeroProtection.ParentDepth tree.nodes) (rank : depth.depth parent < tree.nodes.size)
+    (tagFresh : tree.indexOfTag tag = none)
+    (room : tree.tagMapping.deassigned.back? = none → tree.tagMapping.mapping.size ≤ 4294967295)
+    (aligned : tree.tagMapping.deassigned.back? = none → tree.tagMapping.mapping.size = tree.nodes.size)
+    (reuse : ∀ index, tree.tagMapping.deassigned.back? = some index →
+      index.toNat < tree.nodes.size ∧ tree.nodeAt index = none)
+    (clean : ∀ index, tree.nodeAt index = none →
+      ∀ position (valid : position < tree.locations.entries.size),
+        tree.locations.entries[position].data.perms.get index = none)
+    (span : ∀ segment ∈ inside.iterAll.toList, segment.range.start ≤ segment.range.stop ∧
+      offset.bytes.toNat + segment.range.stop.toNat ≤ tree.locations.size.bytes.toNat)
+    (frozen : ∀ segment ∈ inside.iterAll.toList, segment.data = sharedState)
+    (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
+    (owners : OwnedOn (fun location => LocationAccessRights tree location protectors parent .Read)
+      offset.bytes (offset.bytes + length.bytes) tree.locations) :
+    let read := tree.performNormalAccessRange parentTag offset length .Read protectors .VisitChildrenOfAccessed
+    let result := read.tree.newChild offset (.concrete parentTag) tag inside .Frozen held
+    read.status = .Completed ∧ result.outcome = .ok () ∧
+      result.tree.locations.size = tree.locations.size ∧
+      CoherentForest result.tree ∧ result.tree.roots = #[root] ∧
+      ∃ child, result.tree.indexOfTag tag = some child ∧
+        (∃ node, result.tree.nodeAt child = some node ∧
+          node.tag = tag ∧ node.parent = some parent ∧ node.defaultInitialPermission = .Frozen) ∧
+        ∀ point : UInt64, offset.bytes.toNat ≤ point.toNat →
+          point.toNat < (offset.bytes + length.bytes).toNat →
+          ∀ location, ValueAt result.tree.locations point location →
+            LocationAccessRights result.tree location protectors child .Read := by
+  obtain ⟨readOk, done, capacity, forest, rootsAfter, child, key, stored, _, rights⟩ :=
+    concrete_shared_readable_reborrow_with_frame tree protectors parentTag tag parent root offset length
+      inside held coherent parentNode parentStored roots parentFound depth rank tagFresh room aligned reuse clean
+      span frozen bounds owners
+  exact ⟨readOk, done, capacity, forest, rootsAfter, child, key, stored, rights⟩
 
 #print axioms concrete_shared_readable_reborrow
 end DuplicatePrefix.ArchiveForestProjection
