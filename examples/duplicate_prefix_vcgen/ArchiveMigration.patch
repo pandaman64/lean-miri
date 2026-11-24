@@ -5096,3 +5096,92 @@
 @@ -38 +38 @@
 -    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false)
 +    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false)
+--- a/examples/duplicate_prefix/GeneralBorrowReadFrozen.lean
++++ b/examples/duplicate_prefix/GeneralBorrowReadFrozen.lean
+@@ -84,7 +84,5 @@
+-  have final := events_frozen
+-    ((source_normal_projection tree location protections).topology.traverse source.toNat mode
+-      (sourceNormalSkipped (source_normal_projection tree location protections) .Read)).2
+-    ((source_normal_projection tree location protections).topology.traverse source.toNat mode
+-      (sourceNormalSkipped (source_normal_projection tree location protections) .Read)).1
+-    (source_normal_projection tree location protections) query.toNat projected
+-  change StoredFrozen ((source_normal_projection tree location protections).performAccess source.toNat .Read mode).tree query.toNat at final
++  let projection := source_normal_projection tree location protections
++  have final : StoredFrozen (projection.performAccess source.toNat .Read mode).tree query.toNat := by
++    rw [performAccess_as_schedule]
++    let schedule := projection.topology.traverse source.toNat mode (sourceNormalSkipped projection .Read)
++    exact events_frozen schedule.2 schedule.1 projection query.toNat projected
+@@ -101,0 +100 @@
++  dsimp only [projection] at row
+--- a/examples/duplicate_prefix/GeneralBorrowReadNoopCache.lean
++++ b/examples/duplicate_prefix/GeneralBorrowReadNoopCache.lean
+@@ -87,9 +87,7 @@
+-  have visited := GeneralBorrowStorage.events_visited
+-    ((source_normal_projection tree location protections).topology.traverse anchor.toNat mode
+-      (sourceNormalSkipped (source_normal_projection tree location protections) .Read)).2
+-    ((source_normal_projection tree location protections).topology.traverse anchor.toNat mode
+-      (sourceNormalSkipped (source_normal_projection tree location protections) .Read)).1
+-    .Read (source_normal_projection tree location protections) completed
+-  change ((source_normal_projection tree location protections).performAccess anchor.toNat .Read mode).visited =
+-    ((source_normal_projection tree location protections).topology.traverse anchor.toNat mode
+-      (sourceNormalSkipped (source_normal_projection tree location protections) .Read)).2 at visited
++  let projection := source_normal_projection tree location protections
++  have visited : (projection.performAccess anchor.toNat .Read mode).visited =
++      (projection.topology.traverse anchor.toNat mode (sourceNormalSkipped projection .Read)).2 := by
++    rw [GeneralBorrowEvents.performAccess_as_schedule]
++    rw [GeneralBorrowEvents.performAccess_as_schedule] at completed
++    let schedule := projection.topology.traverse anchor.toNat mode (sourceNormalSkipped projection .Read)
++    exact GeneralBorrowStorage.events_visited schedule.2 schedule.1 .Read projection completed
+--- a/examples/duplicate_prefix/GeneralBorrowSharedProfileRead.lean
++++ b/examples/duplicate_prefix/GeneralBorrowSharedProfileRead.lean
+@@ -71,7 +71,5 @@
+-  have final := events_exact expected
+-    ((source_normal_projection tree location protections).topology.traverse source.toNat mode
+-      (sourceNormalSkipped (source_normal_projection tree location protections) .Read)).2
+-    ((source_normal_projection tree location protections).topology.traverse source.toNat mode
+-      (sourceNormalSkipped (source_normal_projection tree location protections) .Read)).1
+-    (source_normal_projection tree location protections) query.toNat projected localEvents
+-  change StoredExact ((source_normal_projection tree location protections).performAccess source.toNat .Read mode).tree query.toNat expected at final
++  let projection := source_normal_projection tree location protections
++  have final : StoredExact (projection.performAccess source.toNat .Read mode).tree query.toNat expected := by
++    rw [performAccess_as_schedule]
++    let schedule := projection.topology.traverse source.toNat mode (sourceNormalSkipped projection .Read)
++    exact events_exact expected schedule.2 schedule.1 projection query.toNat projected localEvents
+--- a/examples/duplicate_prefix/GeneralBorrowTwoRootNormalAccess.lean
++++ b/examples/duplicate_prefix/GeneralBorrowTwoRootNormalAccess.lean
+@@ -32,2 +31,0 @@
+-  change ((source_normal_projection tree location protections).performAccess anchor.toNat kind mode).tree.locationStates[query.toNat]? =
+-      (source_normal_projection tree location protections).locationStates[query.toNat]? at unvisited
+@@ -42 +40 @@
+-  · rw [unvisited]
++  · rw [GeneralBorrowEvents.performAccess_as_schedule, unvisited]
+@@ -78,4 +76,5 @@
+-    kind (source_normal_projection tree location protections) normalGood.1
+-  change ((source_normal_projection tree location protections).performAccess anchor.toNat kind .VisitChildrenOfAccessed).visited =
+-    ((source_normal_projection tree location protections).topology.traverse anchor.toNat .VisitChildrenOfAccessed
+-      (sourceNormalSkipped (source_normal_projection tree location protections) kind)).2 at visited
++    kind (source_normal_projection tree location protections) (by
++      have status : ((source_normal_projection tree location protections).performAccess
++          anchor.toNat kind .VisitChildrenOfAccessed).status = .Completed := normalGood.1
++      rw [GeneralBorrowEvents.performAccess_as_schedule] at status
++      exact status)
+@@ -87 +86 @@
+-      rw [visited];exact member
++      rw [GeneralBorrowEvents.performAccess_as_schedule, visited];exact member
+--- a/examples/duplicate_prefix/AsMutPtrRelease.lean
++++ b/examples/duplicate_prefix/AsMutPtrRelease.lean
+@@ -17 +17 @@
+-    (present : memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : memory.live[id]? = some entry)
+--- a/examples/duplicate_prefix/GeneralBorrowFreshActiveOnClean.lean
++++ b/examples/duplicate_prefix/GeneralBorrowFreshActiveOnClean.lean
+@@ -86 +86,3 @@
+-    same.2.2.2.trans (projection_sizes tree location protections).1
++    by
++      rw [GeneralBorrowEvents.performAccess_as_schedule]
++      exact same.2.2.2.trans (projection_sizes tree location protections).1
+@@ -115,3 +117 @@
+-  change ((((source_normal_projection tree location protections).performAccess anchor.toNat kind mode).tree.locationStates[query.toNat]?).getD none) = none
+-  change (((source_normal_projection tree location protections).performAccess anchor.toNat kind mode).tree.locationStates[query.toNat]?) =
+-    (source_normal_projection tree location protections).locationStates[query.toNat]? at unchanged
++  rw [GeneralBorrowEvents.performAccess_as_schedule]
