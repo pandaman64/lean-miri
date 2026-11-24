@@ -218,6 +218,10 @@ The `LanguageGuardCurrent*` archive modules check the retained implementation
 of the language-UB check helper in individual steps.
 `--target PointerAddCurrentGuardTail` checks the selected current pointer-add
 guard suffix. These targets use the standalone example's prebuilt local imports.
+`--target PointerAddCurrentComplete` verifies the retained pointer-add helper
+from its prepared basic block 6 through the exact caller return and pointer
+result. `PointerAddGuardBoundary` connects a separately established guard
+prefix to that proof.
 
 ```sh
 LEAN_PATH="$PWD/scratch/duplicate-prefix-vcgen" \

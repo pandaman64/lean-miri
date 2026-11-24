@@ -4436,3 +4436,145 @@
 -  for name in #[``DuplicatePrefix.MetadataCallQueries.resolve_current, ``DuplicatePrefix.MetadataCallQueries.function_signature_query, ``DuplicatePrefix.MetadataCallQueries.function_kind] do
 +  for name in #[``DuplicatePrefix.MetadataCallQueries.resolve_current, ``DuplicatePrefix.MetadataCallQueries.functionLayout_query,
 +      ``DuplicatePrefix.MetadataCallQueries.function_signature_query, ``DuplicatePrefix.MetadataCallQueries.function_kind] do
+--- a/examples/duplicate_prefix/TupleCandidates.lean
++++ b/examples/duplicate_prefix/TupleCandidates.lean
+@@ -26 +26 @@
+-theorem actual_candidates : candidates RootMetadataQueries.context.runtime.source.types #[5,0] = .ok #[100] := by
++theorem actual_candidates : candidates RootMetadataQueries.context.runtime.source.types #[4,0] = .ok #[86] := by
+--- a/examples/duplicate_prefix/RootOffsetQueries.lean
++++ b/examples/duplicate_prefix/RootOffsetQueries.lean
+@@ -1,0 +2,2 @@
++import duplicate_prefix.RootScalarQueries
++import duplicate_prefix.CanonicalConfigFacts
+@@ -4,2 +6,2 @@
+-set_option maxRecDepth 16384
+-set_option maxHeartbeats 4000000
++set_option maxRecDepth 1000000
++set_option maxHeartbeats 16000000
+@@ -7,0 +10 @@
++set_option linter.unusedSimpArgs false
+@@ -14,0 +18,106 @@
++open Lean Elab in
++elab "full_scalar_at" : term => do
++  let candidates := (← getEnv).constants.toList.filterMap fun (name, _) =>
++    if name.toString.endsWith ".ConcreteTypeLayout.fullScalar" then some name else none
++  match candidates with
++  | [name] => return mkConst name
++  | _ => throwError "expected exact concrete layout fullScalar"
++
++open Lean Elab in
++elab "integer_at" : term => do
++  let candidates := (← getEnv).constants.toList.filterMap fun (name, _) =>
++    if name.toString.endsWith ".ConcreteTypeLayout.integer" then some name else none
++  match candidates with
++  | [name] => return mkConst name
++  | _ => throwError "expected exact concrete layout integer"
++
++private def usizeScalar : Scalar :=
++  .Initialized (value := .Int .I64 false) (validRange := ⟨0, 18446744073709551615⟩)
++
++private theorem usizeFull :
++    full_scalar_at PreparedReflection.actual.runtime.target (.Int .I64 false) = .ok usizeScalar := rfl
++private theorem mapErrorOk (f : Error → Error') (value : Value) :
++    (Except.ok value : Except Error Value).mapError f = .ok value := rfl
++
++private theorem usizeInteger :
++    integer_at PreparedReflection.actual.runtime.target .usize = .ok .I64 := rfl
++private theorem usizeConcrete :
++    ConcreteLayout.scalarLayout PreparedReflection.actual.runtime.target usizeScalar =
++      .ok RootCompilerFacts.usizeLayout.layout := rfl
++private theorem boolConcrete :
++    ConcreteLayout.scalarLayout PreparedReflection.actual.runtime.target
++      (.Initialized (value := .Int .I8 false) (validRange := ⟨0,1⟩)) =
++      .ok RootCompilerFacts.boolLayout.layout := rfl
++
++private theorem calcSupported :
++    (ConcreteTypeLayout.calculate PreparedReflection.actual.runtime.source
++      PreparedReflection.actual.runtime.target 86).isOk = true := by
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have row86 : PreparedReflection.actual.runtime.source.types[86]? =
++      some PreparedReflection.actual.runtime.source.types[86] := rfl
++  have norm86 : PreparedReflection.actual.runtime.source.types[86].sourceLayout.normalizedType = 86 := rfl
++  have shape86 : PreparedReflection.actual.runtime.source.types[86].shape = .tuple #[4,0] := rfl
++  have plain86 : PreparedReflection.actual.runtime.source.types[86].sourceLayout.specialFloat = none := rfl
++  have notX87_86 : PreparedReflection.actual.runtime.source.types[86].sourceLayout.isX87F80 = false := rfl
++  have row4 : PreparedReflection.actual.runtime.source.types[4]? =
++      some PreparedReflection.actual.runtime.source.types[4] := rfl
++  have norm4 : PreparedReflection.actual.runtime.source.types[4].sourceLayout.normalizedType = 4 := rfl
++  have shape4 : PreparedReflection.actual.runtime.source.types[4].shape = .uint (.known .usize) := rfl
++  have plain4 : PreparedReflection.actual.runtime.source.types[4].sourceLayout.specialFloat = none := rfl
++  have notX87_4 : PreparedReflection.actual.runtime.source.types[4].sourceLayout.isX87F80 = false := rfl
++  have row0 : PreparedReflection.actual.runtime.source.types[0]? =
++      some PreparedReflection.actual.runtime.source.types[0] := rfl
++  have norm0 : PreparedReflection.actual.runtime.source.types[0].sourceLayout.normalizedType = 0 := rfl
++  have shape0 : PreparedReflection.actual.runtime.source.types[0].shape = .bool := rfl
++  have plain0 : PreparedReflection.actual.runtime.source.types[0].sourceLayout.specialFloat = none := rfl
++  have notX87_0 : PreparedReflection.actual.runtime.source.types[0].sourceLayout.isX87F80 = false := rfl
++  have typeCount : PreparedReflection.actual.runtime.source.types.size = 194 := rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet, StateT.map,
++    modify, modifyGet, MonadStateOf.modifyGet, Bind.bind, Pure.pure, Except.bind, Except.pure,
++    MonadStateOf.get, getThe, liftM, monadLift, Except.toOption, get, MonadLift.monadLift,
++    Except.map, Functor.map, Std.HashMap.getElem?_empty, Array.mapM_eq_mapM_toList, List.mapM,
++    List.mapM.loop, typeCount, Std.HashMap.getElem?_insert, mapErrorOk,
++    row86, norm86, shape86, plain86, notX87_86]
++  repeat' first
++    | (rw [ConcreteTypeLayout.calculate.go.eq_2]
++       try unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++       simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet, StateT.map,
++         modify, modifyGet, MonadStateOf.modifyGet, Bind.bind, Pure.pure, Except.bind, Except.pure,
++         MonadStateOf.get, getThe, liftM, monadLift, Except.toOption, get, MonadLift.monadLift,
++         Except.map, Functor.map, Std.HashMap.getElem?_empty, Array.mapM_eq_mapM_toList, List.mapM,
++         List.mapM.loop, typeCount, Std.HashMap.getElem?_insert, mapErrorOk,
++         row4, norm4, shape4, plain4, notX87_4, row0, norm0, shape0, plain0, notX87_0,
++         usizeInteger, usizeFull, usizeConcrete, boolConcrete])
++  have tupleOk : (ConcreteLayout.univariant PreparedReflection.actual.runtime.target
++      ⟨none,none,none,0,none,0⟩ #[RootCompilerFacts.usizeLayout.layout,RootCompilerFacts.boolLayout.layout]
++      .maybeUnsized).isOk = true := by
++    unfold ConcreteLayout.univariant
++    unfold_internal ".ConcreteLayout.univariantBiased"
++    cbv
++  unfold_internal ".ConcreteTypeLayout.defaultRepr"
++  generalize h : ConcreteLayout.univariant PreparedReflection.actual.runtime.target
++      ⟨none,none,none,0,none,0⟩ #[RootCompilerFacts.usizeLayout.layout,RootCompilerFacts.boolLayout.layout]
++      .maybeUnsized = result at tupleOk ⊢
++  cases result <;> simp_all [Except.isOk, Except.toBool]
++
++private theorem lookupSupported : (RuntimeMetadata.lookup RootMetadataQueries.context.runtime 86).isOk = true := by
++  change (PreparedReflection.actual.runtime.lookup 86).isOk = true
++  rw [RuntimeMetadata.lookup]
++  have node : PreparedReflection.actual.runtime.node 86 =
++      .ok PreparedReflection.actual.runtime.source.types[86] := rfl
++  have norm : PreparedReflection.actual.runtime.source.types[86].sourceLayout.normalizedType = 86 := rfl
++  rw [node]
++  simp only [bind, Bind.bind, Except.bind, norm]
++  generalize h : ConcreteTypeLayout.calculate PreparedReflection.actual.runtime.source
++    PreparedReflection.actual.runtime.target 86 = r
++  have valid := calcSupported
++  rw [h] at valid
++  cases r <;> simp_all [Except.isOk, Except.toBool, mapErrorOk, Pure.pure, Except.pure]
++
++
++private def checkedOk {Error Value : Type} : (result : Except Error Value) → result.isOk = true → Value
++  | .ok value, _ => value
++  | .error _, impossible => False.elim (by cases impossible)
++
+@@ -16 +125 @@
+-  (PreparedReflection.actual.layoutResults[100]'(by decide +kernel)).toOption.getD RootCompilerFacts.usizeLayout
++  checkedOk (RuntimeMetadata.lookup RootMetadataQueries.context.runtime 86) lookupSupported
+@@ -18,2 +127,9 @@
+-theorem overflow_lookup : RuntimeMetadata.lookup RootMetadataQueries.context.runtime 100 = .ok overflowLayout := by
+-  with_unfolding_all rfl
++private theorem checkedOk_eq {Error Value : Type}
++    (result : Except Error Value) (supported : result.isOk = true) :
++    result = .ok (checkedOk result supported) := by
++  cases result with
++  | ok value => rfl
++  | error reason => cases supported
++
++theorem overflow_lookup : RuntimeMetadata.lookup RootMetadataQueries.context.runtime 86 = .ok overflowLayout :=
++  checkedOk_eq _ lookupSupported
+@@ -30 +146 @@
+-  have usizety : RootCompilerFacts.usizeLayout.ty = 5 := by with_unfolding_all rfl
++  have usizety : RootCompilerFacts.usizeLayout.ty = 4 := by with_unfolding_all rfl
