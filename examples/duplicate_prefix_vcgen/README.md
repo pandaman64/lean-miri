@@ -187,7 +187,9 @@ block 2 to the shared-slice length preparation, preserving the live pointer
 and machine state. `--target RootCurrentDecision` checks the downstream
 comparison and branch from its prepared live length and count locals.
 `--target RootMutPreparation` checks the statements that lead to mutable
-slice preparation on the accepted path. `--target PtrMetadataExecution`
+slice preparation on the accepted path. `AsMutRootRoundtrip` checks the
+actual root call to `as_mut_ptr` and return to the caller's pointer slot,
+deriving the retained raw-pointer rights under its structural premises. `--target PtrMetadataExecution`
 checks the retained pointer-metadata helper's local copy and metadata write.
 `SliceLenPrefix`, `PtrMetadataComplete`, and `LenReturn` separately check
 the length helper's preparation, actual metadata result, and return under

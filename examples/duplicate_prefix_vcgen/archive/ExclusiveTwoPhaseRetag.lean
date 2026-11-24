@@ -145,6 +145,7 @@ theorem reborrow_exclusive [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budge
         some {entry with allocation := entry.allocation.setExtra tree} ∧
       after.machine.borrowTracker = some borrow ∧ after.stack = logged.stack ∧
       after.machine.user = logged.machine.user ∧ after.machine.dataRace = logged.machine.dataRace ∧
+      after.machine.threads = logged.machine.threads ∧
       tree.locations.size = entry.allocation.extra.locations.size ∧ CoherentForest tree ∧ tree.roots = #[root] ∧
       tree.indexOfTag tag = some child ∧
       (∃ node, tree.nodeAt child = some node ∧ node.tag = tag) ∧
@@ -180,7 +181,7 @@ theorem reborrow_exclusive [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budge
     before pointed resolved logged initial entry borrow .Read check resolve log rfl tracked live mutable
     imprecise freeze rfl rfl nonempty ensure raceOff readOk childOk
   exact ⟨after, child.tree, index, actual, withTree_live raced location.allocId updated child.tree,
-    tracked, rfl, rfl, rfl, capacity, well, stillRoot, key, node, owned⟩
+    tracked, rfl, rfl, rfl, rfl, capacity, well, stillRoot, key, node, owned⟩
 
 end DuplicatePrefix.ExclusiveTwoPhaseRetag
 

@@ -77,11 +77,19 @@ theorem assigned
       ExecutionMachine.step cfg limits () (Storage.withCurrent older frame machine) =
         (Storage.withCurrent older afterFrame afterMachine, .ok true) ∧
       afterFrame.location = .mir ⟨6,8⟩ ∧
-      afterFrame.locals[16]?.map (·.value) = some (.live (.immediate newValue)) ∧
-      ∃ next : InitializedRegion (Storage.withCurrent older afterFrame afterMachine) length,
+      afterFrame.locals[16]? = some ⟨.live (.immediate newValue),some RootCompilerFacts.sliceLayout⟩ ∧
+      afterFrame.body = frame.body ∧ afterFrame.bodyIdentity = frame.bodyIdentity ∧
+      afterFrame.functionInstance = frame.functionInstance ∧ afterFrame.extra = frame.extra ∧
+      afterFrame.locals.size = frame.locals.size ∧
+      (∀ id, id ≠ 16 → afterFrame.locals[id]? = frame.locals[id]?) ∧
+      afterMachine.user = machine.user ∧ afterMachine.dataRace = machine.dataRace ∧
+      afterMachine.threads = machine.threads ∧
+      ∃ (next : InitializedRegion (Storage.withCurrent older afterFrame afterMachine) length)
+        (right : ExclusiveRegion (Storage.withCurrent older afterFrame afterMachine) length next newTag),
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
         next.entry.allocation.extra.roots = #[root] ∧
-        Nonempty (ExclusiveRegion (Storage.withCurrent older afterFrame afterMachine) length next newTag) := by
+        next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
+        right.tracker.retagMode = loan.tracker.retagMode := by
   intro cfg oldPointer oldValue newTag newPointer newValue arg
   let innerCfg := PreparedContracts.actualConfig options () remaining span
   have sameTarget : cfg.access.runtime = innerCfg.access.runtime := by
@@ -101,7 +109,7 @@ theorem assigned
   let activeTracker := {loan.tracker with retagMode := .TwoPhase}
   let activeLoan : ExclusiveRegion active length activeStorage parentTag :=
     {loan with tracker := activeTracker, tracked := rfl}
-  obtain ⟨effect, retagged, stack, user, race, next, idEq, offsetEq, roots, ⟨rights⟩⟩ :=
+  obtain ⟨effect, retagged, stack, user, race, threads, next, rights, idEq, offsetEq, roots, nextSize, _⟩ :=
     CurrentTwoPhaseStructural.retag options remaining span sizeFuel sizeBudget preciseOff implicitOff
       RootCompilerFacts.sliceLayout referenceTy active length base parentTag activeStorage activeLoan rfl
       address positive bounded tagRoom noRace root capacity extent cmp metadata noAlias
@@ -141,13 +149,29 @@ theorem assigned
   let finalFrame := {written with location := FrameLocation.mir ⟨6,8⟩}
   let finalMachine := restoreMachine restored loan.tracker rights.tracker
   let final := Storage.withCurrent older finalFrame finalMachine
-  refine ⟨finalFrame,finalMachine,exactStep,rfl,?_,?_⟩
-  · simp [finalFrame,written,CurrentReferenceLocalWrite.written, storedSize]
+  have originalUser : finalMachine.user = machine.user := by
+    have effectUser : effect.machine.user =
+        {machine.user with payload := {machine.user.payload with ghost := true}} := user
+    change {effect.machine.user with payload := {effect.machine.user.payload with ghost := false}} = machine.user
+    rw [effectUser]
+    have clear (current : Machine.RootUser) (off : current.payload.ghost = false) :
+        {current with payload := {current.payload with ghost := false}} = current := by
+      cases current with
+      | mk addresses payload alignment =>
+        cases payload
+        simp_all
+    exact clear machine.user ghost
+  refine ⟨finalFrame,finalMachine,exactStep,rfl,?_,rfl,rfl,rfl,rfl,?_,?_,originalUser,race.trans noRace.symm,threads,?_⟩
+  · simp [finalFrame,written,stored,cached,cacheDestination,LocalPlaces.cachePlaceLayout,CurrentReferenceLocalWrite.written,storedSize]
+  · simp [finalFrame,written,stored,cached,cacheDestination,LocalPlaces.cachePlaceLayout,CurrentReferenceLocalWrite.written]
+  · intro id different
+    simp [finalFrame,written,stored,cached,cacheDestination,LocalPlaces.cachePlaceLayout,CurrentReferenceLocalWrite.written,
+      Array.getElem?_set,Ne.symm different]
   let finalStorage : InitializedRegion final length := {next with live := next.live}
   let finalTracker := {rights.tracker with retagMode := loan.tracker.retagMode}
   let finalRights : ExclusiveRegion final length finalStorage newTag :=
     {rights with tracker := finalTracker, tracked := rfl}
-  exact ⟨finalStorage,idEq,offsetEq,roots,⟨finalRights⟩⟩
+  exact ⟨finalStorage,finalRights,idEq,offsetEq,roots,nextSize,rfl⟩
 
 end DuplicatePrefix.RootTwoPhaseComplete
 

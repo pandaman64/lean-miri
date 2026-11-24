@@ -42,6 +42,42 @@ def decisionMachine (config : CanonicalConfigFacts.RootConfig)
   (SourceControl.accounted config.terminators (Storage.withCurrent older
     (comparedFrame frame len count capacity) machine)).machine
 
+theorem decisionFrameShape (frame : CompilerFrameContext.ActualFrame) (len count : UInt64)
+    (capacity : 11 < frame.locals.size) :
+    let decided := decisionFrame frame len count capacity
+    decided.locals.size = frame.locals.size ∧ decided.body = frame.body ∧
+    decided.bodyIdentity = frame.bodyIdentity ∧ decided.functionInstance = frame.functionInstance ∧
+    decided.extra = frame.extra ∧ (∀ id, id ≠ 8 → id ≠ 10 → id ≠ 11 →
+      decided.locals[id]? = frame.locals[id]?) ∧
+    decided.locals[8]? = some ⟨.live (.immediate (.scalar (.fromBool (count > len / 2)))),
+      some RootCompilerFacts.boolLayout⟩ ∧
+    decided.locals[10]? = some ⟨usizeValue (len/2),some RootCompilerFacts.usizeLayout⟩ := by
+  intro decided
+  have bound8 : 8 < frame.locals.size := by omega
+  have bound10 : 10 < frame.locals.size := by omega
+  simp [decided,decisionFrame,comparedFrame,retiredFrame,dividedFrame,ActualLocalCopy.written,
+    SourceSteps.deadFrame,LocalPlaces.cachePlaceLayout,Array.getElem?_set,bound8,bound10,
+    usizeValue]
+  intro id a b c
+  simp [Ne.symm a,Ne.symm b,Ne.symm c]
+
+theorem decisionMachineShape (options : EvalConfigurationCore.Options) (remaining : Nat)
+    (span : PreparedContracts.FixedSpanQuery)
+    (older : Array CompilerFrameContext.ActualFrame) (frame : CompilerFrameContext.ActualFrame)
+    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
+    (len count : UInt64) (capacity : 11 < frame.locals.size) :
+    let cfg := PreparedContracts.actualConfig options () remaining span
+    let decided := decisionMachine cfg older frame machine len count capacity
+    decided.memory = machine.memory ∧ decided.borrowTracker = machine.borrowTracker ∧
+      decided.dataRace = machine.dataRace ∧ decided.threads = machine.threads ∧
+      decided.user.addresses = machine.user.addresses ∧
+      decided.user.payload.ghost = machine.user.payload.ghost ∧
+      decided.user.payload.validation = machine.user.payload.validation := by
+  intro cfg decided
+  unfold decided decisionMachine SourceControl.accounted
+  rw [(CanonicalConfigFacts.actual_fields options () remaining span).terminators]
+  exact ⟨rfl,rfl,rfl,rfl,rfl,rfl,rfl⟩
+
 theorem evaluateCurrentBounds
     (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
     (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
@@ -142,3 +178,6 @@ theorem evaluateCurrentBounds
 end DuplicatePrefix.RootCurrentDecision
 
 #print axioms DuplicatePrefix.RootCurrentDecision.evaluateCurrentBounds
+
+#print axioms DuplicatePrefix.RootCurrentDecision.decisionFrameShape
+#print axioms DuplicatePrefix.RootCurrentDecision.decisionMachineShape

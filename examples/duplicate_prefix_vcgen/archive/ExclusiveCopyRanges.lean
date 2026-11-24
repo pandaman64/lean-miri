@@ -1,9 +1,11 @@
+import Miri.Verification.RangeModifyLaw
 import duplicate_prefix.ExclusiveConcreteRange
 import duplicate_prefix.GeneralRangeMapState
 
 namespace DuplicatePrefix.ArchiveForestProjection
 
 open Miri.ABI Miri.DataStructures Miri.Interpreter Miri.Memory Miri.TreeBorrows Miri.TreeBorrows.Tree
+open Miri.Verification.RangeModifyLaw
 open Miri.Verification
 open GeneralRangeMapState GeneralRangeMapOrigins SourceDomain PreparedArguments
 
@@ -40,9 +42,22 @@ private theorem preserves_loop {A S : Type} (positions : List A)
     change ok (forIn tail updated step : Id S)
     exact inductionHyp (fun i member => preserves i (.tail _ member)) updated valid
 
+theorem replace_each_byte (property : UInt64 → LocationTree → Prop)
+    (table : DedupRangeMap LocationTree) (position : Nat) (inside : position < table.entries.size)
+    (next : LocationTree) (before : EachByte table property)
+    (keeps : ∀ point, table.entries[position].range.start ≤ point → point < table.entries[position].range.stop →
+      property point next) : EachByte (replaced table position inside next) property := by
+  intro point index bounded lo hi
+  have actual : index < table.entries.size := by simpa only [replaced_length] using bounded
+  rw [replaced_range table position inside next index actual] at lo hi
+  by_cases equal : position = index
+  · subst index
+    simpa [replaced] using keeps point lo hi
+  · simpa [replaced, Array.getElem_set, equal] using before point index actual lo hi
+
 /-- An interval-local invariant survives range preparation and actual access
 updates when the selected byte transitions preserve its predicate. -/
-theorem preserve_range_property (tree : BorrowTree) (tag : BorTag) (source : UniIndex)
+theorem preserve_range_property_with_byte_frame (tree : BorrowTree) (tag : BorTag) (source : UniIndex)
     (protectors : ProtectedTags) (kind : AccessKind) (mode : ChildrenVisitMode)
     (offset length : Size) (lower upper : UInt64) (predicate : LocationTree → Prop)
     (found : tree.indexOfTag tag = some source) (well : tree.locations.WellFormed)
@@ -53,30 +68,41 @@ theorem preserve_range_property (tree : BorrowTree) (tag : BorTag) (source : Uni
       lower.toNat < upper.toNat → segment.range.start.toNat < upper.toNat →
       lower.toNat < segment.range.stop.toNat → predicate segment.data →
       predicate (tree.performTreeAccessAt segment.data (some source) kind protectors mode segment.range).location)
+    (byteProperty : UInt64 → LocationTree → Prop)
+    (byteFrame : EachByte tree.locations byteProperty)
+    (byteStable : ∀ (segment : RangeMapSegment LocationTree) (point : UInt64),
+      offset.bytes.toNat ≤ point.toNat → point.toNat < (offset.bytes + length.bytes).toNat →
+      segment.range.start ≤ point → point < segment.range.stop → byteProperty point segment.data →
+      byteProperty point (tree.performTreeAccessAt segment.data (some source) kind protectors mode segment.range).location)
     (authorized : TreeRangeAccess.SlotsAuthorized tree (tree.locations.iterMut offset length)
       (some source) kind protectors mode) :
     let run := tree.performBorrowAccessRange (.concrete tag) offset length kind protectors mode
     run.status = .Completed ∧ OwnedOn predicate lower upper run.tree.locations ∧
       run.tree.locations.WellFormed ∧ run.tree.locations.size = tree.locations.size ∧
-      run.tree = {tree with locations := run.tree.locations} := by
+      run.tree = {tree with locations := run.tree.locations} ∧ EachByte run.tree.locations byteProperty := by
   let prepared := tree.locations.iterMut offset length
   have info := GeneralRangeMapOriginPrepare.iter_mut tree.locations offset length well bounds
   have initialOwned := refines_owned_on tree.locations prepared.state predicate lower upper
     info.1.wellFormed info.2.1 ownership
+  have initialByte : EachByte prepared.state byteProperty := by
+    intro point position valid lo hi
+    obtain ⟨prior, bounded, start, stop, same⟩ := info.2.1 point prepared.state.entries[position].data
+      ⟨position, valid, UInt64.le_iff_toNat_le.mp lo, UInt64.lt_iff_toNat_lt.mp hi, rfl⟩
+    exact same ▸ byteFrame point prior bounded (UInt64.le_iff_toNat_le.mpr start) (UInt64.lt_iff_toNat_lt.mpr stop)
   let ok (current : BorrowTree.RangeVerification.Progress) : Prop :=
     current.2.2 = .Completed ∧
       current.1.entries.size = prepared.state.entries.size ∧
       current.1.entries.map (·.range) = prepared.state.entries.map (·.range) ∧
       OwnedOn predicate lower upper current.1 ∧
-      current.1.WellFormed ∧ current.1.size = tree.locations.size
+      current.1.WellFormed ∧ current.1.size = tree.locations.size ∧ EachByte current.1 byteProperty
   have step : ∀ cursor ∈ List.range' 0 prepared.positions.size, ∀ current, ok current →
       ∃ next, (pure (ForInStep.yield (BorrowTree.RangeVerification.advance tree prepared
         (some source) kind protectors mode cursor current)) : Id _) = .yield next ∧ ok next := by
     intro cursor member current valid
     have inside : cursor < prepared.positions.size := by simpa [List.mem_range'] using member
     rcases current with ⟨table, visited, status⟩
-    rcases valid with ⟨currentStatus, currentSize, currentRanges, currentOwned, currentWell, currentCapacity⟩
-    dsimp only at currentStatus currentSize currentRanges currentOwned currentWell currentCapacity
+    rcases valid with ⟨currentStatus, currentSize, currentRanges, currentOwned, currentWell, currentCapacity, currentByte⟩
+    dsimp only at currentStatus currentSize currentRanges currentOwned currentWell currentCapacity currentByte
     subst status
     obtain ⟨position, segment, pos, slot, bounded, completed⟩ := authorized cursor inside
     change prepared.positions[cursor]? = some position at pos
@@ -108,6 +134,16 @@ theorem preserve_range_property (tree : BorrowTree) (tag : BorTag) (source : Uni
         apply initialOwned position bounded positive <;> simpa only [stored] using ‹_›
       have owned : predicate segment.data := by simpa only [stored] using before
       exact stable segment selectedBounds.2 positive start stop owned
+    have updatedByte : ∀ point, table.entries[position].range.start ≤ point → point < table.entries[position].range.stop →
+        byteProperty point (tree.performTreeAccessAt segment.data (some source) kind protectors mode segment.range).location := by
+      rw [sameRange]
+      intro point start stop
+      have prior := initialByte point position bounded (by simpa only [stored] using start)
+        (by simpa only [stored] using stop)
+      exact byteStable segment point
+        (Nat.le_trans selectedBounds.1 (UInt64.le_iff_toNat_le.mp start))
+        (Nat.lt_of_lt_of_le (UInt64.lt_iff_toNat_lt.mp stop) selectedBounds.2)
+        start stop (by simpa only [stored] using prior)
     have mutations := setAtPos_exact table position inTable
       (tree.performTreeAccessAt segment.data (some source) kind protectors mode segment.range).location
     refine ⟨_, rfl, ?_⟩
@@ -117,9 +153,10 @@ theorem preserve_range_property (tree : BorrowTree) (tag : BorTag) (source : Uni
       (replaced_ranges table position inTable _).trans currentRanges,
       replaced_preserves predicate lower upper table position inTable _ updateKeeps currentOwned,
       replaced_wellFormed table position inTable _ currentWell,
-      (replaced_size table position inTable _).trans currentCapacity⟩
+      (replaced_size table position inTable _).trans currentCapacity,
+      replace_each_byte byteProperty table position inTable _ currentByte updatedByte⟩
   have initial : ok (prepared.state, #[], .Completed) :=
-    ⟨rfl, rfl, rfl, initialOwned, info.1.wellFormed, congrArg Size.ofBytes info.1.capacity⟩
+    ⟨rfl, rfl, rfl, initialOwned, info.1.wellFormed, congrArg Size.ofBytes info.1.capacity, initialByte⟩
   have final := preserves_loop (List.range' 0 prepared.positions.size)
     (fun cursor current => pure (.yield (BorrowTree.RangeVerification.advance tree prepared
         (some source) kind protectors mode cursor current))) ok step _ initial
@@ -128,7 +165,29 @@ theorem preserve_range_property (tree : BorrowTree) (tag : BorTag) (source : Uni
   simp only [Id.run, found, Option.isNone_some, Bool.false_eq_true, ↓reduceIte, info.1.outcome,
     Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size, Nat.sub_zero,
     Nat.add_sub_cancel, Nat.div_one, BorrowTree.RangeVerification.cursor_equation]
-  exact ⟨final.1, final.2.2.2.1, final.2.2.2.2.1, final.2.2.2.2.2, rfl⟩
+  exact ⟨final.1, final.2.2.2.1, final.2.2.2.2.1, final.2.2.2.2.2.1, rfl, final.2.2.2.2.2.2⟩
+
+theorem preserve_range_property (tree : BorrowTree) (tag : BorTag) (source : UniIndex)
+    (protectors : ProtectedTags) (kind : AccessKind) (mode : ChildrenVisitMode)
+    (offset length : Size) (lower upper : UInt64) (predicate : LocationTree → Prop)
+    (found : tree.indexOfTag tag = some source) (well : tree.locations.WellFormed)
+    (bounds : offset.bytes.toNat + length.bytes.toNat ≤ tree.locations.size.bytes.toNat)
+    (ownership : OwnedOn predicate lower upper tree.locations)
+    (stable : ∀ segment : RangeMapSegment LocationTree,
+      segment.range.stop.toNat ≤ (offset.bytes + length.bytes).toNat →
+      lower.toNat < upper.toNat → segment.range.start.toNat < upper.toNat →
+      lower.toNat < segment.range.stop.toNat → predicate segment.data →
+      predicate (tree.performTreeAccessAt segment.data (some source) kind protectors mode segment.range).location)
+    (authorized : TreeRangeAccess.SlotsAuthorized tree (tree.locations.iterMut offset length)
+      (some source) kind protectors mode) :
+    let run := tree.performBorrowAccessRange (.concrete tag) offset length kind protectors mode
+    run.status = .Completed ∧ OwnedOn predicate lower upper run.tree.locations ∧
+      run.tree.locations.WellFormed ∧ run.tree.locations.size = tree.locations.size ∧
+      run.tree = {tree with locations := run.tree.locations} := by
+  have checked := preserve_range_property_with_byte_frame tree tag source protectors kind mode offset length
+    lower upper predicate found well bounds ownership stable (fun _ _ => True) (fun _ _ _ _ _ => trivial)
+    (fun _ _ _ _ _ _ _ => trivial) authorized
+  exact ⟨checked.1, checked.2.1, checked.2.2.1, checked.2.2.2.1, checked.2.2.2.2.1⟩
 
 /-- The actual access leaves source-independent ownership at later bytes. -/
 theorem preserve_after_range (tree : BorrowTree) (tag : BorTag) (source : UniIndex)

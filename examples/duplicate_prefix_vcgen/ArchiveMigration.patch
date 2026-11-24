@@ -6230,3 +6230,773 @@
 @@ -81 +80 @@
 -  exact CopyCallStep.step options limits remaining span input.debug frames caller machine input.tracker input.tracked sourcePointer destinationPointer n input.valid input.old input.live input.uncached input.noClocks input.noRace input.body input.identity input.callee input.trackNone input.location input.fuel input.validationFuel input.ghost input.shallow input.thread input.active input.top input.relevant input.budget input.budgetEq input.backend input.unchecked input.noGc input.fixed input.source input.cmp input.valid19 input.valid21 input.valid24 input.live19 input.cache19 input.live21 input.cache21 input.live24 input.cache24
 +  exact CopyCallStep.step options limits remaining span input.debug frames caller machine input.tracker input.tracked sourcePointer destinationPointer n input.valid input.old input.live input.uncached input.noClocks input.noRace input.body input.identity input.callee input.trackNone input.location input.fuel input.validationFuel input.ghost input.shallow input.thread input.active input.top input.relevant input.budget input.budgetEq input.backend input.unchecked input.noGc input.fixed input.source input.valid19 input.valid21 input.valid24 input.live19 input.cache19 input.live21 input.cache21 input.live24 input.cache24
+--- a/examples/duplicate_prefix/ActualReferenceMetadata.lean
++++ b/examples/duplicate_prefix/ActualReferenceMetadata.lean
+@@ -1 +1,4 @@
+-import duplicate_prefix.ActualReferenceContext
++import duplicate_prefix.ProjectionMetadataFacts
++import duplicate_prefix.ActualCurrentSlice
++import duplicate_prefix.ReferenceMetadataFacts
++import duplicate_prefix.RootCompilerFacts
+@@ -2,0 +6,2 @@
++namespace DuplicatePrefix.ActualReferenceMetadata
++open Miri Miri.ABI Miri.Input Miri.Interpreter
+@@ -5,3 +9,0 @@
+-namespace DuplicatePrefix.ActualReferenceMetadata
+-open Miri Miri.ABI Miri.Input Miri.Interpreter
+-open CanonicalConfigFacts ActualReferenceContext
+@@ -10 +11,0 @@
+-noncomputable abbrev pointee := ProjectionMetadataFacts.sliceLayout
+@@ -12,2 +13 @@
+-theorem reference_ty : reference.ty = 3 := by
+-  exact congrArg Prod.fst RootCompilerFacts.slice_layout_shape
++theorem reference_ty : reference.ty = 1 := by decide +kernel
+@@ -15,18 +15,2 @@
+-theorem pointee_ty : pointee.ty = 4 := ProjectionMetadataFacts.slice_layout_shape.1
+-
+-theorem pointee_layout : CompilerFacts.layoutOf RootMetadataQueries.context 4 = .ok pointee := by
+-  unfold CompilerFacts.layoutOf
+-  change (PreparedReflection.actual.runtime.lookup 4).mapError toString = _
+-  rw [ProjectionMetadataFacts.slice_layout_eq]
+-  rfl
+-
+-theorem reference_queries (options : EvalConfigurationCore.Options) (remaining : Nat)
+-    (span : PreparedContracts.FixedSpanQuery) (pointers : RootPointers) :
+-    TypedRetagFields.ReferenceQueries (adapted options remaining span pointers) reference.ty pointee.ty := by
+-  rw [reference_ty, pointee_ty]
+-  apply TypedRetagFields.adapted_reference_queries
+-  · exact RootMetadataQueries.mutable_slice_shape
+-  · exact RootMetadataQueries.mutable_slice_reference
+-  · exact RootMetadataQueries.slice_unpin
+-  · exact RootMetadataQueries.slice_unsafe_unpin
+-  · exact RootMetadataQueries.slice_freeze
++theorem pointee_layout : CompilerFacts.layoutOf RootMetadataQueries.context 2 = .ok ProjectionMetadataFacts.sliceLayout :=
++  ActualCurrentSlice.compilerLayout
+@@ -37,43 +21,5 @@
+-    reference.layout.backendRepr = .ScalarPair (a := .Initialized (value := pa) (validRange := ra))
+-      (b := .Initialized (value := pb) (validRange := rb)) (bOffset := offset) := by
+-  with_unfolding_all exact ⟨_, _, _, _, _, rfl⟩
+-
+-theorem visitor_metadata (options : EvalConfigurationCore.Options) (remaining : Nat)
+-    (span : PreparedContracts.FixedSpanQuery) :
+-    (config options remaining span).validity.target = (config options remaining span).access.runtime ∧
+-    (config options remaining span).validity.metadataTail () 4 = pure .sliceOrStr ∧
+-    (config options remaining span).validity.opsemInhabited () 4 = pure true ∧
+-    (config options remaining span).validity.typeName () 3 = pure "&mut [u8]" ∧
+-    (config options remaining span).validity.classify () 3 = pure (.reference true) := by
+-  obtain ⟨pointers, table, discr, validity⟩ := (actual_fields options () remaining span).validity
+-  have target : (config options remaining span).validity.target = (config options remaining span).access.runtime := by
+-    rw [validity]; rfl
+-  have tail : (config options remaining span).validity.metadataTail =
+-      (CompilerFactAdapters.validityHooks ReferenceMetadataFacts.prepared (config options remaining span).validity).metadataTail := by
+-    rw [validity]; rfl
+-  have inhabit : (config options remaining span).validity.opsemInhabited =
+-      (CompilerFactAdapters.validityHooks ReferenceMetadataFacts.prepared (config options remaining span).validity).opsemInhabited := by
+-    rw [validity]; rfl
+-  have name : (config options remaining span).validity.typeName =
+-      (CompilerFactAdapters.validityHooks ReferenceMetadataFacts.prepared (config options remaining span).validity).typeName := by
+-    rw [validity]; rfl
+-  have kind : (config options remaining span).validity.classify =
+-      (CompilerFactAdapters.validityHooks ReferenceMetadataFacts.prepared (config options remaining span).validity).classify := by
+-    rw [validity]; rfl
+-  refine ⟨target, ?_, ?_, ?_, ?_⟩
+-  · rw [tail]; exact ReferenceMetadataFacts.hooks_metadata_tail _ ()
+-  · rw [inhabit]
+-    unfold CompilerFactAdapters.validityHooks
+-    dsimp only
+-    rw [show ReferenceMetadataFacts.prepared.context = RootMetadataQueries.context from rfl,
+-      ReferenceMetadataFacts.slice_inhabited]
+-    with_unfolding_all rfl
+-  · rw [name]; exact ReferenceMetadataFacts.hooks_reference_name _ ()
+-  · rw [kind]; exact ReferenceMetadataFacts.hooks_reference_kind _ ()
+-
+-theorem visitor_target (options : EvalConfigurationCore.Options) (remaining : Nat)
+-    (span : PreparedContracts.FixedSpanQuery) :
+-    (config options remaining span).validity.target.base.pointerWidth = .w64 ∧
+-    (config options remaining span).validity.target.pointerSize = Size.ofBytes 8 := by
+-  rw [(visitor_metadata options remaining span).1, actual_access_runtime]
+-  exact ⟨rfl, rfl⟩
++    reference.layout.backendRepr =
++      .ScalarPair (a := .Initialized (value := pa) (validRange := ra))
++        (b := .Initialized (value := pb) (validRange := rb)) (bOffset := offset) := by
++  exact ⟨.Pointer AddressSpace.ZERO, .Int .I64 false, ⟨1,18446744073709551615⟩,
++    ⟨0,18446744073709551615⟩, Size.ofBytes 8, by with_unfolding_all rfl⟩
+@@ -82,10 +27,0 @@
+-open Lean Elab Command in
+-run_cmd do
+-  for declaration in #[``DuplicatePrefix.ActualReferenceMetadata.reference_queries,
+-      ``DuplicatePrefix.ActualReferenceMetadata.pointee_layout,
+-      ``DuplicatePrefix.ActualReferenceMetadata.visitor_metadata,
+-      ``DuplicatePrefix.ActualReferenceMetadata.visitor_target,
+-      ``DuplicatePrefix.ActualReferenceMetadata.reference_repr] do
+-    for dependency in (← collectAxioms declaration) do
+-      unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
+-        throwError "unapproved metadata dependency {dependency}"
+--- a/examples/duplicate_prefix/ActualRootReferenceDeref.lean
++++ b/examples/duplicate_prefix/ActualRootReferenceDeref.lean
+@@ -2 +1,0 @@
+-import duplicate_prefix.ActualSharedReferenceDeref
+@@ -11,0 +11,20 @@
++theorem constructor_maximum
++    (options : EvalConfigurationCore.Options) (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
++    (po : EvalPlaceConstruction.Options) (pointers : RootPointers) (table : RootRawVTable)
++    (projection : (PreparedContracts.actualConfig options () remaining span).projection =
++      EvalPlaceConstruction.projection PreparedReflection.actual.compiler po
++        (PreparedContracts.actualConfig options () remaining span).access
++        (PreparedContracts.actualConfig options () remaining span).allocation
++        (PreparedContracts.actualConfig options () remaining span).compiler table) :
++    po.maxSizeOfVal = Size.ofBytes 9223372036854775807 := by
++  let config := PreparedContracts.actualConfig options () remaining span
++  obtain ⟨sourceTable,maximum,maximumQuery,dynamicEq⟩ :=
++    (CanonicalConfigFacts.actual_fields options () remaining span).projectionDynamic
++  have actualMaximum : CompilerExecutionBounds.maximum PreparedReflection.actual.compiler.runtime.target =
++      .ok (Size.ofBytes 9223372036854775807) := by rfl
++  have maxEq : maximum = Size.ofBytes 9223372036854775807 := Except.ok.inj (maximumQuery.symm.trans actualMaximum)
++  have source : config.projection.dynamic.maxSizeOfVal = po.maxSizeOfVal := by rw [projection];rfl
++  have target : config.projection.dynamic.maxSizeOfVal = maximum := by rw [dynamicEq];rfl
++  rw [target,maxEq] at source
++  exact source.symm
++
+@@ -17 +36 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -24 +43 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false) :
+@@ -41 +60 @@
+-  have poMax := ActualSharedReferenceDeref.constructor_maximum options remaining span po constructorPointers table projectionEq
++  have poMax := constructor_maximum options remaining span po constructorPointers table projectionEq
+@@ -60 +79 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false) :
+@@ -85 +104 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false) :
+--- a/examples/duplicate_prefix/AsMutCallCore.lean
++++ b/examples/duplicate_prefix/AsMutCallCore.lean
+@@ -2 +1,0 @@
+-import duplicate_prefix.RootCallCore
+@@ -27 +26 @@
+-  h.pushRaw () HelperCompilerFacts.asMutPtrCall.callee HelperCompilerFacts.asMutPtrBody destination (.goto (some 7) .Continue)
++  h.pushRaw () HelperCompilerFacts.asMutPtrCall.callee HelperCompilerFacts.asMutPtrBody destination (.goto (some 7) .Unreachable)
+@@ -55 +54 @@
+-      #[.Copy first] false destination (.goto (some 7) .Continue) =
++      #[.Copy first] false destination (.goto (some 7) .Unreachable) =
+@@ -70 +69 @@
+-  have canUnwind : h.abiCanUnwind HelperCompilerFacts.asMutPtrAbi = true := AsMutCallFacts.abi_flags.2.1
++  have canUnwind : h.abiCanUnwind HelperCompilerFacts.asMutPtrAbi = false := AsMutCallFacts.abi_flags.2.1
+--- a/examples/duplicate_prefix/AsMutCallFacts.lean
++++ b/examples/duplicate_prefix/AsMutCallFacts.lean
+@@ -1 +0,0 @@
+-import duplicate_prefix.GuardCompilerFacts
+@@ -3 +1,0 @@
+-import duplicate_prefix.ActualReferenceMetadata
+@@ -99 +97 @@
+-theorem abi_flags : HelperCompilerFacts.asMutPtrAbi.cVariadic = false ∧ HelperCompilerFacts.asMutPtrAbi.canUnwind = true ∧
++theorem abi_flags : HelperCompilerFacts.asMutPtrAbi.cVariadic = false ∧ HelperCompilerFacts.asMutPtrAbi.canUnwind = false ∧
+@@ -106 +104 @@
+-    (HelperCompilerFacts.asMutPtrAbi.args.getD 0 HelperCompilerFacts.asMutPtrAbi.ret).layout = ActualReferenceMetadata.reference := by
++    (HelperCompilerFacts.asMutPtrAbi.args.getD 0 HelperCompilerFacts.asMutPtrAbi.ret).layout = RootCompilerFacts.sliceLayout := by
+--- a/examples/duplicate_prefix/AsMutCallQueries.lean
++++ b/examples/duplicate_prefix/AsMutCallQueries.lean
+@@ -16 +16 @@
+-    CompilerProviders.resolveCurrent PreparedReflection.actual.compiler 6 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs
++    CompilerProviders.resolveCurrent PreparedReflection.actual.compiler 3 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs
+@@ -31,3 +31,3 @@
+-  have id : (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).instanceKind.defId = 6 := by with_unfolding_all rfl
+-  have kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 28 =
+-      .ok (.FnDef 6 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs) := by
++  have id : (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).instanceKind.defId = 3 := by with_unfolding_all rfl
++  have kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 12 =
++      .ok (.FnDef 3 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs) := by
+@@ -36 +36 @@
+-    input RootBody.reflected.body block HelperCompilerFacts.asMutPtrCall 6 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs 28
++    input RootBody.reflected.body block HelperCompilerFacts.asMutPtrCall 3 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs 12
+--- a/examples/duplicate_prefix/AsMutCalleeLeaves.lean
++++ b/examples/duplicate_prefix/AsMutCalleeLeaves.lean
+@@ -13 +13 @@
+-      HelperCompilerFacts.asMutPtrCall.callee = (pure (.Item 6) : MachineHooks.M MiriMemoryKind Machine.RootUser CallInstanceKind) := by
++      HelperCompilerFacts.asMutPtrCall.callee = (pure (.Item 3) : MachineHooks.M MiriMemoryKind Machine.RootUser CallInstanceKind) := by
+--- a/examples/duplicate_prefix/AsMutDone.lean
++++ b/examples/duplicate_prefix/AsMutDone.lean
+@@ -1 +1,2 @@
+-import duplicate_prefix.AsMutArgument
++import duplicate_prefix.AsMutEntryFacts
++import duplicate_prefix.CallEntryFacts
+--- a/examples/duplicate_prefix/AsMutEntryFacts.lean
++++ b/examples/duplicate_prefix/AsMutEntryFacts.lean
+@@ -2 +2 @@
+-import duplicate_prefix.MetadataEntryFacts
++import duplicate_prefix.Storage
+@@ -12 +12,4 @@
+-theorem as_mut_ptr_preamble_supported : (GuardCompilerFacts.preambleQuery HelperCompilerFacts.asMutPtrBody).isOk = true := by decide +kernel
++private def preambleQuery (body : LoadedBody) : Except String MIR.SpanRef := do
++  let some entry := PreparedReflection.actual.compiler.lifecycle.lifecycle.entries[body.identity.index]?
++    | throw "body lifecycle evidence absent"
++  entry.preamble
+@@ -14 +17,3 @@
+-def asMutPreamble := checkedOk (GuardCompilerFacts.preambleQuery HelperCompilerFacts.asMutPtrBody) as_mut_ptr_preamble_supported
++theorem as_mut_ptr_preamble_supported : (preambleQuery HelperCompilerFacts.asMutPtrBody).isOk = true := by decide +kernel
++
++def asMutPreamble := checkedOk (preambleQuery HelperCompilerFacts.asMutPtrBody) as_mut_ptr_preamble_supported
+@@ -55,0 +61,10 @@
++open Lean Elab Tactic
++elab "unfold_frame_meta" : tactic => do
++  let env ← getEnv
++  let names ← ([".CompilerFrameMetadata.lift", ".CompilerFrameMetadata.definitionCrate"] : List String).mapM fun (suffix : String) => do
++    let names := env.constants.toList.filterMap fun (name, _) => if name.toString.endsWith suffix then some (mkIdent name) else none
++    match names with
++    | [name] => pure name
++    | _ => throwError "expected private frame metadata helper {suffix}"
++  evalTactic (← `(tactic| simp only [$[$(names.toArray):ident],*]))
++
+--- a/examples/duplicate_prefix/AsMutEvaluateCall.lean
++++ b/examples/duplicate_prefix/AsMutEvaluateCall.lean
+@@ -16 +16 @@
+-theorem callee_kind : (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).instanceKind = .Item 6 := by with_unfolding_all rfl
++theorem callee_kind : (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).instanceKind = .Item 3 := by with_unfolding_all rfl
+@@ -38 +38 @@
+-    (cached : frame.locals[16].layout = some ActualReferenceMetadata.reference)
++    (cached : frame.locals[16].layout = some RootCompilerFacts.sliceLayout)
+@@ -42 +42 @@
+-      .ok ⟨.Instance HelperCompilerFacts.asMutPtrCall.callee,#[.Copy ⟨.immediate value,ActualReferenceMetadata.reference⟩],
++      .ok ⟨.Instance HelperCompilerFacts.asMutPtrCall.callee,#[.Copy ⟨.immediate value,RootCompilerFacts.sliceLayout⟩],
+@@ -52 +52 @@
+-       state = .ok (.Copy ⟨.immediate value,ActualReferenceMetadata.reference⟩) state := by
++       state = .ok (.Copy ⟨.immediate value,RootCompilerFacts.sliceLayout⟩) state := by
+@@ -54,4 +54,4 @@
+-    exact CallMoveLocal.move_cached options limits remaining span debug frames frame machine 16 ActualReferenceMetadata.reference value
+-      valid live cached ActualReferenceMetadata.reference_sized noClocks ghost
+-  have resolve : h.resolve () 6 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs state = .ok HelperCompilerFacts.asMutPtrCall.callee state := by
+-    change (PreparedContracts.actualConfig options () remaining span).calls.compiler.resolve () 6 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs state = _
++    exact CallMoveLocal.move_cached options limits remaining span debug frames frame machine 16 RootCompilerFacts.sliceLayout value
++      valid live cached (by decide +kernel) noClocks ghost
++  have resolve : h.resolve () 3 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs state = .ok HelperCompilerFacts.asMutPtrCall.callee state := by
++    change (PreparedContracts.actualConfig options () remaining span).calls.compiler.resolve () 3 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs state = _
+@@ -67,2 +67,2 @@
+-    ⟨.immediate .uninit,AsMutFunctionFacts.functionLayout⟩ state state state .Rust 6 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs
+-    HelperCompilerFacts.asMutPtrCall.callee 6 HelperCompilerFacts.asMutPtrAbi false (.Copy ⟨.immediate value,ActualReferenceMetadata.reference⟩)
++    ⟨.immediate .uninit,AsMutFunctionFacts.functionLayout⟩ state state state .Rust 3 (PreparedReflection.fixedInstance HelperCompilerFacts.asMutPtrCall.callee).genericArgs
++    HelperCompilerFacts.asMutPtrCall.callee 3 HelperCompilerFacts.asMutPtrAbi false (.Copy ⟨.immediate value,RootCompilerFacts.sliceLayout⟩)
+--- a/examples/duplicate_prefix/AsMutFinish.lean
++++ b/examples/duplicate_prefix/AsMutFinish.lean
+@@ -12 +12 @@
+-def action (h : RootCallCore.RootHooks) (preamble : MIR.SpanRef) : MachineHooks.M MiriMemoryKind Machine.RootUser Unit := do
++def action (h : AsMutCallCore.RootHooks) (preamble : MIR.SpanRef) : MachineHooks.M MiriMemoryKind Machine.RootUser Unit := do
+@@ -36 +36 @@
+-  let f0 := {frame with location := .unwinding ⟨71⟩}
++  let f0 := {frame with location := .unwinding ⟨72⟩}
+@@ -39,2 +39,2 @@
+-  have set0 := CallEntryLocals.set_span options limits remaining span frames frame machine ⟨71⟩
+-  change AsMutCallCore.spanAt h ⟨71⟩ (Storage.withCurrent frames frame machine) = _ at set0
++  have set0 := CallEntryLocals.set_span options limits remaining span frames frame machine ⟨72⟩
++  change AsMutCallCore.spanAt h ⟨72⟩ (Storage.withCurrent frames frame machine) = _ at set0
+--- a/examples/duplicate_prefix/AsMutFrame.lean
++++ b/examples/duplicate_prefix/AsMutFrame.lean
+@@ -15 +15 @@
+-    HelperCompilerFacts.asMutPtrCall.callee () (.goto (some 7) .Continue) destination AsMutEntryFacts.asMutPreamble identity
++    HelperCompilerFacts.asMutPtrCall.callee () (.goto (some 7) .Unreachable) destination AsMutEntryFacts.asMutPreamble identity
+@@ -28 +28 @@
+-        (.goto (some 7) .Continue) destination AsMutEntryFacts.asMutPreamble identity) state =
++        (.goto (some 7) .Unreachable) destination AsMutEntryFacts.asMutPreamble identity) state =
+@@ -33 +33 @@
+-      (.goto (some 7) .Continue) destination AsMutEntryFacts.asMutPreamble identity : Frame Provenance LocalLayout Unit) state rfl
++      (.goto (some 7) .Unreachable) destination AsMutEntryFacts.asMutPreamble identity : Frame Provenance LocalLayout Unit) state rfl
+--- a/examples/duplicate_prefix/AsMutFunctionConstant.lean
++++ b/examples/duplicate_prefix/AsMutFunctionConstant.lean
+@@ -16,2 +16,2 @@
+-  | _ => ⟨⟨0⟩,none,.Val .ZeroSized 28⟩
+-theorem literal : constant.value = .Val .ZeroSized 28 := by with_unfolding_all rfl
++  | _ => ⟨⟨0⟩,none,.Val .ZeroSized 12⟩
++theorem literal : constant.value = .Val .ZeroSized 12 := by with_unfolding_all rfl
+@@ -38 +38 @@
+-  have layout : PreparedReflection.actual.compiler.runtime.lookup 28 = .ok AsMutFunctionFacts.functionLayout := AsMutFunctionFacts.functionLayout_query
++  have layout : PreparedReflection.actual.compiler.runtime.lookup 12 = .ok AsMutFunctionFacts.functionLayout := AsMutFunctionFacts.functionLayout_query
+--- a/examples/duplicate_prefix/AsMutFunctionFacts.lean
++++ b/examples/duplicate_prefix/AsMutFunctionFacts.lean
+@@ -2 +1,0 @@
+-import duplicate_prefix.MetadataCallQueries
+@@ -16 +15 @@
+-  ((PreparedReflection.actual.layoutResults[28]'(by decide +kernel))).toOption.getD RootCompilerFacts.boolLayout
++  ((PreparedReflection.actual.layoutResults[12]'(by decide +kernel))).toOption.getD RootCompilerFacts.boolLayout
+@@ -18 +17,19 @@
+-theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 28 = .ok functionLayout := by decide +kernel
++private theorem functionLayout_exact :
++    (PreparedReflection.actual.runtime.lookup 12).toOption = some functionLayout := by
++  have observation : PreparedReflection.actual.runtime.node 12 =
++      .ok PreparedReflection.actual.runtime.source.types[12] := by rfl
++  rw [RuntimeMetadata.lookup, observation]
++  simp only [bind, Bind.bind, Except.bind]
++  have normalized : PreparedReflection.actual.runtime.source.types[12].sourceLayout.normalizedType = 12 := rfl
++  rw [normalized]
++  unfold ConcreteTypeLayout.calculate
++  rw [ConcreteTypeLayout.calculate.go.eq_2]
++  unfold_internal ".Miri.Input.ConcreteTypeLayout.typeNode"
++  have hrow : PreparedReflection.actual.runtime.source.types[12]? =
++      some PreparedReflection.actual.runtime.source.types[12] := by rfl
++  have ordinary : PreparedReflection.actual.runtime.source.types[12].sourceLayout.specialFloat = none := by rfl
++  simp [StateT.run', StateT.bind, StateT.lift, StateT.pure, StateT.get, StateT.modifyGet,
++    Bind.bind, Pure.pure, Except.bind, Except.pure, MonadStateOf.get, getThe, liftM, monadLift,
++    Except.toOption, get, MonadLift.monadLift, Except.map, Functor.map,
++    Std.HashMap.getElem?_empty, hrow, normalized, ordinary]
++  try with_unfolding_all rfl
+@@ -20 +37,7 @@
+-theorem functionLayout_shape : functionLayout.ty = 28 ∧ functionLayout.layout.isSized = true ∧
++
++theorem functionLayout_query : PreparedReflection.actual.runtime.lookup 12 = .ok functionLayout := by
++  have h := functionLayout_exact
++  generalize PreparedReflection.actual.runtime.lookup 12 = result at h ⊢
++  cases result <;> simpa [Except.toOption] using h
++
++theorem functionLayout_shape : functionLayout.ty = 12 ∧ functionLayout.layout.isSized = true ∧
+@@ -24 +47 @@
+-theorem function_kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 28 =
++theorem function_kind : CompilerFunctionFacts.kind PreparedReflection.actual.compiler.functions 12 =
+@@ -31 +54 @@
+-    PreparedReflection.actual.compiler.functions 28 = .ok (1, rustExternAbi) := by
++    PreparedReflection.actual.compiler.functions 12 = .ok (1, rustExternAbi) := by
+@@ -35 +58 @@
+-    HelperCompilerFacts.asMutPtrCall.source.functionType = some 28 := by
++    HelperCompilerFacts.asMutPtrCall.source.functionType = some 12 := by
+--- a/examples/duplicate_prefix/AsMutLocalStages.lean
++++ b/examples/duplicate_prefix/AsMutLocalStages.lean
+@@ -37 +37 @@
+-      .ok ⟨71⟩ (Storage.withCurrent frames frame machine) := by
++      .ok ⟨72⟩ (Storage.withCurrent frames frame machine) := by
+@@ -53 +53 @@
+-      .ok ⟨72⟩ (Storage.withCurrent frames frame machine) := by
++      .ok ⟨73⟩ (Storage.withCurrent frames frame machine) := by
+--- a/examples/duplicate_prefix/AsMutLocals.lean
++++ b/examples/duplicate_prefix/AsMutLocals.lean
+@@ -2 +2,2 @@
+-import duplicate_prefix.AsMutPtrArgumentCopy
++import duplicate_prefix.ActualReferenceMetadata
++import duplicate_prefix.CompilerFrameLayout
+@@ -35 +36 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 1 = .ok 3 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 1 = .ok 1 := by
+@@ -50,11 +51,2 @@
+-  have normalized := normalized_local1 frame body identity callee
+-  unfold CompilerFrameContext.computeLocalLayout
+-  simp only [MachineHooks.currentFrame, Storage.withCurrent, Stack.currentFrame?, Array.back?_push,
+-    bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure]
+-  rw [normalized]
+-  with_unfolding_all change (match PreparedReflection.actual.runtime.lookup 3 with
+-    | .ok value => EStateM.Result.ok value (Storage.withCurrent frames frame machine)
+-    | .error error => EStateM.Result.error (StepError.unsupported s!"compiler frame query: {toString error}")
+-        (Storage.withCurrent frames frame machine)) = _
+-  rw [RootCompilerFacts.slice_layout_eq]
+-  rfl
++  exact PointerAddFacts.compute_local frames frame machine 1 1 ActualReferenceMetadata.reference
++    (normalized_local1 frame body identity callee) RootCompilerFacts.slice_layout_eq
+--- a/examples/duplicate_prefix/AsMutPtrBody.lean
++++ b/examples/duplicate_prefix/AsMutPtrBody.lean
+@@ -50 +50 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false) :
+@@ -204 +204 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false) :
+--- a/examples/duplicate_prefix/AsMutPtrCarrier.lean
++++ b/examples/duplicate_prefix/AsMutPtrCarrier.lean
+@@ -21 +21 @@
+-      (present : machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++      (present : machine.memory.live[id]? = some entry)
+@@ -36 +36 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false) :
+@@ -68 +68 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false) :
+--- a/examples/duplicate_prefix/AsMutPtrCast.lean
++++ b/examples/duplicate_prefix/AsMutPtrCast.lean
+@@ -31 +31 @@
+-      PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts).kind choice 99 = pure .raw := by
++      PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts).kind choice 82 = pure .raw := by
+@@ -86 +86 @@
+-      pure (.rawPointer 4) := by
++      pure (.rawPointer 2) := by
+@@ -91 +91 @@
+-  change (match CompilerFactAdapters.castTypeInfo PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 99 with
++  change (match CompilerFactAdapters.castTypeInfo PreparedReflection.actual.compiler.lifecycle.calls.symbols.facts 82 with
+@@ -94 +94 @@
+-    .ok (.rawPointer 4) state
++    .ok (.rawPointer 2) state
+@@ -102 +102 @@
+-      pure (.rawPointer 1) := by
++      pure (.rawPointer 3) := by
+@@ -111 +111 @@
+-    .ok (.rawPointer 1) state
++    .ok (.rawPointer 3) state
+@@ -121 +121 @@
+-  apply fat_to_thin _ () _ _ first second 4 1
++  apply fat_to_thin _ () _ _ first second 2 3
+--- a/examples/duplicate_prefix/AsMutPtrLayouts.lean
++++ b/examples/duplicate_prefix/AsMutPtrLayouts.lean
+@@ -17 +17 @@
+-      .ok (if id = 0 ∨ id = 2 then 8 else 99) := by
++      .ok (if id = 0 ∨ id = 2 then 8 else 82) := by
+@@ -46 +46 @@
+-    | (rw [show PreparedReflection.actual.compiler.runtime.lookup 99 = .ok AsMutPtrFacts.rawLayout from AsMutPtrFacts.raw_layout_eq]; rfl)
++    | (rw [show PreparedReflection.actual.compiler.runtime.lookup 82 = .ok AsMutPtrFacts.rawLayout from AsMutPtrFacts.raw_layout_eq]; rfl)
+--- a/examples/duplicate_prefix/AsMutPtrRawAssign.lean
++++ b/examples/duplicate_prefix/AsMutPtrRawAssign.lean
+@@ -0,0 +1 @@
++import duplicate_prefix.CompilerFrameLayout
+@@ -23 +24 @@
+-    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 4 = .ok 99 := by
++    CompilerFrameContext.localType PreparedReflection.actual.compiler frame 4 = .ok 82 := by
+@@ -30 +31 @@
+-    (PreparedContracts.actualConfig options () remaining span).isRawPointer () 3 = pure false := by
++    (PreparedContracts.actualConfig options () remaining span).isRawPointer () 1 = pure false := by
+@@ -53 +54 @@
+-  with_unfolding_all change config.isRawPointer () 3 (Storage.withCurrent frames frame machine) = _
++  with_unfolding_all change config.isRawPointer () 1 (Storage.withCurrent frames frame machine) = _
+@@ -65,11 +66,2 @@
+-  have normalized := normalized_local4 frame sourceBody identity callee
+-  unfold CompilerFrameContext.computeLocalLayout
+-  simp only [MachineHooks.currentFrame,Storage.withCurrent,Stack.currentFrame?,Array.back?_push,
+-    bind,EStateM.bind,get,getThe,MonadStateOf.get,EStateM.get,pure,EStateM.pure]
+-  rw [normalized]
+-  with_unfolding_all change (match PreparedReflection.actual.runtime.lookup 99 with
+-    | .ok value => EStateM.Result.ok value (Storage.withCurrent framesBefore frame machine)
+-    | .error error => EStateM.Result.error (StepError.unsupported s!"compiler frame query: {toString error}")
+-        (Storage.withCurrent framesBefore frame machine)) = _
+-  rw [AsMutPtrFacts.raw_layout_eq]
+-  rfl
++  exact PointerAddFacts.compute_local framesBefore frame machine 4 82 rawLayout
++    (normalized_local4 frame sourceBody identity callee) AsMutPtrFacts.raw_layout_eq
+@@ -196 +188 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false) :
++    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 2) = false) :
+--- a/examples/duplicate_prefix/AsMutPtrRawRetag.lean
++++ b/examples/duplicate_prefix/AsMutPtrRawRetag.lean
+@@ -46 +46 @@
+-        let changed ← (ExecutionMachine.rvalueHooks (PreparedContracts.actualConfig options () remaining span) limits).retagPtrValue () value 99
++        let changed ← (ExecutionMachine.rvalueHooks (PreparedContracts.actualConfig options () remaining span) limits).retagPtrValue () value 82
+@@ -50 +50 @@
+-  have shape : config.retag.typeShape 99 = pure ⟨false, false, true, false⟩ := by
++  have shape : config.retag.typeShape 82 = pure ⟨false, false, true, false⟩ := by
+@@ -53 +53 @@
+-    change (match CompilerFacts.retagTypeShape RootMetadataQueries.context 99 with
++    change (match CompilerFacts.retagTypeShape RootMetadataQueries.context 82 with
+@@ -59 +59 @@
+-    let changed ← TypedRetag.machineRetagPtrValue config.retag limits.retag value 99
++    let changed ← TypedRetag.machineRetagPtrValue config.retag limits.retag value 82
+@@ -61 +61 @@
+-  exact raw_scope_identity config.retag limits.retag value 99 shape state
++  exact raw_scope_identity config.retag limits.retag value 82 shape state
+--- a/examples/duplicate_prefix/AsMutPtrRawRvalue.lean
++++ b/examples/duplicate_prefix/AsMutPtrRawRvalue.lean
+@@ -49 +49 @@
+-    rw [show value.layout.ty = 99 from raw_type]
++    rw [show value.layout.ty = 82 from raw_type]
+--- a/examples/duplicate_prefix/AsMutPtrReturn.lean
++++ b/examples/duplicate_prefix/AsMutPtrReturn.lean
+@@ -2 +1,0 @@
+-import duplicate_prefix.ActualPopPlan
+@@ -4,2 +3 @@
+-import duplicate_prefix.GenericPopFrame
+-import duplicate_prefix.SourceControl
++import NestedGuardDriver
+@@ -21,11 +19 @@
+-def poppedMachine (frames : Array CompilerFrameContext.ActualFrame) (caller frame : CompilerFrameContext.ActualFrame)
+-    (machine : MachineHooks.MachineState K U) (index : Nat) :=
+-  GenericPopFrame.afterRelevanceAt (frames.push caller) frame machine index
+-
+-theorem popped_user (frames : Array CompilerFrameContext.ActualFrame) (caller frame : CompilerFrameContext.ActualFrame)
+-    (machine : MachineHooks.MachineState K U) (index : Nat) :
+-    (poppedMachine frames caller frame machine index).user = machine.user := by
+-  unfold poppedMachine GenericPopFrame.afterRelevanceAt
+-  split <;> rfl
+-
+-theorem return_driver
++theorem return_driver_of_pop
+@@ -53,9 +41,4 @@
+-    (tracker : MachineHooks.BorrowState) (borrowFrame : Miri.TreeBorrows.FrameState)
+-    (tracked : machine.borrowTracker = some tracker)
+-    (frameTracked : frame.extra.borrowTracker = some borrowFrame)
+-    (finalMemory : MemoryState Provenance Miri.TreeBorrows.BorrowTree MiriMemoryKind)
+-    (plan : StackPopRelease.Plan tracker.global.protectedTags borrowFrame.protectedTags.toList machine.memory finalMemory)
+-    (thread : ThreadRecord)
+-    (active : machine.threads.activeThread? = some thread)
+-    (ghost : machine.user.payload.ghost = false)
+-    (shallow : machine.user.payload.validation = .Shallow) :
++    (popped : MachineHooks.MachineState MiriMemoryKind Machine.RootUser)
++    (poppedGhost : popped.user.payload.ghost = false)
++    (poppedShallow : popped.user.payload.validation = .Shallow)
++    (ghost : machine.user.payload.ghost = false) :
+@@ -63 +46,4 @@
+-    ControlFlow.returnFromCurrentFrame (GenericCallReturn.sourceControl config limits) () false
++    let control := GenericCallReturn.sourceControl config limits
++    control.popFrame () (Storage.withCurrent (frames.push caller) frame machine) =
++      (Storage.withCurrent frames caller popped, .ok frame) →
++    ControlFlow.returnFromCurrentFrame control () false
+@@ -67,3 +53,2 @@
+-        (poppedMachine frames caller frame (ActualPopPlan.released machine finalMemory tracker borrowFrame) (thread.topUserRelevantFrame.getD (frames.push caller).size)),.ok ()) := by
+-  let index := thread.topUserRelevantFrame.getD (frames.push caller).size
+-  have top := GenericPopFrame.top_nonempty (frames.push caller) frame thread.topUserRelevantFrame
++        popped,.ok ()) := by
++  intro cfg control pop
+@@ -71 +55,0 @@
+-  let control := GenericCallReturn.sourceControl config limits
+@@ -73 +56,0 @@
+-  let popped := poppedMachine frames caller frame (ActualPopPlan.released machine finalMemory tracker borrowFrame) index
+@@ -85,3 +67,0 @@
+-  have pop : control.popFrame () before = (afterPop,.ok frame) := by
+-    exact ActualPopPlan.pop_of_plan options limits (remaining+1) span (frames.push caller) frame machine
+-      tracker borrowFrame tracked frameTracked finalMemory plan thread active
+@@ -91 +71 @@
+-      (by rw [popped_user];exact ghost) (by rw [popped_user];exact shallow) frame.returnPlace destination
++      poppedGhost poppedShallow frame.returnPlace destination
+@@ -102,92 +81,0 @@
+-def accountedMachine (options : EvalConfigurationCore.Options) (remaining : Nat)
+-    (span : PreparedContracts.FixedSpanQuery)
+-    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser) :=
+-  (SourceControl.accounted (PreparedContracts.actualConfig options () (remaining+1) span).terminators
+-    (⟨⟨#[]⟩,machine⟩ : MachineHooks.State MiriMemoryKind Machine.RootUser)).machine
+-
+-theorem accounted_ghost (options : EvalConfigurationCore.Options) (remaining : Nat)
+-    (span : PreparedContracts.FixedSpanQuery)
+-    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser) :
+-    (accountedMachine options remaining span machine).user.payload.ghost = machine.user.payload.ghost := by
+-  unfold accountedMachine SourceControl.accounted
+-  rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
+-  rfl
+-
+-theorem accounted_validation (options : EvalConfigurationCore.Options) (remaining : Nat)
+-    (span : PreparedContracts.FixedSpanQuery)
+-    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser) :
+-    (accountedMachine options remaining span machine).user.payload.validation = machine.user.payload.validation := by
+-  unfold accountedMachine SourceControl.accounted
+-  rw [(CanonicalConfigFacts.actual_fields options () (remaining+1) span).terminators]
+-  rfl
+-
+-theorem return_step
+-    (options : EvalConfigurationCore.Options) (limits : ExecutionMachine.Limits)
+-    (remaining : Nat) (span : PreparedContracts.FixedSpanQuery)
+-    (debugOff : options.place.debugAssertions = false) (fuel : Nat)
+-    (validationFuel : options.limits.validation = fuel+1)
+-    (frames : Array CompilerFrameContext.ActualFrame) (caller frame : CompilerFrameContext.ActualFrame)
+-    (machine : MachineHooks.MachineState MiriMemoryKind Machine.RootUser) (value : Scalar Provenance) (callerId : Miri.MIR.LocalId)
+-    (sourceBody : frame.body = HelperCompilerFacts.asMutPtrBody.body)
+-    (location : frame.location = .mir ⟨0,10⟩)
+-    (valid0 : (0 : Miri.MIR.LocalId) < frame.locals.size)
+-    (live0 : frame.locals[0].value = .live (.immediate (.scalar value)))
+-    (cached0 : frame.locals[0].layout = some CopyCompilerFacts.destPointerLayout)
+-    (noClocks : frame.extra.dataRace = none)
+-    (callerValid0 : callerId < caller.locals.size)
+-    (callerLive0 : caller.locals[callerId].value = .live (.immediate .uninit))
+-    (callerCached0 : caller.locals[callerId].layout = some CopyCompilerFacts.destPointerLayout)
+-    (callerClocks : caller.extra.dataRace = none)
+-    (destination : frame.returnPlace.toRuntimePlace = LocalPlaces.localRuntimePlace frames.size caller callerId CopyCompilerFacts.destPointerLayout)
+-    (target : BasicBlockId) (unwindAction : UnwindAction)
+-    (continuation : frame.returnContinuation = .goto (some target) unwindAction)
+-    (immediateLocals : ∀ slot ∈ frame.locals, ∀ memory, slot.value ≠ .live (.indirect memory))
+-    (varargs : frame.vaList = #[])
+-    (tracker : MachineHooks.BorrowState) (borrowFrame : Miri.TreeBorrows.FrameState)
+-    (tracked : machine.borrowTracker = some tracker)
+-    (frameTracked : frame.extra.borrowTracker = some borrowFrame)
+-    (finalMemory : MemoryState Provenance Miri.TreeBorrows.BorrowTree MiriMemoryKind)
+-    (plan : StackPopRelease.Plan tracker.global.protectedTags borrowFrame.protectedTags.toList machine.memory finalMemory)
+-    (thread : ThreadRecord)
+-    (active : machine.threads.activeThread? = some thread)
+-    (unchecked : ((PreparedContracts.actualConfig options () (remaining+1) span).terminators.getControl machine.user).checkedArithmetic = false)
+-    (noGc : ((PreparedContracts.actualConfig options () (remaining+1) span).terminators.getControl machine.user).gcInterval = 0)
+-    (fixed : machine.threads.fixedScheduling = true)
+-    (ghost : machine.user.payload.ghost = false)
+-    (shallow : machine.user.payload.validation = .Shallow) :
+-    let config := PreparedContracts.actualConfig options () (remaining+1) span
+-    ExecutionMachine.step config limits ()
+-      (Storage.withCurrent (frames.push caller) frame machine) =
+-      (Storage.withCurrent frames
+-        {writeFrame caller callerId (.scalar value) callerValid0 with location := .mir ⟨target,0⟩}
+-        (poppedMachine frames caller frame (ActualPopPlan.released (accountedMachine options remaining span machine) finalMemory tracker borrowFrame) (thread.topUserRelevantFrame.getD (frames.push caller).size)),.ok true) := by
+-  let config := PreparedContracts.actualConfig options () (remaining+1) span
+-  let before := Storage.withCurrent (frames.push caller) frame machine
+-  let next := accountedMachine options remaining span machine
+-  let nextState := Storage.withCurrent (frames.push caller) frame next
+-  have nextTracked : next.borrowTracker = some tracker := tracked
+-  have nextActive : next.threads.activeThread? = some thread := active
+-  have nextGhost : next.user.payload.ghost = false := by rw [accounted_ghost];exact ghost
+-  have nextValidation : next.user.payload.validation = .Shallow := by rw [accounted_validation];exact shallow
+-  have returned := return_driver options limits remaining span debugOff fuel validationFuel frames caller frame next value callerId
+-    sourceBody location valid0 live0 cached0 noClocks callerValid0 callerLive0 callerCached0 callerClocks destination
+-    target unwindAction continuation immediateLocals varargs tracker borrowFrame nextTracked frameTracked finalMemory plan thread nextActive nextGhost nextValidation
+-  have accounting := SourceControl.before_terminator config limits () before
+-    (CanonicalConfigFacts.actual_term_get_set options () (remaining+1) span)
+-    (CanonicalConfigFacts.actual_term_set_set options () (remaining+1) span) unchecked noGc fixed
+-  have accounting' : (ExecutionMachine.stepHooks config limits).beforeTerminator () before = (nextState,.ok ()) := accounting
+-  let block := HelperCompilerFacts.asMutPtrBody.body.basicBlocks[0]'(by with_unfolding_all decide +kernel)
+-  have blockAt : frame.body.basicBlocks[0]? = some block := by rw [sourceBody];simp [block]
+-  have noStatement : block.statements[10]? = none := by with_unfolding_all rfl
+-  have kind : block.terminator.kind = .Return := by with_unfolding_all rfl
+-  exact GenericCallReturn.return_step_exact config limits () before nextState _ frame ⟨0,10⟩ block
+-    (by simp [before,Storage.withCurrent,Stack.currentFrame?]) location blockAt noStatement kind accounting' returned
+-
+-#print axioms return_driver
+-#print axioms return_step
+-open Lean Elab Command in
+-run_cmd do
+-  for declaration in #[``return_driver, ``return_step] do
+-    for dependency in (← collectAxioms declaration) do
+-      unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
+-        throwError "{declaration} depends on unapproved axiom {dependency}"
+@@ -196,0 +85,2 @@
++
++#print axioms DuplicatePrefix.AsMutPtrReturn.return_driver_of_pop
+--- a/examples/duplicate_prefix/AsMutPtrStorage.lean
++++ b/examples/duplicate_prefix/AsMutPtrStorage.lean
+@@ -31 +31 @@
+-    (trivial204 : config.lifecycle.storage.veryTriviallySized 99 = .ok true)
++    (trivial204 : config.lifecycle.storage.veryTriviallySized 82 = .ok true)
+@@ -52 +52 @@
+-    ⟨0,1⟩ block (block.statements[1]'(by decide)) 3 99 (by rfl)
++    ⟨0,1⟩ block (block.statements[1]'(by decide)) 3 82 (by rfl)
+@@ -57 +57 @@
+-    ⟨0,2⟩ block (block.statements[2]'(by decide)) 4 99 (by rfl)
++    ⟨0,2⟩ block (block.statements[2]'(by decide)) 4 82 (by rfl)
+@@ -67 +67 @@
+-theorem trivial_fat : CompilerStorage.veryTriviallySized PreparedReflection.actual.compiler.runtime 99 = .ok true := by decide +kernel
++theorem trivial_fat : CompilerStorage.veryTriviallySized PreparedReflection.actual.compiler.runtime 82 = .ok true := by decide +kernel
+--- a/examples/duplicate_prefix/AsMutPtrValidity.lean
++++ b/examples/duplicate_prefix/AsMutPtrValidity.lean
+@@ -57 +57 @@
+-  have kindQuery : hooks.classify () layout.ty active = .ok (.rawPointer 4 false) active := by
++  have kindQuery : hooks.classify () layout.ty active = .ok (.rawPointer 2 false) active := by
+@@ -94 +94 @@
+-    valid live cached sized pa pb ra rb offset repr debug ghostFalse retain "*mut [u8]" 4
++    valid live cached sized pa pb ra rb offset repr debug ghostFalse retain "*mut [u8]" 2
+@@ -151 +151 @@
+-  have kindQuery : hooks.classify () layout.ty active = .ok (.rawPointer 4 false) active := by
++  have kindQuery : hooks.classify () layout.ty active = .ok (.rawPointer 2 false) active := by
+@@ -191 +191 @@
+-    valid live cached sized pa pb ra rb offset repr debug ghostFalse retain "*mut [u8]" 4
++    valid live cached sized pa pb ra rb offset repr debug ghostFalse retain "*mut [u8]" 2
+--- a/examples/duplicate_prefix/AsMutPush.lean
++++ b/examples/duplicate_prefix/AsMutPush.lean
+@@ -33 +33 @@
+-      HelperCompilerFacts.asMutPtrCall.callee HelperCompilerFacts.asMutPtrBody destination (.goto (some 7) .Continue) state =
++      HelperCompilerFacts.asMutPtrCall.callee HelperCompilerFacts.asMutPtrBody destination (.goto (some 7) .Unreachable) state =
+--- a/examples/duplicate_prefix/AsMutSpans.lean
++++ b/examples/duplicate_prefix/AsMutSpans.lean
+@@ -9 +9 @@
+-    PreparedReflection.actual.program.bundle.spans.toList.idxOf? (AsMutLocals.localSpan ⟨0, by decide⟩) = some 71 := by
++    PreparedReflection.actual.program.bundle.spans.toList.idxOf? (AsMutLocals.localSpan ⟨0, by decide⟩) = some 72 := by
+@@ -15 +15 @@
+-    PreparedReflection.actual.program.bundle.spans.toList.idxOf? (AsMutLocals.localSpan ⟨1, by decide⟩) = some 72 := by
++    PreparedReflection.actual.program.bundle.spans.toList.idxOf? (AsMutLocals.localSpan ⟨1, by decide⟩) = some 73 := by
+@@ -28 +28 @@
+-      .ok ⟨71⟩ (Storage.withCurrent framesBefore frame machine) := by
++      .ok ⟨72⟩ (Storage.withCurrent framesBefore frame machine) := by
+@@ -34 +34 @@
+-      (AsMutLocals.localSpan ⟨0, by decide⟩) = some 71 := by
++      (AsMutLocals.localSpan ⟨0, by decide⟩) = some 72 := by
+@@ -37 +37 @@
+-  exact MetadataSpans.local_span_from_metadata _ _ _ _ _ _ AsMutLocals.inputBody decl 71 body.symm
++  exact MetadataSpans.local_span_from_metadata _ _ _ _ _ _ AsMutLocals.inputBody decl 72 body.symm
+@@ -48 +48 @@
+-      .ok ⟨72⟩ (Storage.withCurrent framesBefore frame machine) := by
++      .ok ⟨73⟩ (Storage.withCurrent framesBefore frame machine) := by
+@@ -54 +54 @@
+-      (AsMutLocals.localSpan ⟨1, by decide⟩) = some 72 := by
++      (AsMutLocals.localSpan ⟨1, by decide⟩) = some 73 := by
+@@ -57 +57 @@
+-  exact MetadataSpans.local_span_from_metadata _ _ _ _ _ _ AsMutLocals.inputBody decl 72 body.symm
++  exact MetadataSpans.local_span_from_metadata _ _ _ _ _ _ AsMutLocals.inputBody decl 73 body.symm
+--- a/examples/duplicate_prefix/ReferenceArgumentCopy.lean
++++ b/examples/duplicate_prefix/ReferenceArgumentCopy.lean
+@@ -1 +1 @@
+-import duplicate_prefix.ActualEmptyReference
++import duplicate_prefix.ActualReferenceMetadata
+@@ -16 +16 @@
+-theorem copy_with_nested_validation
++theorem copy_layout_with_nested_validation
+@@ -23,0 +24,3 @@
++    (reference : LocalLayout)
++    (reference_sized : reference.layout.isSized = true)
++    (reference_no_padding : CompilerCopy.hasPadding PreparedReflection.actual.compiler.runtime false reference = .ok false)
+@@ -81 +84 @@
+-theorem copy_empty_argument
++theorem copy_with_nested_validation
+@@ -84,3 +86,0 @@
+-    (cmp : ProjectionMetadataFacts.NullComparator)
+-    (precise : options.retag.preciseInteriorMut = false)
+-    (implicitWrites : options.retag.implicitWrites = false)
+@@ -88,2 +87,0 @@
+-    (dynamicFuel validityFuel : Nat) (fuelEq : options.place.dynamicFuel = dynamicFuel + 1)
+-    (validationEq : options.limits.validation = validityFuel + 1)
+@@ -93 +91,2 @@
+-    (localId : MIR.LocalId) (old : Immediate Provenance) (valid : localId < frame.locals.size)
++    (localId : MIR.LocalId) (old value : Immediate Provenance)
++    (valid : localId < frame.locals.size)
+@@ -99,6 +97,0 @@
+-    (address : UInt64) (nonzero : address ≠ 0)
+-    (tracker : MachineHooks.BorrowState) (enabled : machine.borrowTracker = some tracker)
+-    (mode : tracker.retagMode = .FnEntry)
+-    (fresh : tracker.global.nextPointerTag.value < 18446744073709551615)
+-    (metadata : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).metadata = PreparedReflection.actual.runtime)
+-    (notConstructed : (EvalProjectionMachine.arrays.get (Storage.withCurrent frames frame machine)).entries.any (·.value.ty == 4) = false)
+@@ -107,2 +100,7 @@
+-    (validInstance : frame.functionInstance < PreparedReflection.actual.program.input.instances.size := by
+-      first | assumption | (rw [callee]; with_unfolding_all decide +kernel) | (rw [function]; with_unfolding_all decide +kernel) | (rw [fnInstance]; with_unfolding_all decide +kernel) | with_unfolding_all decide +kernel) :
++    (after : CanonicalConfigFacts.RootState)
++    (validated : ValidityMachine.validateRuntime
++      (PreparedContracts.actualConfig options () remaining span).validity () options.limits.validation
++      (LocalPlaces.localRuntimePlace frames.size frame localId reference) true
++      (Storage.withCurrent frames {frame with locals := (frame.locals.set localId
++        {value := .live (.immediate value), layout := frame.locals[localId].layout} valid)} machine) =
++      .ok () after) :
+@@ -110,17 +108,4 @@
+-      ⟨.immediate (RetagReferencePlace.integerSliceValue address 0 reference).imm, reference⟩ view
+-      (Storage.withCurrent frames frame machine) = .ok ()
+-      (TypedRetagEmpty.afterTag (Storage.withCurrent frames {frame with locals := (frame.locals.set localId
+-        {value := .live (.immediate (RetagReferencePlace.integerSliceValue address 0 reference).imm),
+-         layout := frame.locals[localId].layout} valid)} machine) tracker fresh) := by
+-  let value := (RetagReferencePlace.integerSliceValue address 0 reference).imm
+-  let postFrame := {frame with locals := (frame.locals.set localId
+-    {value := .live (.immediate value), layout := frame.locals[localId].layout} valid)}
+-  have postValid : localId < postFrame.locals.size := by simpa only [postFrame, Array.size_set] using valid
+-  have postLive : postFrame.locals[localId].value = .live (.immediate value) := by simp [postFrame, valid]
+-  have postCached : postFrame.locals[localId].layout = some reference := by
+-    simpa only [postFrame, Array.getElem_set_self] using cached
+-  apply copy_with_nested_validation options limits remaining span debugOff frames frame machine localId old value
+-    valid live cached noClocks ghost shallow view destination
+-  rw [validationEq]
+-  exact ActualEmptyReference.validate options remaining span cmp precise implicitWrites debugOff dynamicFuel validityFuel fuelEq
+-    frames postFrame machine localId postValid address nonzero postLive postCached ghost shallow tracker enabled mode fresh metadata notConstructed
++      ⟨.immediate value, reference⟩ view (Storage.withCurrent frames frame machine) = .ok () after := by
++  exact copy_layout_with_nested_validation options limits remaining span debugOff frames frame machine
++    localId old value reference reference_sized reference_no_padding valid live cached noClocks ghost shallow view
++    destination after validated
+@@ -129,8 +114,3 @@
+-open Lean Elab Command in
+-run_cmd do
+-  for declaration in #[``DuplicatePrefix.ReferenceArgumentCopy.reference_no_padding,
+-      ``DuplicatePrefix.ReferenceArgumentCopy.copy_with_nested_validation,
+-      ``DuplicatePrefix.ReferenceArgumentCopy.copy_empty_argument] do
+-    for dependency in (← collectAxioms declaration) do
+-      unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
+-        throwError "unapproved reference argument composition dependency {dependency}"
++
++#print axioms DuplicatePrefix.ReferenceArgumentCopy.copy_layout_with_nested_validation
++#print axioms DuplicatePrefix.ReferenceArgumentCopy.copy_with_nested_validation
+--- a/examples/duplicate_prefix/RootReferenceDeref.lean
++++ b/examples/duplicate_prefix/RootReferenceDeref.lean
+@@ -1 +0,0 @@
+-import duplicate_prefix.SharedReferenceMetadata
+@@ -16 +15 @@
+-    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) ReferenceMetadataFacts.prepared).kind choice 3 = pure .reference := by
++    (CompilerExecutionProviders.pointerCompiler (K := K) (U := U) ReferenceMetadataFacts.prepared).kind choice 1 = pure .reference := by
+@@ -40 +39 @@
+-    (present : state.machine.memory.live.find? (fun row => row.1 == id) = some (id,entry))
++    (present : state.machine.memory.live[id]? = some entry)
+@@ -47 +46 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)
+@@ -121 +120 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)
+@@ -193 +192 @@
+-    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 4) = false)
++    (notConstructed : (EvalProjectionMachine.arrays.get state).entries.any (·.value.ty == 2) = false)

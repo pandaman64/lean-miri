@@ -89,9 +89,12 @@ theorem retag
       length reference
     ∃ after : RootState, cfg.validity.retagPointer () input reference.ty before = .ok (some output) after ∧
       after.stack = before.stack ∧ after.machine.user = before.machine.user ∧ after.machine.dataRace = none ∧
-      ∃ next : InitializedRegion after length,
+      after.machine.threads = before.machine.threads ∧
+      ∃ (next : InitializedRegion after length) (right : ExclusiveRegion after length next tag),
         next.id = storage.id ∧ next.relativeStart = storage.relativeStart ∧
-        next.entry.allocation.extra.roots = #[root] ∧ Nonempty (ExclusiveRegion after length next tag) := by
+        next.entry.allocation.extra.roots = #[root] ∧
+        next.entry.allocation.extra.locations.size = storage.entry.allocation.extra.locations.size ∧
+        right.tracker.retagMode = loan.tracker.retagMode := by
   intro cfg tag atAddress input output
   have facts := CanonicalConfigFacts.actual_fields options () remaining span
   obtain ⟨pointers, table, discriminant, globals, validity, arithmetic, wiring, ensure, sync⟩ := facts.validitySources
@@ -148,7 +151,7 @@ theorem retag
       (storage.relativeStart.bytes + length) storage.entry.allocation.extra.locations := by
     simpa only [tracker, sameProtectors] using owners
   let location : RetagPipeline.ResolvedLocation := ⟨storage.id, storage.relativeStart, .concrete parentTag⟩
-  obtain ⟨after, tree, child, reborrowed, live, tracked, stack, user, race, sizeEq, coherent, roots, childKey,
+  obtain ⟨after, tree, child, reborrowed, live, tracked, stack, user, race, threads, sizeEq, coherent, roots, childKey,
     childNode, childOwners⟩ :=
     ExclusiveTwoPhaseRetag.reborrow_exclusive h options.limits.retag place (Size.ofBytes length) tag parentTag location
       allocatedState allocatedState allocatedState allocatedState tracker storage.entry loan.source root node
@@ -164,11 +167,18 @@ theorem retag
     exact completed
   have nextExtent : storage.relativeStart.bytes.toNat + length.toNat ≤ tree.locations.size.bytes.toNat := by
     rwa [sizeEq]
-  obtain ⟨next, idEq, offsetEq, allocEq, rights⟩ := region_from_cached_reborrow before after length storage tree tag child tracker
+  obtain ⟨next, idEq, offsetEq, allocEq, ⟨rights⟩⟩ := region_from_cached_reborrow before after length storage tree tag child tracker
     live tracked coherent childKey childNode nextExtent childOwners
-  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, next, idEq, offsetEq, ?_, rights⟩
-  rw [allocEq]
-  exact roots
+  refine ⟨after, referenceEffect, stack, user, race.trans raceOff, threads, next, rights, idEq, offsetEq, ?_, ?_, ?_⟩
+  · rw [allocEq]
+    exact roots
+  · rw [allocEq]
+    exact sizeEq
+  · have known := rights.tracked
+    change after.machine.borrowTracker = some rights.tracker at known
+    rw [tracked] at known
+    have trackedEq := Option.some.inj known
+    rw [← trackedEq]
 
 end DuplicatePrefix.CurrentTwoPhaseStructural
 

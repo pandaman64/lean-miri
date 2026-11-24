@@ -112,6 +112,22 @@ LOCAL = {
     "RootCurrentAddPipeline",
     "RootCurrentCopyPreparation",
     "RootPositiveSuccessComplete",
+    "AsMutCurrentArgument",
+    "AsMutCurrentCall",
+    "AsMutCurrentEntry",
+    "AsMutCurrentInstall",
+    "AsMutDispatchExact",
+    "AsMutPassArgument",
+    "AsMutPreparedEntry",
+    "AsMutReturnExclusive",
+    "AsMutReturnStep",
+    "AsMutRootRoundtrip",
+    "AsMutRootStep",
+    "AsMutRoundtrip",
+    "CurrentAsMutFnEntry",
+    "CurrentAsMutStrong",
+    "FrameRootRelevance",
+    "RootNonzeroEntry",
 }
 IMPORTS = re.compile(rb"^import duplicate_prefix\.([A-Za-z0-9_]+)\s*$", re.MULTILINE)
 ALLOWED = {"propext", "Quot.sound", "Classical.choice"}
