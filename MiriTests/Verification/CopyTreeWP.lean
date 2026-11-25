@@ -3,7 +3,7 @@ import Init.Internal.Order.While
 
 namespace MiriTests.Verification.CopyTreeWP
 
-open Miri.ABI Miri.Interpreter Miri.Memory Miri.TreeBorrows Miri.Verification Std.WP
+open Miri.ABI Miri.DataStructures Miri.Interpreter Miri.Memory Miri.TreeBorrows Miri.Verification Std.WP
 
 set_option maxRecDepth 65536
 set_option cbv.maxSteps 1000000
@@ -82,5 +82,98 @@ example {K U : Type} [DecidableEq K]
   rw [TreeBorrowsWP.accessPre_missingTag _ _ _ _ _ _ _ _ _ missing]
   rw [CopyTreeWP.commitLocal_iff _ _ _ _ _ _ _ _ live]
   exact ⟨rfl, rfl⟩
+
+private def childTag : BorTag := ⟨2, by decide⟩
+private def destinationRange := allocRange byte byte
+private def sourceTree := (root twoBytes).newChild byte tag childTag
+  (DedupRangeMap.new byte ⟨.Unique, true, .None⟩) (.ReservedFrz false) false
+private def readTree := (sourceTree.tree.performBorrowAccessRange tag Size.ZERO byte .Read {}
+  .VisitChildrenOfAccessed).tree
+
+private theorem source_read :
+    (sourceTree.tree.performBorrowAccessRange tag Size.ZERO byte .Read {} .VisitChildrenOfAccessed).status =
+      .Completed := by cbv
+
+private def firstLocation : LocationTree := (readTree.locations.entries[0]?.map (·.data)).getD {}
+private def secondLocation : LocationTree := (readTree.locations.entries[1]?.map (·.data)).getD {}
+private theorem readEntries : readTree.locations.entries =
+    #[⟨⟨0, 1⟩, firstLocation⟩, ⟨⟨1, 2⟩, secondLocation⟩] := by cbv
+
+private theorem readFormed : readTree.locations.WellFormed := by
+  unfold DedupRangeMap.WellFormed
+  have count : readTree.locations.entries.size = 2 := by rw [readEntries]; rfl
+  rw [dite_eq_right (by omega : readTree.locations.entries.size ≠ 0)]
+  refine ⟨by cbv, ?_, ?_⟩
+  · intro n inside
+    have possible : n = 0 ∨ n = 1 := by omega
+    rcases possible with rfl | rfl <;> cbv
+  · intro n inside
+    have only : n = 0 := by omega
+    subst n
+    cbv
+
+private theorem destinationAt {position : UInt64} {location : LocationTree}
+    (found : readTree.locations.MapAt position location)
+    (covered : ByteRange.Contains ⟨1, 2⟩ position) : location = secondLocation := by
+  obtain ⟨index, segment, entry, contains, value⟩ := found
+  rw [readEntries] at entry
+  have inside := (Array.getElem?_eq_some_iff.mp entry).choose
+  have possible : index = 0 ∨ index = 1 := by simp at inside; omega
+  rcases possible with rfl | rfl
+  · simp at entry
+    subst segment
+    exact False.elim (UInt64.not_lt.mpr covered.1 contains.2)
+  · simp at entry
+    subst segment
+    exact value.symm
+
+set_option maxHeartbeats 1200000 in
+/-- At the destination of a tracked copy, after an accepted source read,
+the root can read the newly written location. The third access through the
+stale child fails, and the failure state retains the new permission. -/
+theorem tracked_copy_observes_write {K U : Type} [DecidableEq K]
+    (config : PlaceMachine.AccessConfig K U) (before : MachineHooks.State K U)
+    (id : AllocId) (backing : Allocation Provenance BorrowTree)
+    (ready : CopyTreeWP.Ready config true id destinationRange before)
+    (unprotected : ready.tracker.global.protectedTags = {})
+    (synced : PlaceMachine.Machine K U) (sync : config.syncAccess true id destinationRange ready.machine = .ok () synced)
+    (entry : LocalAllocation Provenance BorrowTree K) (live : synced.memory.live[id]? = some entry) :
+    CopyTreeWP.accessPre config true (backing.setExtra readTree) id tag destinationRange
+      (fun written _ =>
+        (∃ observed, written.extra.locations.MapAt 1 observed ∧
+          (observed.perms.get ⟨1⟩).map (·.permission) = some .Disabled) ∧
+        TreeBorrowsWP.accessPre written.extra tag byte byte .Read {} .VisitChildrenOfAccessed
+          (fun _ _ => True) (fun _ _ _ => False) ∧
+        TreeBorrowsWP.accessPre written.extra (.concrete childTag) byte byte .Read {} .VisitChildrenOfAccessed
+          (fun _ _ => False) (fun status retained trace =>
+            status = .AccessFailure ⟨1, 2⟩ (.TransitionError 1 (.ChildAccessForbidden .Disabled)) ∧
+            trace.map (·.range) = #[⟨1, 2⟩] ∧
+            ((retained.locations.entries[1]?.bind fun segment => segment.data.perms.get ⟨1⟩).map
+              (·.permission)) = some .Disabled)) (fun _ _ => False) before := by
+  have endpoint : destinationRange.start.add destinationRange.size = .ok twoBytes := by cbv
+  have bound : twoBytes.bytes ≤ readTree.locations.size.bytes := by cbv
+  miri_copy_tree_wp observe using ready, readFormed, endpoint, bound
+  dsimp only [Allocation.setExtra]
+  simp only [↓reduceIte]
+  simp only [unprotected, TreeOverlapWP.accessBytePre, TreeOverlapWP.byteChecks]
+  refine ⟨⟨by cbv, ?_⟩, ?_⟩
+  · intro position location found covered
+    rw [destinationAt found covered]
+    cbv
+  · intro _ _ _ observation
+    dsimp only [MemoryWP.policyPre, wp, WP.wpTrans]
+    rw [sync]
+    dsimp only
+    rw [CopyTreeWP.commitLocal_iff _ _ _ _ _ _ _ _ live]
+    simp only [Allocation.setExtra]
+    refine ⟨?_, by cbv; exact ⟨trivial, trivial⟩⟩
+    have initialAt : readTree.locations.MapAt 1 secondLocation :=
+      ⟨1, ⟨⟨1, 2⟩, secondLocation⟩, by rw [readEntries]; rfl, by cbv, rfl⟩
+    have inside : ByteRange.Contains ⟨1, 2⟩ 1 := by cbv
+    refine ⟨_, (observation 1 _).mpr ⟨secondLocation, initialAt, fun _ => rfl,
+      fun h => (h inside).elim⟩, by cbv⟩
+
+#print axioms source_read
+#print axioms tracked_copy_observes_write
 
 end MiriTests.Verification.CopyTreeWP

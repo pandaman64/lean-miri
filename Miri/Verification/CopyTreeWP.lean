@@ -1,6 +1,6 @@
 import Miri.Verification.MemoryWP
 import Miri.Verification.CopyMemoryWP
-import Miri.Verification.TreeRangePointwiseWP
+import Miri.Verification.TreeOverlapWP
 
 /-! Tree obligations for the concrete source and destination copy hooks. -/
 namespace Miri.Verification.CopyTreeWP
@@ -79,6 +79,51 @@ theorem accessPre_eq [DecidableEq K] (config : Config) (write : Bool)
   rw [RvalueWP.actionPre_eq_wp]
   funext before
   exact propext (MemoryWP.copyAccess_iff config write allocation id provenance range post onError before)
+
+/-- Once a tracked copy access reaches Tree Borrows, check its initial byte
+locations. The success continuation receives the byte relation of the updated
+tree and still runs the configured synchronization and cache commit. -/
+theorem accessPre_observe_iff [DecidableEq K] (config : Config) (write : Bool)
+    (allocation : Allocation) (id : AllocId) (provenance : ProvenanceExtra)
+    (range : AllocRange) (before : State) (ready : Ready config write id range before)
+    (finish : Size) (wellFormed : allocation.extra.locations.WellFormed)
+    (endpoint : range.start.add range.size = .ok finish)
+    (bound : finish.bytes ≤ allocation.extra.locations.size.bytes)
+    (post : Allocation → State → Prop) :
+    accessPre config write allocation id provenance range post (fun _ _ => False) before ↔
+    let initial := allocation.extra
+    let kind : AccessKind := if write then .Write else .Read
+    let tags := ready.tracker.global.protectedTags
+    let mode := Tree.ChildrenVisitMode.VisitChildrenOfAccessed
+    let bytes : Miri.DataStructures.ByteRange := ⟨range.start.bytes, finish.bytes⟩
+    TreeOverlapWP.accessBytePre initial provenance range.start range.size bytes kind tags mode
+      (fun _ updated =>
+        updated = { initial with locations := updated.locations } →
+        updated.locations.WellFormed → updated.locations.size = initial.locations.size →
+        (∀ byte data, updated.locations.MapAt byte data ↔
+          TreeOverlapWP.afterAccess initial provenance kind bytes tags mode byte data) →
+        MemoryWP.policyPre (config.syncAccess write id range) ⟨ready.machine, none⟩ updated
+          (fun state tree => MemoryWP.copyAccessCommitPre config before allocation id range state tree
+            (.ok ()) post (fun _ _ => False))
+          (fun message state tree => MemoryWP.copyAccessCommitPre config before allocation id range state tree
+            (.error message) post (fun _ _ => False))) := by
+  rw [← accessPre_eq, RvalueWP.actionPre_eq_wp, access_iff config write allocation id provenance range before ready]
+  have reject (status : BorrowTree.BorrowTreeAccessStatus) (tree : BorrowTree) :
+      MemoryWP.copyAccessCommitPre config before allocation id range
+        ⟨ready.machine, some (PlaceMachine.treeError write status)⟩ tree
+        (.error (reprStr (PlaceMachine.treeError write status))) post (fun _ _ => False) ↔ False := by
+    dsimp only [MemoryWP.copyAccessCommitPre]
+    split <;> rfl
+  simp only [reject]
+  refine ((TreeRangeOutcomeWP.wp_access_outcomePre_iff _ _ _ _ _ _ _ _ _).symm.trans
+    (TreeOverlapWP.wp_access_bytes_iff _ _ _ _ _ _ _ _ wellFormed endpoint bound _)).trans ?_
+  constructor
+  · rintro ⟨checks, done⟩
+    exact ⟨checks, fun _ _ _ _ => done⟩
+  · intro checked
+    obtain ⟨checks, shape, formed, extent, locations, done⟩ :=
+      (TreeOverlapWP.accessBytePre_observe _ _ _ _ _ _ _ _ wellFormed endpoint bound _).mp checked
+    exact ⟨checks, done shape formed extent locations⟩
 
 /-- Rewriting principle for the concrete read and write, with ordered machine
 work in between. The destination selector runs after the source read and may
@@ -234,5 +279,11 @@ tree-aware copy continuation. The memory-only tactic
 macro "miri_copy_tree_wp" : tactic =>
   `(tactic| simp only [NondivergingIntrinsicWP.statementPre_intrinsic, NondivergingIntrinsicWP.evalPre,
     NondivergingIntrinsicWP.copyPre, copyActionPre_eq, intrinsicCopyPre_eq])
+
+/-- Open a tracked access after supplying its ready policy state and checked
+range geometry. The explicit arguments select the actual policy results. -/
+macro "miri_copy_tree_wp" &"observe" "using" ready:term "," formed:term "," endpoint:term ","
+    bound:term : tactic =>
+  `(tactic| rw [accessPre_observe_iff _ _ _ _ _ _ _ $ready _ $formed $endpoint $bound])
 
 end Miri.Verification.CopyTreeWP
