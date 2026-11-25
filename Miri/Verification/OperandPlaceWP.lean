@@ -3,8 +3,17 @@ import Miri.Verification.PlaceMentionWP
 import Miri.Verification.StorageLiveWP
 import Miri.Input.CompilerScalarLeaves
 import Miri.Interpreter.ConstantMachine
+import Miri.Input.EvalPlaceConstruction
+import Miri.Verification.PlaceReadWriteWP
 
-/-! Exact continuation rules for canonical operand reads and place projections. -/
+/-! Exact continuation rules for canonical operand reads and place projections.
+
+A generated row polymorphic in `ExecutionMachine.Config` preserves that
+configuration's dereference implementation. The production rules below expose
+operand decoding, pointee construction, and validity when a client uses the
+source configuration. Compiler layout, vtable, and memory policy queries
+keep their own success and error continuations.
+-/
 
 namespace Miri.Verification.OperandPlaceWP
 
@@ -607,6 +616,322 @@ def localReadClockPre (id : MIR.LocalId) (post : Unit → State → Prop) (onErr
     · rfl
     · exact finish (length - stop)
 
+section PointerProjection
+
+variable {F T : Type}
+local notation "DState" => ValidityMachine.State K U
+local notation "DAccess" => ValidityMachine.Access K U
+local notation "MPlace" => MPlaceTy Provenance
+
+@[miri_initial_wp] theorem actionPre_validationInProgress (post : Bool → DState → Prop)
+    (onError : StepError → DState → Prop) :
+    actionPre ValidityMachine.validationInProgress post onError =
+      fun state => post state.machine.user.payload.ghost state := rfl
+
+@[miri_initial_wp] theorem actionPre_enforceValidity (post : Bool → DState → Prop)
+    (onError : StepError → DState → Prop) :
+    actionPre ValidityMachine.enforceValidity post onError =
+      fun state => post (state.machine.user.payload.validation != .No) state := rfl
+
+@[miri_initial_wp] theorem actionPre_scopedRead [DecidableEq K] (access : DAccess)
+    (source : Op) (post : RvalueImmTy Provenance → DState → Prop)
+    (onError : StepError → DState → Prop) :
+    actionPre (ValidityMachine.readImmediate access source) post onError =
+      fun state => actionPre (PlaceMachine.readImmediate
+        {access with ghostMode := state.machine.user.payload.ghost} source) post onError state := rfl
+
+@[miri_initial_wp] theorem actionPre_scalarMayBeNull (value : Scalar Provenance)
+    (post : Bool → DState → Prop) (onError : StepError → DState → Prop) :
+    actionPre (ValidityMachine.scalarMayBeNull value) post onError =
+      match value.tryToScalarInt with
+      | .ok (.integer integer) => post integer.isNull
+      | .ok (.erasedPointer ..) => onError (.invalidProgram "absolute Miri pointer erased its address")
+      | .error error => onError (ScalarOps.scalarError error) := by
+  unfold ValidityMachine.scalarMayBeNull
+  cases value.tryToScalarInt with
+  | error => rfl
+  | ok scalar => cases scalar <;> rfl
+
+/-- The source alignment policy and one-byte ABI alignment both bypass
+pointer resolution at place construction. -/
+@[miri_initial_wp] theorem actionPre_misalignmentSkip (access : DAccess)
+    (pointer : Pointer (Option Provenance)) (required : Align)
+    (post : Option Misalignment → DState → Prop) (onError : StepError → DState → Prop)
+    (before : DState)
+    (skip : (before.machine.user.payload.alignment == .None || required.pow2 == 0) = true) :
+    actionPre (PointerPlaceMachine.misalignment access pointer required) post onError before =
+      post none before := by
+  unfold PointerPlaceMachine.misalignment PointerPlaceMachine.misalignmentWith
+  change actionPre (if (before.machine.user.payload.alignment == .None || required.pow2 == 0) = true
+    then pure none else _) post onError before = _
+  simp only [skip, ↓reduceIte]
+  rfl
+
+@[miri_initial_wp] theorem actionPre_pointerWithMetadata (access : DAccess)
+    (pointer : Pointer (Option Provenance)) (metadata : MemPlaceMeta Provenance)
+    (layout : LocalLayout) (unaligned : Bool) (post : MPlace → DState → Prop)
+    (onError : StepError → DState → Prop) :
+    actionPre (PointerPlaceMachine.withMetadata access pointer metadata layout unaligned) post onError =
+      if unaligned then post ⟨⟨pointer, metadata, none⟩, layout⟩
+      else actionPre (PointerPlaceMachine.misalignment access pointer layout.layout.align.abi)
+        (fun mismatch => post ⟨⟨pointer, metadata, mismatch⟩, layout⟩) onError := by
+  cases unaligned <;> simp only [PointerPlaceMachine.withMetadata, Bool.false_eq_true, ↓reduceIte,
+    actionPre_bind_fun, purePre]
+
+@[miri_initial_wp] theorem actionPre_pointerFromImmediate (access : DAccess)
+    (compiler : PointerPlaceMachine.Compiler K U C) (choice : C) (value : RvalueImmTy Provenance)
+    (post : MPlace → DState → Prop) (onError : StepError → DState → Prop) :
+    actionPre (PointerPlaceMachine.fromImmediate access compiler choice value) post onError =
+      actionPre (compiler.builtinDeref choice value.layout.ty) (fun
+        | none => onError (.invalidProgram "imm_ptr_to_mplace called on non-pointer type")
+        | some ty => actionPre (compiler.layoutOf choice ty) (fun layout =>
+            scalarCheckPre (value.imm.toScalarAndMeta.mapError ScalarOps.immediateError)
+              (fun pair => scalarCheckPre
+                ((pair.1.toPointer access.runtime.base).mapError ScalarOps.scalarError)
+                (fun pointer => actionPre
+                  (PointerPlaceMachine.withMetadata access pointer pair.2 layout false) post onError)
+                onError) onError) onError) onError := by
+  simp only [PointerPlaceMachine.fromImmediate, actionPre_bind_fun]
+  congr 1
+  funext pointee
+  cases pointee with
+  | none => rfl
+  | some ty =>
+    rw [actionPre_bind_fun]
+    congr 1
+    funext layout
+    let decoded := value.imm.toScalarAndMeta.mapError ScalarOps.immediateError
+    change actionPre (checked decoded >>= _) _ _ = _
+    rw [actionPre_bind_fun, checkedPre]
+    unfold decoded
+    congr 1
+    funext pair
+    rcases pair with ⟨scalar, metadata⟩
+    let pointer := (scalar.toPointer access.runtime.base).mapError ScalarOps.scalarError
+    change actionPre (checked pointer >>= _) _ _ = _
+    rw [actionPre_bind_fun, checkedPre]
+
+/-- Dereferencing reads and builds the pointee before applying source validity.
+Safe pointers are checked for null, access and alignment in order. Raw dynamic
+tails check their vtable identity without reading through the pointer. -/
+@[miri_initial_wp] theorem actionPre_typedDereference [DecidableEq K] (access : DAccess)
+    (compiler : PointerPlaceMachine.Compiler K U C)
+    (dynamic : DynamicLayoutHooks Provenance DState C) (vtable : VTableHooks Provenance DState C F T)
+    (fuel : Nat) (choice : C) (source : Op) (post : MPlace → DState → Prop)
+    (onError : StepError → DState → Prop) :
+    actionPre (PointerPlaceMachine.dereference access compiler dynamic vtable fuel choice source)
+      post onError =
+      actionPre (compiler.kind choice source.layout.ty) (fun kind =>
+        if kind == .other then onError (.invalidProgram "dereferencing non-pointer type")
+        else actionPre (PlaceMachine.readImmediate access source) (fun value =>
+          actionPre (PointerPlaceMachine.fromImmediate access compiler choice value) (fun place =>
+            actionPre ValidityMachine.enforceValidity (fun enforce =>
+              if !enforce then post place
+              else if kind == .reference || kind == .box then
+                let name := if kind == .reference then "reference" else "box"
+                scalarCheckPre (Scalar.fromMaybePointer access.runtime.base place.mplace.ptr |>.mapError
+                  ScalarOps.scalarError) (fun scalar =>
+                  actionPre (ValidityMachine.scalarMayBeNull scalar) (fun isNull =>
+                    if isNull then onError (.undefinedBehavior s!"dereferencing a null {name}")
+                    else actionPre (DynamicLayout.sizeAndAlignFromMeta dynamic choice fuel
+                        place.mplace.metadata place.layout) (fun sizeAlign =>
+                      let result := sizeAlign.getD (place.layout.layout.size, place.layout.layout.align.abi)
+                      actionPre (ValidityMachine.checkPointerAccess access place.mplace.ptr result.1)
+                        (fun _ => actionPre (ValidityMachine.checkPointerAlign access place.mplace.ptr result.2)
+                          (fun _ => post place) onError) onError) onError) onError) onError
+              else if kind == .raw then
+                if !place.layout.layout.isSized then
+                  actionPre (compiler.structTail choice place.layout.ty) (fun
+                    | .dynamic expected => match place.mplace.metadata with
+                      | .none => onError (.invalidProgram "dynamic raw pointer missing metadata")
+                      | .metadata metadata => scalarCheckPre
+                        ((metadata.toPointer access.runtime.base).mapError ScalarOps.scalarError)
+                        (fun pointer => actionPre (VTable.getPtrVTableType vtable choice pointer (some expected))
+                          (fun _ => post place) onError) onError
+                    | .slice | .str | .foreign => post place
+                    | .other => onError (.invalidProgram "unexpected unsized raw-pointer tail")) onError
+                else post place
+              else onError (.invalidProgram "dereferencing unexpected pointer kind"))
+              onError) onError) onError) onError := by
+  rw [PointerPlaceMachine.dereference, actionPre_bind_fun]
+  congr 1
+  funext kind
+  simp only [actionPre_ite]
+  split
+  · rfl
+  · simp only [actionPre_bind_fun]
+    congr 1
+    funext value
+    congr 1
+    funext place
+    congr 1
+    funext enforce
+    cases enforce
+    · rfl
+    · simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte, actionPre_ite]
+      split
+      · let scalar := Scalar.fromMaybePointer access.runtime.base place.mplace.ptr |>.mapError
+          ScalarOps.scalarError
+        change actionPre (checked scalar >>= _) _ _ = _
+        rw [actionPre_bind_fun, checkedPre]
+        congr 1
+        funext address
+        simp only [actionPre_bind_fun, actionPre_ite, purePre] <;> rfl
+      · split
+        · split
+          · simp only [actionPre_bind_fun]
+            congr 1
+            funext tail
+            cases tail <;> try rfl
+            rename_i expected
+            cases place.mplace.metadata with
+            | none => rfl
+            | metadata metadataValue =>
+              let pointer := (metadataValue.toPointer access.runtime.base).mapError ScalarOps.scalarError
+              change actionPre (checked pointer >>= _) _ _ = _
+              rw [actionPre_bind_fun, checkedPre]
+              congr 1
+              funext ptr
+              simp only [actionPre_bind_fun, purePre]
+          · rfl
+        · rfl
+
+end PointerProjection
+
+section ProductionProjection
+
+variable {Os R HostP H D O Aff B Host F T : Type}
+local notation "Stored" => Input.EvalCoreMachine.Stored Os R HostP H D O Aff B Host
+local notation "IndexState" => Input.EvalCoreMachine.State Os R HostP H D O Aff B Host
+local notation "MemoryKind" => MiriMemoryKind
+
+/-- The production index hook reads the actual local operand and decodes a
+target-sized integer after the scoped memory read. -/
+@[miri_initial_wp] theorem actionPre_productionLocalIndex
+    (prepared : Input.CompilerProviders.Prepared) (options : Input.EvalPlaceConstruction.Options)
+    (access : ValidityMachine.Access MemoryKind Stored)
+    (allocation : PlaceMachine.AllocationConfig MemoryKind
+      (Input.EvalCoreMachine.User Os R HostP H D O Aff B Host))
+    (compiler : ValidityMachine.Compiler MemoryKind Stored C)
+    (vtable : VTableHooks Provenance IndexState C F T) (choice : C) (id : MIR.LocalId)
+    (post : UInt64 → IndexState → Prop) (onError : StepError → IndexState → Prop) :
+    actionPre ((Input.EvalPlaceConstruction.projection prepared options access allocation compiler vtable).localIndex
+      choice id) post onError =
+      actionPre (PlaceMachine.localToOpCore (Input.EvalPlaceConstruction.localLayout prepared)
+          ValidityMachine.validationInProgress id) (fun operand =>
+        actionPre (ValidityMachine.readImmediate access operand) (fun value =>
+          scalarCheckPre (value.imm.toScalar.mapError ScalarOps.immediateError) (fun scalar =>
+            scalarCheckPre ((scalar.toTargetUsize access.runtime.pointerSize).mapError ScalarOps.scalarError)
+              post onError) onError) onError) onError := by
+  change actionPre
+    (PlaceMachine.localToOpCore (Input.EvalPlaceConstruction.localLayout prepared)
+      ValidityMachine.validationInProgress id >>= _) _ _ = _
+  simp only [actionPre_bind_fun]
+  congr 1
+  funext operand
+  congr 1
+  funext value
+  cases value.imm.toScalar with
+  | error => rfl
+  | ok scalar =>
+    change actionPre ((pure scalar : MachineHooks.M MemoryKind _ _) >>= _) _ _ = _
+    rw [pure_bind]
+    change _ = scalarCheckPre ((scalar.toTargetUsize access.runtime.pointerSize).mapError
+      ScalarOps.scalarError) post onError
+    generalize scalar.toTargetUsize access.runtime.pointerSize = result
+    cases result <;> rfl
+
+/-- The compiler's local layout constructor memoizes only a successful cache
+miss and checks the frame again after the query. -/
+@[miri_initial_wp] theorem actionPre_productionLocalLayout
+    (prepared : Input.CompilerProviders.Prepared) (id : MIR.LocalId)
+    (post : LocalLayout → State → Prop) (onError : Errors) :
+    actionPre (Input.EvalPlaceConstruction.localLayout prepared id) post onError =
+      StorageLiveWP.currentFramePre (fun frame =>
+        scalarCheckPre ((frame.getLocal id).mapError StepError.stack) (fun slot =>
+          match slot.layout with
+          | some layout => post layout
+          | none =>
+            actionPre (Input.CompilerFrameContext.computeLocalLayout prepared id) (fun computed =>
+              StorageLiveWP.currentFramePre (fun frame =>
+                scalarCheckPre ((frame.getOrCacheLocalLayout id computed).mapError StepError.stack)
+                  (fun update => StorageLiveWP.setCurrentFramePre update.1
+                    (fun _ => post update.2) onError) onError) onError) onError) onError) onError := by
+  rw [Input.EvalPlaceConstruction.localLayout, actionPre_bind_fun, StorageLiveWP.actionPre_currentFrame]
+  congr 1
+  funext frame before
+  cases frame.getLocal id with
+  | error => rfl
+  | ok slot =>
+    simp only [pure_bind, Except.mapError, scalarCheckPre]
+    cases slot.layout with
+    | some layout => rfl
+    | none =>
+      simp only [actionPre_bind_fun, StorageLiveWP.actionPre_currentFrame]
+      congr 1
+      funext computed
+      congr 1
+      funext frame state
+      cases frame.getOrCacheLocalLayout id computed with
+      | error => rfl
+      | ok update =>
+        rcases update with ⟨updated, layout⟩
+        simp only [actionPre_bind_fun, StorageLiveWP.actionPre_setCurrentFrame, purePre]
+        rfl
+
+/-- The place hook in the production projection record uses its compiler's
+dereference operation. Keeping this projection explicit lets the source
+compiler binding continue into typed pointer construction. -/
+@[miri_initial_wp] theorem canonical_productionPlaceDeref
+    (prepared : Input.CompilerProviders.Prepared) (options : Input.EvalPlaceConstruction.Options)
+    (access : ValidityMachine.Access MemoryKind Stored)
+    (allocation : PlaceMachine.AllocationConfig MemoryKind
+      (Input.EvalCoreMachine.User Os R HostP H D O Aff B Host))
+    (compiler : ValidityMachine.Compiler MemoryKind Stored C)
+    (vtable : VTableHooks Provenance IndexState C F T)
+    (choice : C) (base : RuntimePlace Provenance) (skip : Bool) :
+    (Input.EvalPlaceConstruction.projection prepared options access allocation compiler vtable).place.deref
+      choice base skip = compiler.deref choice base skip := rfl
+
+/-- Source place dereference first obtains the pointer operand. The explicit
+simple-dereference path still reads and decodes it but skips typed validity. -/
+@[miri_initial_wp] theorem actionPre_productionCompilerDeref
+    (prepared : Input.CompilerProviders.Prepared) (options : Input.EvalPlaceConstruction.Options)
+    (access : ValidityMachine.Access MemoryKind Stored)
+    (pointers : PointerMachine.Hooks MemoryKind (ValidityMachine.Control Stored))
+    (vtable : VTableHooks Provenance IndexState C F T)
+    (typeCheck : C → MIR.Place → RuntimePlace Provenance →
+      EStateM StepError IndexState Unit)
+    (validate : C → RuntimePlace Provenance → EStateM StepError IndexState Unit)
+    (choice : C) (base : RuntimePlace Provenance) (skip : Bool)
+    (post : RuntimePlace Provenance → IndexState → Prop) (onError : StepError → IndexState → Prop) :
+    let compiler := Input.EvalPlaceConstruction.compiler prepared options access pointers vtable typeCheck validate
+    let frameIndex : EStateM StepError IndexState Nat := do
+      match (← get).stack.frameIndex with
+      | .ok index => pure index
+      | .error error => throw (.stack error)
+    let readLocal := fun (_ : C) id =>
+      PlaceMachine.localToOpCore (Input.EvalPlaceConstruction.localLayout prepared)
+        ValidityMachine.validationInProgress id
+    let pointerCompiler := CompilerExecutionProviders.pointerCompiler prepared.lifecycle.calls.symbols.facts
+    actionPre (compiler.deref choice base skip) post onError =
+      actionPre (placeToOpCore MachineHooks.currentFrame options.debugAssertions frameIndex readLocal
+          compiler.projection choice base) (fun source =>
+        let finish := fun (target : MPlaceTy Provenance) => post ⟨.memory target.mplace, target.layout⟩
+        if skip then actionPre (ValidityMachine.readImmediate access source) (fun value =>
+          actionPre (PointerPlaceMachine.fromImmediate access pointerCompiler choice value) finish onError)
+          onError
+        else actionPre (PointerPlaceMachine.dereference access pointerCompiler
+          (Input.EvalPlaceConstruction.dynamic prepared options vtable) vtable options.dynamicFuel choice source)
+          finish onError) onError := by
+  dsimp only
+  simp only [Input.EvalPlaceConstruction.compiler, actionPre_bind_fun]
+  congr 1
+  funext source
+  cases skip <;> simp only [Bool.false_eq_true, ↓reduceIte, actionPre_bind_fun, purePre]
+
+end ProductionProjection
+
 attribute [miri_initial_wp] localOperandPre operandProjectionPre operandProjectionsPre
   projectionCheckPre PlaceMentionWP.evalPre PlaceMentionWP.localPre PlaceMentionWP.localLayoutPre
   PlaceMentionWP.actionPre_project PlaceMentionWP.projectPre PlaceMentionWP.projectionsPre
@@ -626,6 +951,15 @@ local notation "Config" => ExecutionMachine.Config K U C O X Host
       OperandMachine.evalOperand
         (ExecutionMachine.operandHooks (ExecutionMachine.withValidation config limits))
         choice operand known := rfl
+
+@[miri_initial_wp] theorem canonical_operandDeref (config : Config) (choice : C) (source : Op) :
+    (ExecutionMachine.operandHooks config).dereference choice source =
+      config.operands.dereference choice source := rfl
+
+@[miri_initial_wp] theorem canonical_validationOperandDeref (config : Config)
+    (limits : ExecutionMachine.Limits) (choice : C) (source : Op) :
+    (ExecutionMachine.withValidation config limits).operands.dereference choice source =
+      config.operands.dereference choice source := rfl
 
 @[miri_initial_wp] theorem canonical_operandCompiler (config : Config) :
     (ExecutionMachine.operandHooks config).compiler = config.compiler := rfl

@@ -123,4 +123,86 @@ example (hooks : OperandMachine.Hooks K U C) (choice : C) (id : LocalId)
     Except.mapError, scalarCheckPre, actionPre, Bool.false_eq_true, ↓reduceIte, localReadClockPre,
     checkedFrameFound, frameClocks, globalClock]
 
+section Production
+
+variable {Os R HostP H D Aff B F T : Type}
+local notation "Stored" => Miri.Input.EvalCoreMachine.Stored Os R HostP H D O Aff B Host
+local notation "IndexState" => Miri.Input.EvalCoreMachine.State Os R HostP H D O Aff B Host
+local notation "MemoryKind" => MiriMemoryKind
+
+/-- The actual production index projection decodes a cached immediate local
+using the target pointer width. No local-index hook result is assumed. -/
+example (prepared : Miri.Input.CompilerProviders.Prepared)
+    (options : Miri.Input.EvalPlaceConstruction.Options)
+    (access : ValidityMachine.Access MemoryKind Stored)
+    (allocation : PlaceMachine.AllocationConfig MemoryKind
+      (Miri.Input.EvalCoreMachine.User Os R HostP H D O Aff B Host))
+    (compiler : ValidityMachine.Compiler MemoryKind Stored C)
+    (vtable : VTableHooks Provenance IndexState C F T) (choice : C) (id : LocalId)
+    (before : IndexState) (frame : Frame Provenance LocalLayout MachineHooks.FrameExtra)
+    (slot : LocalState Provenance LocalLayout) (layout : LocalLayout)
+    (post : UInt64 → IndexState → Prop) (onError : StepError → IndexState → Prop)
+    (active : before.stack.currentFrame? = some frame)
+    (slotFound : frame.getLocal id = .ok slot) (cached : slot.layout = some layout)
+    (operand : frame.getLocalOperand id = .ok (.immediate (.scalar (.fromScalarInt (.ofUInt64 4)))))
+    (sized : layout.layout.isSized = true) (ghost : before.machine.user.payload.ghost = true)
+    (word : access.runtime.pointerSize = Size.ofBytes 8)
+    (readable : isPrimitiveReadable (localMemoryLayout layout).backendRepr = true)
+    (untouched : access.retainTouched before.machine none = before.machine) :
+    actionPre ((Miri.Input.EvalPlaceConstruction.projection prepared options access allocation compiler
+      vtable).localIndex choice id) post onError before = post 4 before := by
+  rw [actionPre_productionLocalIndex]
+  rw [PlaceReadWriteWP.actionPre_localToOpCore]
+  simp only [PlaceReadWriteWP.localToOpPre, actionPre_productionLocalLayout,
+    StorageLiveWP.actionPre_currentFrame, StorageLiveWP.currentFramePre, active, slotFound,
+    Except.mapError, scalarCheckPre, cached, operand, sized, ↓reduceIte,
+    actionPre_validationInProgress, ghost, actionPre_scopedRead, PlaceReadWriteWP.actionPre_readImmediate,
+    PlaceReadWriteWP.immediateReadPre_immediate, word, readable, untouched]
+  rfl
+
+/-- Derive null-reference UB through the typed dereference used by the source
+compiler binding. The hypotheses supply compiler queries and the machine's
+alignment policy, with no premise on pointer construction or dereference. -/
+example [DecidableEq K] (access : ValidityMachine.Access K U)
+    (facts : Miri.Input.CompilerFactAdapters.Prepared) (choice : C)
+    (dynamic : DynamicLayoutHooks Provenance (ValidityMachine.State K U) C)
+    (vtable : VTableHooks Provenance (ValidityMachine.State K U) C F T) (fuel : Nat)
+    (sourceLayout layout : LocalLayout) (pointee : TyId)
+    (before : ValidityMachine.State K U)
+    (post : MPlaceTy Provenance → ValidityMachine.State K U → Prop)
+    (onError : StepError → ValidityMachine.State K U → Prop)
+    (kind : (CompilerExecutionProviders.pointerCompiler facts).kind choice sourceLayout.ty before =
+      .ok .reference before)
+    (deref : (CompilerExecutionProviders.pointerCompiler facts).builtinDeref choice sourceLayout.ty before =
+      .ok (some pointee) before)
+    (target : (CompilerExecutionProviders.pointerCompiler facts).layoutOf choice pointee before =
+      .ok layout before)
+    (width : access.runtime.base = ⟨.little, .w64⟩)
+    (readable : isPrimitiveReadable (localMemoryLayout sourceLayout).backendRepr = true)
+    (untouched : access.retainTouched before.machine none = before.machine)
+    (alignment : before.machine.user.payload.alignment = .None)
+    (validation : before.machine.user.payload.validation = .Shallow) :
+    let source : Op := ⟨.immediate (.scalar (.fromScalarInt (.ofUInt64 0))), sourceLayout⟩
+    actionPre (PointerPlaceMachine.dereference access (CompilerExecutionProviders.pointerCompiler facts)
+      dynamic vtable fuel choice source) post onError before =
+      onError (.undefinedBehavior "dereferencing a null reference") before := by
+  dsimp only
+  rw [actionPre_typedDereference, actionPre_ok kind]
+  change actionPre (PlaceMachine.readImmediate access _) _ _ before = _
+  simp only [PlaceReadWriteWP.actionPre_readImmediate, PlaceReadWriteWP.immediateReadPre_immediate,
+    readable, ↓reduceIte, untouched, actionPre_pointerFromImmediate]
+  rw [actionPre_ok deref]
+  change actionPre ((CompilerExecutionProviders.pointerCompiler facts).layoutOf choice pointee) _ _ before = _
+  rw [actionPre_ok target]
+  simp only [Immediate.toScalarAndMeta, Except.mapError, scalarCheckPre, width]
+  change actionPre (PointerPlaceMachine.withMetadata access _ _ layout false) _ _ before = _
+  simp only [actionPre_pointerWithMetadata, Bool.false_eq_true, ↓reduceIte]
+  rw [actionPre_misalignmentSkip]
+  · simp only [actionPre_enforceValidity, validation]
+    rfl
+  · simp only [alignment]
+    rfl
+
+end Production
+
 end MiriTests.Verification.OperandPlaceWP
