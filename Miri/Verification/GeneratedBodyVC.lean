@@ -143,6 +143,18 @@ theorem controlPre_eq (config : Config) (limits : Limits) (graph : BodyCFG.Compi
   simp only [controlPre, WholeBodyWP.catalogControlPre_shared, WholeBodyWP.catalogSharedPre,
     WholeBodyWP.eliminate_iff, WholeBodyWP.solve_iff]
 
+/-- Use the same shared solver when a callee summary resumes the caller. -/
+theorem sharedPre_eq (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) :
+    sharedPre config limits graph table allowed depth post failure =
+      WholeBodyWP.catalogControlPre config limits graph allowed depth post failure := by
+  rw [← controlPre_eq config limits graph table allowed depth post failure]
+  funext before
+  exact propext (WholeBodyWP.eliminate_iff (rule config limits graph table)
+    (fun state => state.stack.frames.size) allowed depth post failure
+    (BodyCFG.programRank graph) before).symm
+
 /-- At a live call site, open the actual callee scope and resume the
 generated continuation on the state left by return. -/
 theorem sharedPre_iff_call (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
@@ -153,12 +165,7 @@ theorem sharedPre_iff_call (config : Config) (limits : Limits) (graph : BodyCFG.
       CalleeSummaryWP.callPre config limits graph allowed
         (CalleeSummaryWP.continueWith config limits graph allowed depth post failure)
         failure before := by
-  have same := congrFun (controlPre_eq config limits graph table allowed depth post failure) before
-  have shared := WholeBodyWP.eliminate_iff (rule config limits graph table)
-    (fun state => state.stack.frames.size) allowed depth post failure (BodyCFG.programRank graph) before
-  change controlPre config limits graph table allowed depth post failure before ↔
-    sharedPre config limits graph table allowed depth post failure before at shared
-  rw [← shared, same]
+  rw [sharedPre_eq]
   exact (CalleeSummaryWP.callPre_continue_iff config limits graph allowed depth post failure before live).symm
 
 /-- A statically selected instruction and its reduced transfer. The live
