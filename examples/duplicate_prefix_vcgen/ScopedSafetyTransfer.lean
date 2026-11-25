@@ -56,14 +56,14 @@ theorem requiredFromRoot_of_onError
       FunctionBody.OnError (ExecutionMachine.step config limits)
         (fun state => state.stack.frames.size) allowed entry.stack.frames.size entry BodyVCGen.noUB) :
     GeneratedBodySafety.requiredFromRoot config limits launch arguments destination span allowed before := by
-  simp only [GeneratedBodySafety.requiredFromRoot, selected, BodyVCGen.preparedProgramPre,
+  simp only [GeneratedBodySafety.requiredFromRoot_eq, selected, BodyVCGen.preparedProgramPre,
     wp, WP.wpTrans]
   cases result : BodyVCGen.prepareRoot config limits program launch arguments destination span before with
   | error error failed => exact preparationError error failed result
   | ok value entry =>
     cases value
     obtain ⟨entered, safe⟩ := prepared entry result
-    simpa only [GeneratedBodySafety.requiredAt, selected] using
+    simpa only [GeneratedBodySafety.requiredAt_eq, selected] using
       requiredAt_of_onError config limits program selected allowed entry entered safe
 
 #print axioms requiredAt_of_onError

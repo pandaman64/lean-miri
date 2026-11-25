@@ -21,7 +21,7 @@ theorem savedSafetyFromReplay (config : Config) (limits : ExecutionMachine.Limit
     funext state choice
     cases choice
     simp [selected]
-  simpa only [GeneratedBodySafety.requiredForEveryChoiceAt, GeneratedBodySafety.requiredAt,
+  simpa only [GeneratedBodySafety.requiredForEveryChoiceAt, GeneratedBodySafety.requiredAt_eq,
     BodyVCGen.noUB, loaded, choices] using certificate.verdict.exactNoUB
 
 #print axioms savedSafetyFromReplay

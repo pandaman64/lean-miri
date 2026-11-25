@@ -13,11 +13,6 @@ private def opcode (node : BodyCFG.Node) : String :=
 private def locJson (loc : Location) : Json :=
   toJson #[loc.block, loc.statementIndex]
 
-private def equationsJson (cfg : BodyCFG.Compiled) : Json :=
-  Json.arr (cfg.equations.map fun equation =>
-    Json.mkObj [("pc", locJson equation.pc), ("operation", toJson (opcode equation.node)),
-      ("targets", Json.arr (equation.targets.map locJson))])
-
 private def selectedRoot (input : ExecutionInput) (requested : Option String) : Except String (Nat × String) := do
   let roots := input.document.bodyRoots
   let candidates := (roots.mapIdx fun index root => (index, root)).filter fun (_, root) =>
@@ -40,9 +35,27 @@ def main (args : List String) : IO UInt32 := do
     | .ok loaded => pure loaded
     | .error error => throw (IO.userError error)
   let graph := BodyCFG.compileProgram loaded.bodies
-  let functions := loaded.bodies.map fun body =>
-    Json.mkObj [("identity", toJson body.identity.index),
-      ("equations", (graph.lookup body.identity).elim (Json.arr #[]) equationsJson)]
+  let mut representatives : Std.HashMap String (Array (BodyCFG.Node × BodyCFG.ProgramLocation)) := {}
+  let mut functions := #[]
+  for body in loaded.bodies do
+    let mut equations := #[]
+    if let some cfg := graph.lookup body.identity then
+      for equation in cfg.equations do
+        let here : BodyCFG.ProgramLocation := ⟨body.identity, equation.pc⟩
+        let key := reprStr equation.node
+        let candidates := representatives[key]?.getD #[]
+        let representative ← match candidates.find? (fun (node, _) => node = equation.node) with
+          | some (_, earlier) => pure earlier
+          | none =>
+            representatives := representatives.insert key (candidates.push (equation.node, here))
+            pure here
+        equations := equations.push (Json.mkObj [("pc", locJson equation.pc),
+          ("operation", toJson (opcode equation.node)),
+          ("targets", Json.arr (equation.targets.map locJson)),
+          ("representative", toJson #[representative.body.index, representative.pc.block,
+            representative.pc.statementIndex])])
+    functions := functions.push (Json.mkObj [("identity", toJson body.identity.index),
+      ("equations", Json.arr equations)])
   let output := Json.mkObj [("rootIndex", toJson rootIndex),
     ("root", toJson rootName),
     ("rootIdentity", toJson loaded.root.identity.index), ("bodies", Json.arr functions)]

@@ -315,6 +315,21 @@ private partial def splitValue (base : Name) (value : Expr) :
   let result := (mkConst name, 1)
   return result
 
+open Elab Command in
+/-- Define an accepted input as checked Lean data. -/
+def addInputDecl (declName : Name) (input : Input.ExecutionInput) : CommandElabM Unit := do
+  -- Avoid retaining an asynchronous environment snapshot for every chunk.
+  let (value, _) ← liftTermElabM <| withOptions (Elab.async.set · false) do
+    (splitValue declName (toExpr input)).run' {}
+  liftCoreM <| withOptions (Elab.async.set · false) <| addAndCompile <| .defnDecl {
+    name := declName
+    levelParams := []
+    type := mkConst ``Input.ExecutionInput
+    value := value
+    hints := .regular 0
+    safety := .safe
+  }
+
 /-- Import an accepted document as a closed, kernel-checked Lean value.
 Malformed or failed compiler input is rejected before declarations are created.
 This command never produces a safety theorem. -/
@@ -327,18 +342,6 @@ elab_rules : command
     let result ← match decoded with
       | .ok result => pure result
       | .error message => throwErrorAt path "MIR import failed: {message}"
-    let declName := (← getCurrNamespace) ++ name.getId
-    -- Thousands of auxiliary definitions must not each retain an asynchronous
-    -- environment snapshot until the end of this single command.
-    let (value, _) ← liftTermElabM <| withOptions (Elab.async.set · false) do
-      (splitValue declName (toExpr result)).run' {}
-    liftCoreM <| withOptions (Elab.async.set · false) <| addAndCompile <| .defnDecl {
-      name := declName
-      levelParams := []
-      type := mkConst ``Input.ExecutionInput
-      value := value
-      hints := .regular 0
-      safety := .safe
-    }
+    addInputDecl ((← getCurrNamespace) ++ name.getId) result
 
 end Miri.Frontend

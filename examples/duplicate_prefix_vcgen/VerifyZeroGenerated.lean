@@ -45,7 +45,7 @@ theorem zeroGeneratedSafety
       exact ⟨frame, by simp [Storage.withCurrent, Stack.currentFrame?], entry.identity, entry.body, entry.location⟩
     obtain ⟨final, execution, returned⟩ := executesZeroReturn options limits remaining span source debugOff fuel fuelEq
       older caller frame machine entry ready defaultMode gc unchecked
-    simpa only [GeneratedBodySafety.requiredAt, loaded] using
+    simpa only [GeneratedBodySafety.requiredAt_eq, loaded] using
       SuccessfulTrace.generated_of_returning_trace _ limits program allowed _ final aligned execution returned
 
 #print axioms zeroGeneratedSafety

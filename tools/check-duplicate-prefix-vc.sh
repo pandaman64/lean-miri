@@ -6,6 +6,7 @@ source="$PWD/examples/duplicate_prefix_vcgen/duplicate_prefix.rs"
 harness="$PWD/examples/duplicate_prefix_vcgen/runtime.rs"
 mkdir -p "$out"
 export LEAN_NUM_THREADS=1
+flock --no-fork /tmp/lean-miri-lake-build.lock lake build Miri.Frontend.ImportBodyVC
 export LEAN_PATH="$out:${LEAN_PATH:-$PWD/.lake/build/lib/lean}"
 LEAN_MIRI_PREPARED_ALLOC_ID_WORLD=1 bash tools/export-mir.sh \
   --output "$out/harness.json" --root miri_start --root duplicate_prefix::duplicate_prefix -- \

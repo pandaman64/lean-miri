@@ -9,13 +9,17 @@ import Miri.Verification.DropWP
 import Miri.Verification.NondivergingIntrinsicWP
 import Miri.Verification.PlaceMentionWP
 import Miri.Verification.StorageLiveWP
+import Miri.Verification.MemoryObservationWP
 import Miri.Verification.MemoryWP
+import Miri.Verification.OperandPlaceWP
+import Miri.Verification.PlaceReadWriteWP
 import Miri.Verification.ScalarMemoryWP
 import Miri.Verification.RvalueWP
 import Miri.Verification.TreeBorrowSetupWP
 import Miri.Verification.TreeDiagnosticWP
 import Miri.Verification.TreeEffectsWP
 import Miri.Verification.TreeNormalRangeWP
+import Miri.Verification.TreeObservationWP
 import Miri.Verification.TreeOverlapWP
 import Miri.Verification.TreeWildcardPairWP
 import Miri.Verification.TreeRangeCursorsWP

@@ -190,11 +190,20 @@ tools/body-vc safety examples/body_vcgen/control.rs \
 The command saves the Lean condition and the paired MIR JSON. It reports
 generation time and the time to check that the generated file is well typed.
 Rust source exports use the pinned MIR-enabled sysroot and `-Cpanic=abort`.
-The emitted `safetySpec` characterizes the VC at a prepared entry. It holds
-exactly when the frame matches the imported entry and every permitted finite
-error in the call scope is classified as non-UB. To see a proof that supplies
-these facts for a concrete Rust function and its admitted caller domain, follow
-the [empty_function example](examples/empty_function/README.md#generated-body-verification-condition).
+The generated file specializes each known transfer against its imported MIR
+instruction using exact WP rewrites. In Lean, use `#print` on a declaration
+such as `GeneratedBodySafety.transfer_0_bb0_0` to inspect its `pre` field.
+It takes the driver choice, success and error continuations, and machine
+state. Locations with identical instructions share a transfer. Branches,
+loops and calls use the shared whole-body condition for their successors.
+States outside the imported graph use the interpreter's canonical rule.
+
+`safetySpec` characterizes the VC at a prepared entry. It holds exactly
+when the frame matches the imported entry and every permitted finite error
+in the call scope is classified as non-UB. The exact rewrite `requiredAt_eq`
+connects the generated condition to proofs over the canonical VC. To see a
+proof that supplies these facts for a concrete Rust function and its admitted
+caller domain, follow the [empty_function example](examples/empty_function/README.md#generated-body-verification-condition).
 
 Export the Rust function and import the execution input with
 `Miri.Frontend.ImportMIR`. In a Lean client, import

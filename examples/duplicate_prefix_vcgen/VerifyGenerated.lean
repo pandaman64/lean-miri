@@ -21,7 +21,7 @@ def certifyRequiredAt (config : Config) (limits : ExecutionMachine.Limits)
     let certificate ← certify config limits program choose before budget
     if safe : certificate.verdict.acceptsNoUB = true then
       some ⟨by
-        rw [GeneratedBodySafety.requiredAt, loaded]
+        rw [GeneratedBodySafety.requiredAt_eq, loaded]
         exact certificate.verdict.exactNoUB.mpr safe⟩
     else none
 
@@ -67,7 +67,7 @@ theorem refuteFromCertificate (config : Config) (limits : ExecutionMachine.Limit
     (certificate : Certificate config limits program choose before)
     (rejected : certificate.verdict.acceptsNoUB = false) :
     ¬ GeneratedBodySafety.requiredAt config limits (selected choose) before := by
-  rw [GeneratedBodySafety.requiredAt, loaded]
+  rw [GeneratedBodySafety.requiredAt_eq, loaded]
   intro safe
   have accepted := certificate.verdict.exactNoUB.mp safe
   simp [rejected] at accepted
