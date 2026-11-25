@@ -49,17 +49,17 @@ theorem protectedWriteReleases (initial : UInt8) : (show Except String (Array UI
 
 /-- Run the emitted callee window from the actual successor of the caller's
 call step and check the caller state reached after Return. -/
-def checkUpdateReturn : Except String Unit :=
+def observeUpdateReturn : Except String (Config × State) :=
   match atBorrowedCall with
   | .error error => .error error
   | .ok (config, _, caller) => do
     let (entered, callOutcome) := ExecutionMachine.step config limits () caller
-    let more ← callOutcome.mapError reprStr
-    unless more && argumentHasStrongProtector entered do
+    let more ← (callOutcome.map ULift.up).mapError reprStr
+    unless more.down && argumentHasStrongProtector entered do
       throw "the call did not enter update with its strong protector"
     let some (returned, result) := executePrefix config 0
       [mir_1_bb0_0, mir_1_bb0_1, mir_1_bb0_2] entered | throw "update prefix mismatch"
-    let _ ← result.mapError reprStr
+    if let .error error := result then throw (reprStr error)
     let tracker := returned.machine.borrowTracker.map (fun tracker =>
       tracker.global.protectedTags.get calleeBorrow)
     unless decide (returned.stack.frames.size = 1 ∧
@@ -68,6 +68,12 @@ def checkUpdateReturn : Except String Unit :=
           caller.stack.currentFrame?.map (·.localsIdentity) ∧
         scalarAt returned 4 = some 7 ∧ bytesAt 0 returned = some (.ok #[42]) ∧ tracker = some none) do
       throw "update did not resume its caller with byte 42, result 7 and the protector released"
+    return (config, returned)
+
+def checkUpdateReturn : Except String Unit :=
+  match observeUpdateReturn with
+  | .ok _ => .ok ()
+  | .error error => .error error
 
 set_option compiler.extract_closed false in
 #eval show IO Unit from match checkUpdateReturn with
