@@ -175,6 +175,54 @@ structure WindowRow (config : Config) (limits : Limits) where
   reduced : ReducedNode config limits
   summarizeCall : Bool := false
 
+/-- Observe a finite prefix of an emitted window. Each row requires the live
+PC and instruction before using its reduced transfer. This view selects by
+instruction payload and PC, so identical rows in different bodies admit the
+same rule. A listed call takes one driver step. The endpoint records the last
+successor of the prefix. A mismatch or stopped driver has no
+endpoint, while an error is checked at its actual failed state. -/
+def windowPrefixPre (config : Config) (limits : Limits) (allowed : State → C → Prop)
+    (post : State → Prop) (failure : Failure) :
+    List (WindowRow config limits) → State → Prop
+  | [], before => post before
+  | row :: rest, before =>
+    BodyCFG.selected before = some (row.location.pc, row.reduced.node) ∧
+      ∀ choice, allowed before choice →
+        row.reduced.pre choice (fun more after =>
+          more = true ∧ windowPrefixPre config limits allowed post failure rest after)
+          failure before
+
+/-- The prefix observation uses production steps and the same choice policy. -/
+theorem windowPrefixPre_step (config : Config) (limits : Limits) (allowed : State → C → Prop)
+    (post : State → Prop) (failure : Failure) (row : WindowRow config limits)
+    (rest : List (WindowRow config limits)) (before : State) :
+    windowPrefixPre config limits allowed post failure (row :: rest) before ↔
+      BodyCFG.selected before = some (row.location.pc, row.reduced.node) ∧
+        ∀ choice, allowed before choice →
+          InstructionWP.resultPre (fun more after =>
+            more = true ∧ windowPrefixPre config limits allowed post failure rest after)
+            failure (ExecutionMachine.step config limits choice before) := by
+  rw [windowPrefixPre]
+  apply and_congr_right
+  intro selected
+  apply forall_congr'
+  intro choice
+  apply imp_congr_right
+  intro _
+  refine (row.reduced.exact choice _ _ _).trans ?_
+  let equation : BodyCFG.Equation := ⟨row.location.pc, row.reduced.node, #[]⟩
+  let cfg : BodyCFG.Compiled := { blocks := #[] }
+  let endpoint := windowPrefixPre config limits allowed post failure rest
+  have continued :
+      (fun more after => if more then BodyCFG.route cfg (fun _ => endpoint) endpoint after
+        else False) = (fun more after => more = true ∧ endpoint after) := by
+    funext more after
+    cases more <;> simp only [Bool.false_eq_true, false_and, true_and, ↓reduceIte]
+    exact propext (BodyCFG.route_shared cfg endpoint after)
+  simpa only [BodyCFG.Equation.pre, equation, continued, ExecutionMachine.step] using
+    BodyCFG.Equation.pre_iff equation config limits cfg choice (fun _ => endpoint)
+      endpoint (fun _ => False) failure before selected
+
 /-- Compose a list of straight-line transfers. Each continuing transfer
 passes its actual successor state to the next row. A selected call
 summarizes the actual entered scope. Other edges leaving the window use
