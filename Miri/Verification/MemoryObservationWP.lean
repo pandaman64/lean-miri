@@ -62,6 +62,13 @@ def scalarFromImage [DecidableEq P] [PointerProvenance P]
   unfold scalarFromImage
   rfl
 
+/-- Select the corresponding continuation after decoding the scalar image. -/
+def scalarOutcomePre (result : Except AllocError (Scalar P)) (post : Scalar P → Prop)
+    (failure : AllocError → Prop) : Prop :=
+  match result with
+  | .ok value => post value
+  | .error error => failure error
+
 /-- A successful physical mutation supplies the image to the next scalar read.
 A failed mutation hands its retained allocation to the mutation error branch. -/
 def afterMutationPre [DecidableEq P] [PointerProvenance P]
@@ -72,10 +79,9 @@ def afterMutationPre [DecidableEq P] [PointerProvenance P]
   match mutation with
   | .error error allocation => onMutationError error allocation
   | .ok () allocation =>
-    match scalarFromImage layout range readProvenance (allocation.getBytesUnchecked range)
-        (allocation.initializationMask.isRangeInitialized range) allocation.provenanceMap with
-    | .ok value => post value allocation
-    | .error error => onReadError error allocation
+    scalarOutcomePre (scalarFromImage layout range readProvenance (allocation.getBytesUnchecked range)
+        (allocation.initializationMask.isRangeInitialized range) allocation.provenanceMap)
+      (fun value => post value allocation) (fun error => onReadError error allocation)
 
 theorem afterMutationPre_eq [DecidableEq P] [PointerProvenance P]
     (mutation : EStateM.Result AllocError (Allocation P E) Unit)
@@ -93,7 +99,36 @@ theorem afterMutationPre_eq [DecidableEq P] [PointerProvenance P]
   | error => rfl
   | ok result allocation =>
     cases result
-    simp only [afterMutationPre, readScalar_eq_image]
+    simp only [afterMutationPre, scalarOutcomePre, readScalar_eq_image]
+
+/-- Observe a scalar in the current physical allocation. Reading leaves the
+allocation state intact on success and on error. -/
+def loadScalar [DecidableEq P] [PointerProvenance P]
+    (layout : TargetDataLayout) (range : AllocRange) (readProvenance : Bool) :
+    EStateM AllocError (Allocation P E) (Scalar P) := fun allocation =>
+  match allocation.readScalar layout range readProvenance with
+  | .ok value => .ok value allocation
+  | .error error => .error error allocation
+
+/-- The ordinary allocation-state WP of a mutation followed by a scalar load.
+A mutation failure reaches the same error predicate with its retained state. -/
+theorem wp_mutationThenRead [DecidableEq P] [PointerProvenance P]
+    (mutate : EStateM AllocError (Allocation P E) Unit)
+    (layout : TargetDataLayout) (range : AllocRange) (readProvenance : Bool)
+    (post : Scalar P → Allocation P E → Prop) (failure : AllocError → Allocation P E → Prop)
+    (initial : Allocation P E) :
+    wp (do
+      mutate
+      loadScalar layout range readProvenance) post failure initial ↔
+    afterMutationPre (mutate initial) layout range readProvenance post failure failure := by
+  rw [← afterMutationPre_eq]
+  simp only [wp, WP.wpTrans, Bind.bind, EStateM.bind]
+  cases mutate initial with
+  | error => rfl
+  | ok value allocation =>
+    cases value
+    unfold loadScalar
+    cases read : allocation.readScalar layout range readProvenance <;> simp only [read]
 
 /-- Use the initial byte image and the exact splice when the next load
 observes any in-bounds range, including a partially overwritten range. -/
@@ -168,15 +203,28 @@ theorem copyThenReadPre_eq [DecidableEq P] [PointerProvenance P]
       layout readRange readProvenance post onCopyError onReadError =
       Allocation.Bridge.copyRepeatedlyPre source sourceRange destStart repeatCount pointerSize
         sameAllocation nonoverlap
-        (fun after => match scalarFromImage layout readRange readProvenance
-            (after.getBytesUnchecked readRange) (after.initializationMask.isRangeInitialized readRange) after.provenanceMap with
-          | .ok value => post value after
-          | .error error => onReadError error after)
+        (fun after => scalarOutcomePre (scalarFromImage layout readRange readProvenance
+            (after.getBytesUnchecked readRange) (after.initializationMask.isRangeInitialized readRange) after.provenanceMap)
+          (fun value => post value after) (fun error => onReadError error after))
         onCopyError dest := by
   rw [← Allocation.Bridge.copyRepeatedlyPre_eq]
   cases source.copyRepeatedly sourceRange destStart repeatCount pointerSize sameAllocation nonoverlap dest with
   | ok result => cases result; rfl
   | error => rfl
+
+/-- Bits serialized by a scalar write, before applying target endianness. -/
+def storedScalarBits : ScalarBitsOrPointer P → U128
+  | .bits bits => bits
+  | .pointer pointer => BitVec.ofNat 128 pointer.offset.bytes.toNat
+
+/-- The final provenance map of a scalar write after the overwritten range
+has been cleared. Integers use the cleared map and pointers insert a tag. -/
+def scalarProvenanceAfterWrite (layout : TargetDataLayout) (range : AllocRange)
+    (cleared final : ProvenanceMap P) : ScalarBitsOrPointer P → Prop
+  | .bits _ => final = cleared
+  | .pointer pointer => range.size = Size.fromBits layout.pointerWidth.bits ∧
+      cleared.insertPtr range.start pointer.provenance
+        (Size.fromBits layout.pointerWidth.bits) = .ok () final
 
 /-- Pull a full-width load of the written range back to the serialized input
 scalar and the provenance produced by clearing or inserting at the initial
@@ -194,32 +242,22 @@ theorem storeThenRead_image [DecidableEq P] [PointerProvenance P]
     (clear : ∀ image : Array UInt8,
       initial.getBytesUnchecked (allocRange Size.ZERO initial.byteSize) = .ok image →
       initial.provenanceMap.clear range image (Size.fromBits layout.pointerWidth.bits) = .ok () cleared)
-    (insert : match converted with
-      | .bits _ => final = cleared
-      | .pointer pointer => range.size = Size.fromBits layout.pointerWidth.bits ∧
-        cleared.insertPtr range.start pointer.provenance
-          (Size.fromBits layout.pointerWidth.bits) = .ok () final)
+    (insert : scalarProvenanceAfterWrite layout range cleared final converted)
     (readProvenance : Bool) (post : Scalar P → Allocation P E → Prop)
     (onWriteError onReadError : AllocError → Allocation P E → Prop) :
-    let bits := match converted with
-      | .bits bits => bits
-      | .pointer pointer => BitVec.ofNat 128 pointer.offset.bytes.toNat
+    let bits := storedScalarBits converted
     ∃ updated, Allocation.writeScalar layout range value initial = .ok () updated ∧
       afterMutationPre (Allocation.writeScalar layout range value initial)
         layout range readProvenance post onWriteError onReadError =
-      match scalarFromImage layout range readProvenance
+      scalarOutcomePre (scalarFromImage layout range readProvenance
         (.ok (MemoryWP.scalarBytes layout range.size bits.toNat))
-        (.ok (.ok ())) final with
-      | .ok scalar => post scalar updated
-      | .error error => onReadError error updated := by
+        (.ok (.ok ())) final) (fun scalar => post scalar updated) (fun error => onReadError error updated) := by
   obtain ⟨updated, write, _, _, _, _, _, _, _, _, _, initialized, provenance, intBytes, ptrBytes, _⟩ :=
     Allocation.writeScalar_spec layout initial range value converted cleared final storage mutable
-      maskLength maskValid nonzero width bound conversion clear insert
+      maskLength maskValid nonzero width bound conversion clear (by cases converted <;> exact insert)
   refine ⟨updated, write, ?_⟩
   have bytes : updated.getBytesUnchecked range = .ok (MemoryWP.scalarBytes layout range.size
-      (match converted with
-      | .bits bits => bits
-      | .pointer pointer => BitVec.ofNat 128 pointer.offset.bytes.toNat).toNat) := by
+      (storedScalarBits converted).toNat) := by
     cases converted with
     | bits bits => exact intBytes bits rfl
     | pointer pointer => exact ptrBytes pointer rfl
@@ -234,9 +272,7 @@ theorem storeThenRead_splice [DecidableEq P] [PointerProvenance P]
     (written observed : AllocRange) (finish : Size) (value : Scalar P)
     (converted : ScalarBitsOrPointer P) (bits : U128) (nextMask : InitMask)
     (cleared final : ProvenanceMap P) (image oldBytes encoded : Array UInt8)
-    (bitValue : bits = match converted with
-      | .bits bits => bits
-      | .pointer pointer => BitVec.ofNat 128 pointer.offset.bytes.toNat)
+    (bitValue : bits = storedScalarBits converted)
     (full : initial.getBytesUnchecked (allocRange Size.ZERO initial.byteSize) = .ok image)
     (mutable : initial.mutability = .Mut)
     (conversion : value.toBitsOrPtrInternal written.size = .ok converted)
@@ -256,11 +292,7 @@ theorem storeThenRead_splice [DecidableEq P] [PointerProvenance P]
     (length : (image.extract 0 written.start.bytes.toNat ++ encoded ++
         image.extract (written.start.bytes.toNat + written.size.bytes.toNat) image.size).size =
       initial.byteSize.bytes.toNat)
-    (insert : match converted with
-      | .bits _ => final = cleared
-      | .pointer pointer => written.size = Size.fromBits layout.pointerWidth.bits ∧
-        cleared.insertPtr written.start pointer.provenance
-          (Size.fromBits layout.pointerWidth.bits) = .ok () final)
+    (insert : scalarProvenanceAfterWrite layout written cleared final converted)
     (endpoint : observed.endExclusive = .ok finish)
     (ordered : observed.start.bytes.toNat ≤ finish.bytes.toNat)
     (bound : finish.bytes.toNat ≤ initial.byteSize.bytes.toNat)
@@ -271,15 +303,15 @@ theorem storeThenRead_splice [DecidableEq P] [PointerProvenance P]
     ∃ updated, Allocation.writeScalar layout written value initial = .ok () updated ∧
       afterMutationPre (Allocation.writeScalar layout written value initial)
         layout observed readProvenance post onWriteError onReadError =
-      match scalarFromImage layout observed readProvenance
+      scalarOutcomePre (scalarFromImage layout observed readProvenance
         (.ok (splice.extract observed.start.bytes.toNat finish.bytes.toNat))
-        (nextMask.isRangeInitialized observed) final with
-      | .ok scalar => post scalar updated
-      | .error error => onReadError error updated := by
+        (nextMask.isRangeInitialized observed) final)
+        (fun scalar => post scalar updated) (fun error => onReadError error updated) := by
   obtain ⟨updated, write, size, _, _, _, _, _, mask, provenance, spliced⟩ :=
     Allocation.Bridge.writeScalar_step_bridge layout initial written value converted bits nextMask
-      cleared final image oldBytes encoded bitValue full mutable conversion slice mark clear
-      serialize length insert
+      cleared final image oldBytes encoded (by cases converted <;> exact bitValue)
+      full mutable conversion slice mark clear
+      serialize length (by cases converted <;> exact insert)
   have bytes := Allocation.Bridge.getBytesUnchecked_eq_extract updated observed finish _ spliced
     endpoint ordered (size.symm ▸ bound)
   exact ⟨updated, write, by simp only [write, afterMutationPre, bytes, mask, provenance]⟩
@@ -326,9 +358,8 @@ theorem copyThenRead_image [DecidableEq P] [PointerProvenance P]
       afterMutationPre (Allocation.copy source sourceRange destStart (Size.fromBits layout.pointerWidth.bits)
           sameAllocation nonoverlap dest)
         layout destRange readProvenance post onCopyError onReadError =
-      match scalarFromImage layout destRange readProvenance (.ok bytes) (.ok (.ok ())) final with
-      | .ok scalar => post scalar updated
-      | .error error => onReadError error updated := by
+      scalarOutcomePre (scalarFromImage layout destRange readProvenance (.ok bytes) (.ok (.ok ())) final)
+        (fun scalar => post scalar updated) (fun error => onReadError error updated) := by
   obtain ⟨updated, copy, _, _, _, _, _, _, _, _, destInit, _, _, provenance, destBytes, _⟩ :=
     Allocation.copy_initialized_spec source dest sourceRange sourceEnd destStart
       (Size.fromBits layout.pointerWidth.bits) sameAllocation nonoverlap bytes copied cleared final
@@ -350,5 +381,30 @@ theorem wp_storeThenLoad [DecidableEq K] (config : Config)
   rw [← RvalueWP.actionPre_eq_wp, RvalueWP.actionPre_bind]
   simp only [RvalueWP.actionPre_eq_wp]
   exact (MemoryWP.immediateWritePre_iff ..).symm
+
+private theorem observedIff {S : Type} {pre observed : Prop} {mutation : S → Prop}
+    (result : ∃ state, mutation state ∧ pre = observed) : pre ↔ observed := by
+  obtain ⟨_, _, equal⟩ := result
+  exact Iff.of_eq equal
+
+/-- Open a physical mutation followed by a scalar load. This tactic uses the
+checked initial-image rules for a store, splice, or one-copy range when the
+goal describes the scalar result and the local facts supply their premises.
+Otherwise it exposes the exact mutation and read continuations. -/
+macro "miri_observe_memory" : tactic =>
+  `(tactic| (
+    simp (config := { failIfUnchanged := false }) only [wp_mutationThenRead]
+    first
+    | solve
+      | (simp only [*, afterMutationPre, and_self, eq_self_iff_true])
+      | (apply observedIff
+         apply storeThenRead_image <;> first | assumption | rfl)
+      | (apply observedIff
+         apply storeThenRead_splice <;> assumption)
+      | (apply observedIff
+         apply copyThenRead_image <;> assumption)
+      | simp only [*, afterMutationPre, scalarOutcomePre, scalarFromImage, Except.mapError, Bind.bind,
+          Except.bind, Pure.pure, Except.pure, MonadExceptOf.throw]
+    | simp (config := { failIfUnchanged := false }) only [Allocation.copy, copyThenReadPre_eq]))
 
 end Miri.Verification.MemoryObservationWP
