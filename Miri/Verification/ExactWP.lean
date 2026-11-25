@@ -14,6 +14,7 @@ import Miri.Verification.MemoryObservationWP
 import Miri.Verification.MemoryWP
 import Miri.Verification.OperandPlaceWP
 import Miri.Verification.PlaceReadWriteWP
+import Miri.Verification.PointerFormationWP
 import Miri.Verification.ScalarMemoryWP
 import Miri.Verification.RvalueWP
 import Miri.Verification.TreeBorrowSetupWP
