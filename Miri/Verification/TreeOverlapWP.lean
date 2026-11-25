@@ -136,45 +136,45 @@ private theorem slots_iff (tree : BorrowTree) (provenance : ProvenanceExtra)
         (allowed byte segment.data ((geometry.partition byte segment.data).mp
           ⟨position, segment, entry, covers, rfl⟩) (within byte covers))⟩
 
-private def retainedRead (tree : BorrowTree) (reader : ProvenanceExtra)
+private def retainedAccess (tree : BorrowTree) (provenance : ProvenanceExtra) (kind : AccessKind)
     (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode) (prepared : IterMutResult LocationTree)
     (cursor : Nat) : TreeLocationAccessAtResult :=
   match prepared.segments[cursor]? with
   | none => ⟨default, none, none⟩
   | some segment =>
-    tree.performTreeAccessAt segment.data (source tree reader) .Read tags mode segment.range
+    tree.performTreeAccessAt segment.data (source tree provenance) kind tags mode segment.range
 
-private theorem retained_iff (tree : BorrowTree) (reader : ProvenanceExtra)
+private theorem retained_iff (tree : BorrowTree) (provenance : ProvenanceExtra) (kind : AccessKind)
     (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode) (prepared : IterMutResult LocationTree)
     (cursor : Nat) (result : TreeLocationAccessAtResult) :
-    SnapshotAuthorized tree prepared (source tree reader) .Read tags mode cursor result ↔
-    SlotAuthorized tree prepared (source tree reader) .Read tags mode cursor ∧
-      retainedRead tree reader tags mode prepared cursor = result := by
+    SnapshotAuthorized tree prepared (source tree provenance) kind tags mode cursor result ↔
+    SlotAuthorized tree prepared (source tree provenance) kind tags mode cursor ∧
+      retainedAccess tree provenance kind tags mode prepared cursor = result := by
   unfold SnapshotAuthorized SlotAuthorized
   simp only [← RangeVerification.locationContract_iff]
   constructor
   · rintro ⟨position, segment, atPosition, atSegment, bounded, equal, complete⟩
     exact ⟨⟨position, segment, atPosition, atSegment, bounded, complete⟩,
-      by simpa only [retainedRead, atSegment] using equal⟩
+      by simpa only [retainedAccess, atSegment] using equal⟩
   · rintro ⟨⟨position, segment, atPosition, atSegment, bounded, complete⟩, equal⟩
     exact ⟨position, segment, atPosition, atSegment, bounded,
-      by simpa only [retainedRead, atSegment] using equal, complete⟩
+      by simpa only [retainedAccess, atSegment] using equal, complete⟩
 
-private theorem readLocations_entry (tree : BorrowTree) (reader : ProvenanceExtra)
+private theorem accessLocations_entry (tree : BorrowTree) (provenance : ProvenanceExtra) (kind : AccessKind)
     (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode) (prepared : IterMutResult LocationTree)
     (range : ByteRange) (contents : UInt64 → LocationTree → Prop)
     (geometry : prepared.PreparedFor range contents)
     (authorized : ∀ cursor, cursor < prepared.positions.size →
-      SlotAuthorized tree prepared (source tree reader) .Read tags mode cursor)
+      SlotAuthorized tree prepared (source tree provenance) kind tags mode cursor)
     (position : Nat) (segment : RangeMapSegment LocationTree)
     (entry : prepared.state.entries[position]? = some segment)
     (byte : UInt64) (covered : segment.range.Contains byte) :
-    (TreeRangePointwiseWP.readLocations prepared (retainedRead tree reader tags mode prepared)).entries[position]? =
+    (TreeRangePointwiseWP.readLocations prepared (retainedAccess tree provenance kind tags mode prepared)).entries[position]? =
       some { segment with data :=
         if range.start ≤ byte ∧ byte < range.stop then
-          (localAccess tree segment.data reader .Read tags mode).location else segment.data } := by
+          (localAccess tree segment.data provenance kind tags mode).location else segment.data } := by
   classical
-  let retained := retainedRead tree reader tags mode prepared
+  let retained := retainedAccess tree provenance kind tags mode prepared
   let cursors := (List.range' 0 prepared.positions.size).reverse
   let find := cursors.findSome? (snapshotLocationAt prepared retained position)
   have inCursor (cursor : Nat) : cursor ∈ cursors ↔ cursor < prepared.positions.size := by
@@ -182,7 +182,7 @@ private theorem readLocations_entry (tree : BorrowTree) (reader : ProvenanceExtr
   have evaluate (cursor : Nat) (member : cursor ∈ cursors) :
       snapshotLocationAt prepared retained position cursor =
         if prepared.positions[cursor]? = some position then
-          some (localAccess tree segment.data reader .Read tags mode).location else none := by
+          some (localAccess tree segment.data provenance kind tags mode).location else none := by
     have bound := (Array.getElem?_eq_some_iff.mp entry).choose
     by_cases selected : prepared.positions[cursor]? = some position
     · obtain ⟨slotPosition, slot, positionAt, segmentAt, slotEntry, _, _⟩ :=
@@ -196,14 +196,14 @@ private theorem readLocations_entry (tree : BorrowTree) (reader : ProvenanceExtr
       subst s
       rw [← RangeVerification.locationContract_iff] at perm
       have result := (RangeVerification.location_success_range_irrelevant tree segment.data
-        (source tree reader) .Read tags mode segment.range ⟨0, 0⟩
-        (fun after => after = (tree.performTreeAccessAt segment.data (source tree reader) .Read tags mode
+        (source tree provenance) kind tags mode segment.range ⟨0, 0⟩
+        (fun after => after = (tree.performTreeAccessAt segment.data (source tree provenance) kind tags mode
           segment.range).location)).mp ⟨perm, rfl⟩
-      simp [snapshotLocationAt, selected, bound, segmentAt, retained, retainedRead, localAccess, result.2]
+      simp [snapshotLocationAt, selected, bound, segmentAt, retained, retainedAccess, localAccess, result.2]
     · simp [snapshotLocationAt, selected]
   have result :
       find = if range.start ≤ byte ∧ byte < range.stop then
-        some (localAccess tree segment.data reader .Read tags mode).location else none := by
+        some (localAccess tree segment.data provenance kind tags mode).location else none := by
     by_cases inside : range.start ≤ byte ∧ byte < range.stop
     · rw [ite_eq_left inside]
       obtain ⟨cursor, bounded, found⟩ := geometry.coverage position segment byte entry covered inside
@@ -238,20 +238,36 @@ private theorem readLocations_entry (tree : BorrowTree) (reader : ProvenanceExtr
   rw [result]
   split <;> rfl
 
-private def afterRead (tree : BorrowTree) (reader : ProvenanceExtra) (range : ByteRange)
-    (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode) (byte : UInt64) (data : LocationTree) : Prop :=
-  ∃ initial, tree.locations.MapAt byte initial ∧
-    (range.Contains byte → (localAccess tree initial reader .Read tags mode).location = data) ∧
+/-- The byte is unchanged outside the access, and inside it retains the local permission and cache update. -/
+def afterAccessFrom (tree : BorrowTree) (provenance : ProvenanceExtra) (kind : AccessKind) (range : ByteRange)
+    (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode) (before : UInt64 → LocationTree → Prop)
+    (byte : UInt64) (data : LocationTree) : Prop :=
+  ∃ initial, before byte initial ∧
+    (range.Contains byte → (localAccess tree initial provenance kind tags mode).location = data) ∧
     (¬ range.Contains byte → initial = data)
 
-private theorem readLocations_byte (tree : BorrowTree) (reader : ProvenanceExtra)
+/-- Observe a single access starting from the tree's current byte partition. -/
+abbrev afterAccess (tree : BorrowTree) (provenance : ProvenanceExtra) (kind : AccessKind) (range : ByteRange)
+    (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode) : UInt64 → LocationTree → Prop :=
+  afterAccessFrom tree provenance kind range tags mode tree.locations.MapAt
+
+/-- Byte interpretation uses the supplied initial locations and the tree's
+tag mapping and topology, independently of the tree's own location partition. -/
+theorem afterAccessFrom_replaceLocations (tree : BorrowTree) (locations : DedupRangeMap LocationTree)
+    (provenance : ProvenanceExtra) (kind : AccessKind) (range : ByteRange)
+    (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode) (before : UInt64 → LocationTree → Prop) :
+    afterAccessFrom { tree with locations } provenance kind range tags mode before =
+      afterAccessFrom tree provenance kind range tags mode before := by
+  cases provenance <;> rfl
+
+private theorem accessLocations_byte (tree : BorrowTree) (provenance : ProvenanceExtra) (kind : AccessKind)
     (tags : ProtectedTags) (mode : Tree.ChildrenVisitMode) (prepared : IterMutResult LocationTree)
     (range : ByteRange) (geometry : prepared.PreparedFor range tree.locations.MapAt)
     (authorized : ∀ cursor, cursor < prepared.positions.size →
-      SlotAuthorized tree prepared (source tree reader) .Read tags mode cursor)
+      SlotAuthorized tree prepared (source tree provenance) kind tags mode cursor)
     (byte : UInt64) (data : LocationTree) :
-    (TreeRangePointwiseWP.readLocations prepared (retainedRead tree reader tags mode prepared)).MapAt byte data ↔
-      afterRead tree reader range tags mode byte data := by
+    (TreeRangePointwiseWP.readLocations prepared (retainedAccess tree provenance kind tags mode prepared)).MapAt byte data ↔
+      afterAccess tree provenance kind range tags mode byte data := by
   classical
   constructor
   · rintro ⟨position, segment, entry, within, rfl⟩
@@ -266,7 +282,7 @@ private theorem readLocations_byte (tree : BorrowTree) (reader : ProvenanceExtra
         exact ⟨prior, rfl, same⟩
     obtain ⟨prior, priorEntry, sameRange⟩ := original
     have priorContains : prior.range.Contains byte := sameRange ▸ within
-    have updated := readLocations_entry tree reader tags mode prepared range _ geometry authorized
+    have updated := accessLocations_entry tree provenance kind tags mode prepared range _ geometry authorized
       position prior priorEntry byte priorContains
     rw [entry] at updated
     have value := congrArg RangeMapSegment.data (Option.some.inj updated)
@@ -281,11 +297,11 @@ private theorem readLocations_byte (tree : BorrowTree) (reader : ProvenanceExtra
   · rintro ⟨initial, initialAt, overlapped, outside⟩
     obtain ⟨position, segment, entry, covers, rfl⟩ := (geometry.partition byte initial).mpr initialAt
     refine ⟨position, { segment with data := data }, ?_, covers, rfl⟩
-    have updated := readLocations_entry tree reader tags mode prepared range _ geometry authorized
+    have updated := accessLocations_entry tree provenance kind tags mode prepared range _ geometry authorized
       position segment entry byte covers
     rw [updated]
     have value : (if range.start ≤ byte ∧ byte < range.stop then
-        (localAccess tree segment.data reader .Read tags mode).location else segment.data) = data := by
+        (localAccess tree segment.data provenance kind tags mode).location else segment.data) = data := by
       split
       · exact overlapped ‹_›
       · exact outside ‹_›
@@ -294,7 +310,7 @@ private theorem readLocations_byte (tree : BorrowTree) (reader : ProvenanceExtra
 private theorem afterRead_write_iff (tree : BorrowTree) (reader writer : ProvenanceExtra)
     (readRange writeRange : ByteRange) (readTags writeTags : ProtectedTags)
     (readMode writeMode : Tree.ChildrenVisitMode) :
-    (∀ byte data, afterRead tree reader readRange readTags readMode byte data →
+    (∀ byte data, afterAccess tree reader .Read readRange readTags readMode byte data →
       writeRange.Contains byte → (localAccess tree data writer .Write writeTags writeMode).status.getD .Completed = .Completed) ↔
     (∀ byte initial, tree.locations.MapAt byte initial → writeRange.Contains byte →
       (readRange.Contains byte →
@@ -331,15 +347,15 @@ theorem wp_read_write_bytes_iff (tree : BorrowTree) (reader writer : ProvenanceE
         (TreeRangeOutcomeWP.Trace × TreeRangeOutcomeWP.Trace)) (fun _ _ => True) (fun _ _ => False) tree ↔
     readWritePre tree reader writer readRange writeRange readTags writeTags readMode writeMode := by
   let prepared := tree.locations.iterMut readOffset readLength
-  let retained := retainedRead tree reader readTags readMode prepared
+  let retained := retainedAccess tree reader .Read readTags readMode prepared
   let readMap := TreeRangePointwiseWP.readLocations prepared retained
   have writes (readAllowed : ∀ cursor, cursor < prepared.positions.size →
       SlotAuthorized tree prepared (source tree reader) .Read readTags readMode cursor) :
       TreeRangePointwiseWP.writeAuthorized tree writer (readMap.iterMut writeOffset writeLength)
         writeTags writeMode ↔
-      resolved tree writer ∧ ∀ byte data, afterRead tree reader readRange readTags readMode byte data →
+      resolved tree writer ∧ ∀ byte data, afterAccess tree reader .Read readRange readTags readMode byte data →
         writeRange.Contains byte → (localAccess tree data writer .Write writeTags writeMode).status.getD .Completed = .Completed := by
-    have byteMap := readLocations_byte tree reader readTags readMode prepared readRange readGeometry readAllowed
+    have byteMap := accessLocations_byte tree reader .Read readTags readMode prepared readRange readGeometry readAllowed
     have ranges : readMap.entries.map (·.range) = prepared.state.entries.map (·.range) := by
       unfold readMap TreeRangePointwiseWP.readLocations
       dsimp only
@@ -371,10 +387,10 @@ theorem wp_read_write_bytes_iff (tree : BorrowTree) (reader writer : ProvenanceE
   unfold runtimeReadWritePre
   constructor
   · rintro ⟨readerResolved, chosen, accepted, writerAllowed⟩
-    have readAllowed cursor inside := ((retained_iff tree reader readTags readMode prepared cursor
+    have readAllowed cursor inside := ((retained_iff tree reader .Read readTags readMode prepared cursor
       (chosen cursor)).mp (accepted cursor inside)).1
     have same := TreeRangePointwiseWP.readLocations_congr prepared chosen retained fun cursor inside =>
-      ((retained_iff tree reader readTags readMode prepared cursor (chosen cursor)).mp
+      ((retained_iff tree reader .Read readTags readMode prepared cursor (chosen cursor)).mp
         (accepted cursor inside)).2.symm
     rw [same] at writerAllowed
     obtain ⟨writerResolved, checked⟩ := (writes readAllowed).mp writerAllowed
@@ -384,7 +400,7 @@ theorem wp_read_write_bytes_iff (tree : BorrowTree) (reader writer : ProvenanceE
   · rintro ⟨readerResolved, writerResolved, checkedRead, checkedWrite⟩
     have readAllowed := reads.mpr checkedRead
     exact ⟨readerResolved, retained,
-      (fun cursor inside => (retained_iff tree reader readTags readMode prepared cursor
+      (fun cursor inside => (retained_iff tree reader .Read readTags readMode prepared cursor
         (retained cursor)).mpr ⟨readAllowed cursor inside, rfl⟩),
       (writes readAllowed).mpr ⟨writerResolved,
         (afterRead_write_iff tree reader writer readRange writeRange readTags writeTags readMode writeMode).mpr
@@ -449,6 +465,175 @@ private theorem map_geometry (left right : DedupRangeMap LocationTree)
         Array.getElem?_eq_getElem leftLast, Array.getElem?_eq_getElem rightLast]
       simpa only [last] using congrArg Size.ofBytes extent
 
+
+/-- Resolve provenance and check a range using only the supplied byte locations. -/
+def byteChecks (tree : BorrowTree) (provenance : ProvenanceExtra)
+    (range : ByteRange) (kind : AccessKind) (tags : ProtectedTags)
+    (mode : Tree.ChildrenVisitMode) (before : UInt64 → LocationTree → Prop) : Prop :=
+  resolved tree provenance ∧ (∀ byte initial, before byte initial → range.Contains byte →
+    localPre tree initial provenance kind tags mode (fun _ => True))
+
+theorem byteChecks_replaceLocations (tree : BorrowTree) (locations : DedupRangeMap LocationTree)
+    (provenance : ProvenanceExtra) (range : ByteRange) (kind : AccessKind) (tags : ProtectedTags)
+    (mode : Tree.ChildrenVisitMode) (before : UInt64 → LocationTree → Prop) :
+    byteChecks { tree with locations } provenance range kind tags mode before ↔
+      byteChecks tree provenance range kind tags mode before := by
+  simp only [byteChecks, localPre_iff, and_true]
+  unfold resolved
+  cases provenance <;> rfl
+
+/-- Exact safety for one prepared range with a continuation on its resulting tree and trace. -/
+def accessBytePre (tree : BorrowTree) (provenance : ProvenanceExtra)
+    (offset length : Size) (range : ByteRange) (kind : AccessKind) (tags : ProtectedTags)
+    (mode : Tree.ChildrenVisitMode) (post : TreeRangeOutcomeWP.Trace → BorrowTree → Prop) : Prop :=
+  let prepared := tree.locations.iterMut offset length
+  byteChecks tree provenance range kind tags mode tree.locations.MapAt ∧
+    let final := snapshotSuccessor tree prepared (retainedAccess tree provenance kind tags mode prepared)
+    post final.2 final.1
+
+/-- A successful access changes only the locations, preserves partition well-formedness
+and extent, and has an exact byte-local interpretation. -/
+theorem accessBytePre_observe (tree : BorrowTree) (provenance : ProvenanceExtra)
+    (offset length finish : Size) (kind : AccessKind) (tags : ProtectedTags)
+    (mode : Tree.ChildrenVisitMode) (wellFormed : tree.locations.WellFormed)
+    (checkedEnd : offset.add length = .ok finish) (bound : finish.bytes ≤ tree.locations.size.bytes)
+    (post : TreeRangeOutcomeWP.Trace → BorrowTree → Prop) :
+    accessBytePre tree provenance offset length ⟨offset.bytes, finish.bytes⟩ kind tags mode post ↔
+      accessBytePre tree provenance offset length ⟨offset.bytes, finish.bytes⟩ kind tags mode
+        (fun trace after =>
+          after = { tree with locations := after.locations } ∧
+          after.locations.WellFormed ∧ after.locations.size = tree.locations.size ∧
+          (∀ byte data, after.locations.MapAt byte data ↔
+            afterAccess tree provenance kind ⟨offset.bytes, finish.bytes⟩ tags mode byte data) ∧
+          post trace after) := by
+  classical
+  obtain ⟨geometry, preparedFormed, preparedSize⟩ :=
+    DedupRangeMap.iterMut_preparedFor tree.locations offset length finish wellFormed checkedEnd bound
+  let prepared := tree.locations.iterMut offset length
+  let retained := retainedAccess tree provenance kind tags mode prepared
+  let after := (snapshotSuccessor tree prepared retained).1
+  have readMap := TreeRangePointwiseWP.readLocations_eq tree prepared retained
+  have ranges : after.locations.entries.map (·.range) = prepared.state.entries.map (·.range) := by
+    change (snapshotSuccessor tree prepared retained).1.locations.entries.map (·.range) = _
+    rw [← readMap]
+    unfold TreeRangePointwiseWP.readLocations
+    apply Array.ext
+    · simp
+    · intro index leftBound rightBound
+      simp only [Array.getElem_map, Array.getElem_mapIdx]
+  have ⟨formed, extent⟩ := map_geometry after.locations prepared.state ranges
+  unfold accessBytePre byteChecks
+  constructor
+  · rintro ⟨⟨known, localChecks⟩, done⟩
+    have checks := (slots_iff tree provenance prepared _ _ geometry kind tags mode).mpr
+      (fun byte initial found within => ((localPre_iff tree initial provenance kind tags mode
+        (fun _ => True)).mp (localChecks byte initial found within)).1)
+    refine ⟨⟨known, localChecks⟩, rfl, formed preparedFormed, extent.trans preparedSize, ?_, done⟩
+    intro byte data
+    change after.locations.MapAt byte data ↔ _
+    change (snapshotSuccessor tree prepared retained).1.locations.MapAt byte data ↔ _
+    rw [← readMap]
+    exact accessLocations_byte tree provenance kind tags mode prepared _ geometry checks byte data
+  · rintro ⟨⟨known, localChecks⟩, _, _, _, _, done⟩
+    exact ⟨⟨known, localChecks⟩, done⟩
+
+/-- The single-access WP under checked byte-range geometry uses exactly the
+local checks and the successful state and trace supplied by those checks. -/
+theorem wp_access_bytes_iff (tree : BorrowTree) (provenance : ProvenanceExtra)
+    (offset length finish : Size) (kind : AccessKind) (tags : ProtectedTags)
+    (mode : Tree.ChildrenVisitMode) (wellFormed : tree.locations.WellFormed)
+    (checkedEnd : offset.add length = .ok finish) (bound : finish.bytes ≤ tree.locations.size.bytes)
+    (post : TreeRangeOutcomeWP.Trace → BorrowTree → Prop) :
+    wp (TreeBorrowsWP.access provenance offset length kind tags mode) post (fun _ _ => False) tree ↔
+      accessBytePre tree provenance offset length ⟨offset.bytes, finish.bytes⟩ kind tags mode post := by
+  classical
+  have geometry := (DedupRangeMap.iterMut_preparedFor tree.locations offset length finish
+    wellFormed checkedEnd bound).1
+  let prepared := tree.locations.iterMut offset length
+  let retained := retainedAccess tree provenance kind tags mode prepared
+  have checks := slots_iff tree provenance prepared _ _ geometry kind tags mode
+  rw [wp_access_snapshotPre_iff]
+  change (resolved tree provenance ∧ prepared.outcome = .ok () ∧ ∃ chosen,
+    (∀ cursor, cursor < prepared.positions.size →
+      SnapshotAuthorized tree prepared (source tree provenance) kind tags mode cursor (chosen cursor)) ∧
+    let final := snapshotSuccessor tree prepared chosen
+    post final.2 final.1) ↔ _
+  rw [geometry.outcome, eq_self, true_and]
+  unfold accessBytePre byteChecks
+  constructor
+  · rintro ⟨known, chosen, accepted, done⟩
+    have authorized cursor inside := (retained_iff tree provenance kind tags mode prepared cursor
+      (chosen cursor)).mp (accepted cursor inside)
+    have commitSame (cursors : List Nat) (bounded : ∀ cursor ∈ cursors, cursor < prepared.positions.size)
+        (current : DedupRangeMap LocationTree × TreeRangeOutcomeWP.Trace) :
+        cursors.foldl (commitSnapshot prepared chosen) current =
+          cursors.foldl (commitSnapshot prepared retained) current := by
+      induction cursors generalizing current with
+      | nil => rfl
+      | cons cursor rest ih =>
+        have same := (authorized cursor (bounded cursor (.head _))).2.symm
+        change chosen cursor = retained cursor at same
+        have step : commitSnapshot prepared chosen current cursor =
+          commitSnapshot prepared retained current cursor := by simp only [commitSnapshot, same]
+        rw [List.foldl_cons, List.foldl_cons, step]
+        exact ih (fun later member => bounded later (.tail _ member)) _
+    refine ⟨⟨known, ?_⟩, ?_⟩
+    · intro byte initial found within
+      exact (localPre_iff tree initial provenance kind tags mode (fun _ => True)).mpr
+        ⟨checks.mp (fun cursor inside => (authorized cursor inside).1) byte initial found within, trivial⟩
+    · have same := commitSame (List.range' 0 prepared.positions.size)
+        (fun cursor included => by simpa [List.mem_range'] using included) (prepared.state, #[])
+      simpa only [snapshotSuccessor, same] using done
+  · rintro ⟨⟨known, localChecks⟩, done⟩
+    have authorized := checks.mpr (fun byte initial found within =>
+      ((localPre_iff tree initial provenance kind tags mode (fun _ => True)).mp
+        (localChecks byte initial found within)).1)
+    exact ⟨known, retained, fun cursor inside =>
+      (retained_iff tree provenance kind tags mode prepared cursor (retained cursor)).mpr
+        ⟨authorized cursor inside, rfl⟩, done⟩
+
+/-- An access with a postcondition on byte locations needs only initial byte
+checks and the local byte interpretation. It does not reconstruct a range map. -/
+theorem wp_access_byteObservation_iff (tree : BorrowTree) (provenance : ProvenanceExtra)
+    (offset length finish : Size) (kind : AccessKind) (tags : ProtectedTags)
+    (mode : Tree.ChildrenVisitMode) (wellFormed : tree.locations.WellFormed)
+    (checkedEnd : offset.add length = .ok finish) (bound : finish.bytes ≤ tree.locations.size.bytes)
+    (post : (UInt64 → LocationTree → Prop) → Prop) :
+    wp (TreeBorrowsWP.access provenance offset length kind tags mode)
+      (fun _ after => post after.locations.MapAt) (fun _ _ => False) tree ↔
+    byteChecks tree provenance ⟨offset.bytes, finish.bytes⟩ kind tags mode tree.locations.MapAt ∧
+      post (afterAccess tree provenance kind ⟨offset.bytes, finish.bytes⟩ tags mode) := by
+  rw [wp_access_bytes_iff _ _ _ _ _ _ _ _ wellFormed checkedEnd bound]
+  have observe := accessBytePre_observe tree provenance offset length finish kind tags mode wellFormed
+    checkedEnd bound (fun _ _ => True)
+  unfold accessBytePre at *
+  constructor
+  · rintro ⟨checks, done⟩
+    obtain ⟨_, _, _, _, maps, _⟩ := observe.mp ⟨checks, trivial⟩
+    have same := funext fun byte => funext fun data => propext (maps byte data)
+    exact ⟨checks, same ▸ done⟩
+  · rintro ⟨checks, done⟩
+    obtain ⟨_, _, _, _, maps, _⟩ := observe.mp ⟨checks, trivial⟩
+    have same := funext fun byte => funext fun data => propext (maps byte data)
+    refine ⟨checks, ?_⟩
+    dsimp only
+    rw [same]
+    exact done
+
+/-- The access continuation emitted by VCs has the same byte-only rule. -/
+theorem accessPre_byteObservation_iff (tree : BorrowTree) (provenance : ProvenanceExtra)
+    (offset length finish : Size) (kind : AccessKind) (tags : ProtectedTags)
+    (mode : Tree.ChildrenVisitMode) (wellFormed : tree.locations.WellFormed)
+    (checkedEnd : offset.add length = .ok finish) (bound : finish.bytes ≤ tree.locations.size.bytes)
+    (post : (UInt64 → LocationTree → Prop) → Prop) :
+    TreeBorrowsWP.accessPre tree provenance offset length kind tags mode
+      (fun after _ => post after.locations.MapAt) (fun _ _ _ => False) ↔
+    byteChecks tree provenance ⟨offset.bytes, finish.bytes⟩ kind tags mode tree.locations.MapAt ∧
+      post (afterAccess tree provenance kind ⟨offset.bytes, finish.bytes⟩ tags mode) := by
+  exact (TreeRangeOutcomeWP.wp_access_outcomePre_iff tree provenance offset length kind tags mode
+    (fun _ after => post after.locations.MapAt) (fun _ _ => False)).symm.trans
+      (wp_access_byteObservation_iff tree provenance offset length finish kind tags mode
+        wellFormed checkedEnd bound post)
 
 private theorem read_write_geometry (tree : BorrowTree)
     (readOffset readLength readFinish writeOffset writeLength writeFinish : Size)
