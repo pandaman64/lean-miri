@@ -116,6 +116,42 @@ theorem initial_byte_observed :
       fun inside => (outsideObserve inside).elim, fun _ => rfl⟩, ?_⟩
     cbv
 
+/-- Ordinary do notation needs no hand-written plan or trace-packaging action. -/
+theorem ordinary_access_sequence :
+    wp (do
+      let _ ← TreeBorrowsWP.access read.provenance read.offset read.length .Read read.tags read.mode
+      let _ ← TreeBorrowsWP.access write.provenance write.offset write.length .Write write.tags write.mode
+      TreeBorrowsWP.access observe.provenance observe.offset observe.length .Read observe.tags observe.mode)
+      (fun _ after => frozenAtZero after.locations.MapAt) (fun _ _ => False) tree := by
+  have wellFormed := formed
+  have readEnd : read.offset.add read.length = .ok (Size.ofBytes 1) := by cbv
+  have writeEnd : write.offset.add write.length = .ok (Size.ofBytes 2) := by cbv
+  have observeEnd : observe.offset.add observe.length = .ok (Size.ofBytes 3) := by cbv
+  have readBound : (Size.ofBytes 1).bytes ≤ tree.locations.size.bytes := by cbv
+  have writeBound : (Size.ofBytes 2).bytes ≤ tree.locations.size.bytes := by cbv
+  have observeBound : (Size.ofBytes 3).bytes ≤ tree.locations.size.bytes := by cbv
+  miri_tree_range_wp observe
+  exact (wp_plan_bytes_iff tree plan formed endpoints bounds frozenAtZero).mp initial_byte_observed
+
+/-- Generated nested access continuations use the same initial byte predicate. -/
+theorem nested_access_sequence :
+    TreeBorrowsWP.accessPre tree read.provenance read.offset read.length .Read read.tags read.mode
+      (fun afterRead _ =>
+        TreeBorrowsWP.accessPre afterRead write.provenance write.offset write.length .Write write.tags write.mode
+          (fun afterWrite _ =>
+            TreeBorrowsWP.accessPre afterWrite observe.provenance observe.offset observe.length .Read observe.tags
+              observe.mode (fun after _ => frozenAtZero after.locations.MapAt) (fun _ _ _ => False))
+          (fun _ _ _ => False)) (fun _ _ _ => False) := by
+  have wellFormed := formed
+  have readEnd : read.offset.add read.length = .ok (Size.ofBytes 1) := by cbv
+  have writeEnd : write.offset.add write.length = .ok (Size.ofBytes 2) := by cbv
+  have observeEnd : observe.offset.add observe.length = .ok (Size.ofBytes 3) := by cbv
+  have readBound : (Size.ofBytes 1).bytes ≤ tree.locations.size.bytes := by cbv
+  have writeBound : (Size.ofBytes 2).bytes ≤ tree.locations.size.bytes := by cbv
+  have observeBound : (Size.ofBytes 3).bytes ≤ tree.locations.size.bytes := by cbv
+  simp (disch := assumption) only [miri_initial_wp]
+  exact (wp_plan_bytes_iff tree plan formed endpoints bounds frozenAtZero).mp initial_byte_observed
+
 open Miri.Verification.TreeOverlapWP in
 /-- The registered one-access rule can also prove an observation without
 building a one-entry plan or reconstructing the successor partition. -/
@@ -140,6 +176,8 @@ theorem single_byte_observed :
 #print axioms overlap_rejected
 #print axioms initial_byte_observed
 #print axioms single_byte_observed
+#print axioms ordinary_access_sequence
+#print axioms nested_access_sequence
 #print axioms wp_readWriteObserve_bytes_iff
 
 end MiriTests.Verification.TreeObservationWP
