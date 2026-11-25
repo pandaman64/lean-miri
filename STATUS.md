@@ -1255,8 +1255,46 @@ vector-clock backend.
   The generated Lean file specializes each distinct imported instruction and
   uses its proved transfer at the matching body and PC in the shared CFG.
   The entry and root-preparation predicates are equivalent to the canonical
-  ones. A continuation can still depend on a configured host or memory policy,
-  a symbolic address, or the state changed by a previous instruction.
+  ones. [Generated straight-line windows](Miri/Verification/GeneratedBodyVC.lean)
+  pass the actual state between rows and check the permitted choice at each
+  step. They check the live body, PC and instruction before using a specialized
+  transfer. Other edges use the shared equation. A finite prefix view checks
+  the selected PCs and payloads, with a postcondition on the prefix endpoint.
+  Configured host and memory-policy effects can still contribute obligations.
+
+  [Copy composition](Miri/Verification/CopyInitialWP.lean) relates a checked
+  physical copy to a subsequent typed scalar observation using the committed
+  allocation and a checked byte image. The rule keeps the load's permission
+  check and the error result's retained state. The generated copy fixture
+  proves entry preparation and equivalence between its prefix VC and its
+  executable checker for arbitrary initial bytes. Its finite checks include a same-allocation copy
+  whose observer sees the source byte and a stale observer that reaches
+  Tree Borrows UB after the destination has been updated. Discharging that
+  emitted prefix for every initial byte pair remains open.
+  [Check the copy and pointer fixtures](tools/check-pointer-observation-vc.sh).
+
+  [Pointer formation rules](Miri/Verification/PointerFormationWP.lean)
+  expose typed shared, mutable and raw formation, including policy selection,
+  tag reconstruction and the ordinary write to the destination place. The
+  generated pointer fixture proves the prefix VC equivalent to its executable
+  checker for arbitrary initial bytes. Its finite checks cover a shared load
+  and mutable store through fresh tags, a raw store through the original tag,
+  and a failed Frozen-tag store that preserves the initial byte. The shared
+  fixture's entry preparation is proved for every initial byte. Discharging
+  every emitted pointer prefix for every initial byte remains open.
+  [Check the normalized rows and pointer observations](tools/check-pointer-observation-vc.sh).
+
+  [Callee summaries](Miri/Verification/CalleeSummaryWP.lean) compose the
+  canonical dispatch and callee scope with the caller's continuation on
+  the returned state. The imported call proof assumes local obligations for
+  callee entry, the write, return-value assignment, cleanup and the continuation.
+  Component proofs cover the emitted immediate result assignment and singleton
+  protector release while preserving the caller allocation's bytes. A finite
+  runtime check of the imported Rust example reaches a normal scope exit.
+  Proving the complete caller and callee contract from concrete entry facts,
+  including the remaining call and return obligations, remains open.
+  [Check the exported callee example](tools/check-callee-summary-vc.sh).
+
   The [duplicate_prefix example](examples/duplicate_prefix_vcgen/README.md)
   checks symbolic copy access effects with explicit permission and policy
   premises. Its adversarial caller demonstrates that a prepared mutable
