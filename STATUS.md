@@ -1205,6 +1205,22 @@ vector-clock backend.
   memory and Tree Borrows rules. The destination uses the state left by the
   source lookup and read. Physical errors retain the allocation committed
   by the copy's error path.
+  [Operand rules](Miri/Verification/OperandPlaceWP.lean) expose the initial
+  local, layout cache, projection path and local-read effects. The
+  [place rules](Miri/Verification/PlaceReadWriteWP.lean) connect canonical
+  immediate reads, writes and assignment copies to their continuations.
+  [Scalar observations](Miri/Verification/MemoryObservationWP.lean) relate
+  later loads to the stored or copied byte image, initialization and
+  provenance. The [Tree Borrows access sequence](Miri/Verification/TreeObservationWP.lean)
+  pulls a postcondition on byte locations through any checked, in-bounds
+  sequence on a well-formed initial location map. Its success-only rule
+  carries permission changes between accesses. The separate ordered rule
+  preserves diagnostics and the partially updated tree on failure.
+  For a [tracked copy](Miri/Verification/CopyTreeWP.lean), the proof can use
+  the live allocation's post-access byte relation in the continuation after
+  synchronization and write-back. A later [typed scalar load](Miri/Verification/CopyLoadObservationWP.lean)
+  can then select the replacement allocation on matching IDs. Its pointer
+  resolution, type layout, and access-policy checks still apply.
   [Instruction reductions](Miri/Verification/ExactWP.lean) expose tag encoding
   for discriminant writes, local layout and replacement for storage activation,
   the projection path for place mentions, and the `Assume` and
@@ -1236,6 +1252,11 @@ vector-clock backend.
   a client-supplied block proof. Clients still need to prove the generated
   obligation for their machine, choice policy, and postconditions. Termination
   requires a separate argument.
+  The generated Lean file specializes each distinct imported instruction and
+  uses its proved transfer at the matching body and PC in the shared CFG.
+  The entry and root-preparation predicates are equivalent to the canonical
+  ones. A continuation can still depend on a configured host or memory policy,
+  a symbolic address, or the state changed by a previous instruction.
   The [duplicate_prefix example](examples/duplicate_prefix_vcgen/README.md)
   checks symbolic copy access effects with explicit permission and policy
   premises. Its adversarial caller demonstrates that a prepared mutable
