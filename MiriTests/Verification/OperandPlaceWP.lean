@@ -71,11 +71,22 @@ example (hooks : PlaceProjectionHooks Provenance State C MachineHooks.FrameExtra
     (deref : hooks.place.deref choice base true ready = .error error failed) :
     actionPre (PlaceDynamic.evalPlace hooks choice ⟨id, #[.Deref]⟩ true) post onError before =
       onError error failed := by
-  rw [actionPre_evalPlace]
-  have bypass : (true && (#[.Deref] : Array ProjectionElem) == #[.Deref]) = true := by decide
-  simp only [bypass, ↓reduceIte]
+  rw [actionPre_evalPlaceSimpleDeref]
   rw [localReady]
   simp only [actionPre, deref]
+
+/-- The bare destination reaches its type check even when evaluation requests
+the simple-dereference validity bypass. -/
+example (hooks : PlaceProjectionHooks Provenance State C MachineHooks.FrameExtra) (choice : C)
+    (id : LocalId) (base : RuntimePlace Provenance) (before ready failed : State) (error : StepError)
+    (post : RuntimePlace Provenance → State → Prop) (onError : StepError → State → Prop)
+    (localReady : ∀ (next : RuntimePlace Provenance → State → Prop),
+      PlaceMentionWP.localPre hooks.place choice id next onError before = next base ready)
+    (typeFailed : hooks.place.checkPlaceType choice ⟨id, #[]⟩ base ready = .error error failed) :
+    actionPre (PlaceDynamic.evalPlace hooks choice ⟨id, #[]⟩ true) post onError before =
+      onError error failed := by
+  rw [actionPre_evalPlaceLocal, localReady]
+  simp only [actionPre, typeFailed]
 
 /-- Runtime-check operands use the compiler's flag before querying the
 Boolean layout. A failed layout query retains the state it leaves. -/

@@ -316,6 +316,15 @@ private theorem actionPre_operandProjections (h : OperandMachine.Hooks K U C) (c
   rw [step, actionPre_operandProjections]
   congr 2
 
+@[miri_initial_wp high] theorem actionPre_evalPlaceToOpLocal (h : OperandMachine.Hooks K U C)
+    (choice : C) (id : MIR.LocalId) (known : Option LocalLayout) (post : Op → State → Prop)
+    (onError : Errors) :
+    actionPre (OperandMachine.evalPlaceToOp h choice ⟨id, #[]⟩ known) post onError =
+      localOperandPre h choice id known (fun result =>
+        actionPre (h.checkPlaceType choice ⟨id, #[]⟩ result) (fun _ => post result) onError) onError := by
+  rw [actionPre_evalPlaceToOp]
+  rfl
+
 @[miri_initial_wp] theorem actionPre_evalOperand (h : OperandMachine.Hooks K U C) (choice : C)
     (operand : MIR.Operand) (known : Option LocalLayout) (post : Op → State → Prop) (onError : Errors) :
     actionPre (OperandMachine.evalOperand h choice operand known) post onError =
@@ -343,6 +352,30 @@ skip-validity path. -/
       PlaceMentionWP.actionPre_localToPlace]
   · rw [← PlaceMentionWP.actionPre_evalPlace]
     simp only [PlaceDynamic.evalPlace, bypass, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+
+/-- Resolve a bare local directly. The simple-dereference guard cannot
+apply to an empty projection, so emitting a second continuation is redundant. -/
+@[miri_initial_wp high] theorem actionPre_evalPlaceLocal [PointerProvenance P]
+    (h : PlaceProjectionHooks P S C E) (choice : C) (id : MIR.LocalId) (skipValidity : Bool)
+    (post : RuntimePlace P → S → Prop) (onError : StepError → S → Prop) :
+    actionPre (PlaceDynamic.evalPlace h choice ⟨id, #[]⟩ skipValidity) post onError =
+      PlaceMentionWP.localPre h.place choice id (fun place =>
+        actionPre (h.place.checkPlaceType choice ⟨id, #[]⟩ place)
+          (fun _ => post place) onError) onError := by
+  rw [actionPre_evalPlace]
+  have notDeref : ((#[] : Array MIR.ProjectionElem) == #[.Deref]) = false := by decide
+  cases skipValidity <;> simp only [notDeref, Bool.and_false,
+    Bool.false_eq_true, ↓reduceIte] <;> rfl
+
+@[miri_initial_wp high] theorem actionPre_evalPlaceSimpleDeref [PointerProvenance P]
+    (h : PlaceProjectionHooks P S C E) (choice : C) (id : MIR.LocalId)
+    (post : RuntimePlace P → S → Prop) (onError : StepError → S → Prop) :
+    actionPre (PlaceDynamic.evalPlace h choice ⟨id, #[.Deref]⟩ true) post onError =
+      PlaceMentionWP.localPre h.place choice id
+        (fun base => actionPre (h.place.deref choice base true) post onError) onError := by
+  rw [actionPre_evalPlace]
+  have deref : (true && (#[.Deref] : Array MIR.ProjectionElem) == #[.Deref]) = true := by decide
+  simp only [deref, ↓reduceIte]
 
 /-- A local race check commits the global and frame clocks before branching
 on its result. Keep this transfer named in generated continuations so each
