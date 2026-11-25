@@ -922,6 +922,28 @@ theorem scalarReadAfterAccess_of_read [DecidableEq P] [PointerProvenance P]
   simp only [selected, component, Except.mapError, bind, Except.bind]
   cases primitive <;> simp only [scalarReadProvenance] <;> rw [load]
 
+/-- A sized, width-checked scalar ABI reads the selected component directly.
+Keep the access result's memory and touched allocation on both outcomes. -/
+theorem readImmediateAfterAccess_scalar [DecidableEq P] [PointerProvenance P]
+    (layout : MemoryOperandLayout) (runtime : RuntimeTargetDataLayout)
+    (access : MemoryOperandResult P E K H (Option (AllocationAccessRef P E)))
+    (primitive : BackendPrimitive) (validRange : WrappingRange)
+    (backend : layout.backendRepr = .Scalar (.Initialized (value := primitive) (validRange := validRange)))
+    (width : primitive.size runtime = .ok layout.size)
+    (reference : AllocationAccessRef P E) (range : AllocRange)
+    (selected : access.outcome = .ok (some reference))
+    (component : reference.range.subrange (allocRange Size.ZERO layout.size) = .ok range) :
+    readImmediateAfterAccess layout runtime access =
+      ⟨access.memory, access.hooks, access.touched,
+        (((reference.allocation.readScalar runtime.base range
+          (match primitive with | .Pointer _ => true | _ => false)).mapError
+          MemoryOperandError.allocation).map fun scalar => some ⟨.scalar scalar, layout⟩)⟩ := by
+  simp only [readImmediateAfterAccess, selected, readPlan, backend, BackendRepr.isUnsized,
+    Bool.false_eq_true, ↓reduceIte, width, bne_self_eq_false, readScalarAt, componentRange,
+    component, Id.run, bind, Bind.bind, pure, Pure.pure, Except.mapError, Except.bind, Except.pure]
+  cases primitive <;> simp only [scalarReadProvenance] <;>
+    split <;> (rename_i _ _ found; rw [found]; rfl)
+
 /-- A selected scalar store commits the allocation left by its mutation,
 including a partial update on error. The touched allocation also reflects
 that committed snapshot. -/

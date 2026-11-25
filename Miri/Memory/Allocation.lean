@@ -1303,6 +1303,14 @@ theorem getBytesUnchecked_eq_extract (allocation : Allocation P E) (range : Allo
   subst h_eq
   exact checkedSlice_ok allocation range finish storage endEq startLe inBounds
 
+/-- Replace physical storage by its checked full image in symbolic splices. -/
+theorem rawBytes_eq_fullImage (allocation : Allocation P E) (image : Array UInt8)
+    (full : allocation.getBytesUnchecked (allocRange Size.ZERO allocation.byteSize) = .ok image) :
+    allocation.rawBytes = image := by
+  have storage := (getBytesUnchecked_ok_bounds allocation _ allocation.byteSize image
+    (full_range_endExclusive allocation.byteSize) full).1
+  exact Except.ok.inj ((getBytesUnchecked_full_raw allocation storage).symm.trans full)
+
 private theorem setInitialization_mapExtra (allocation : Allocation P E) (range : AllocRange)
     (initialized : Bool) (f : E → E') :
     setInitialization (allocation.mapExtra f) range initialized =
@@ -1965,6 +1973,43 @@ theorem copyRepeatedly_step_bridge
   rw [h_applyProv]
   rfl
 
+/-- Express the destination preparation's exact result, including the mask
+that has already changed if clearing provenance fails. -/
+theorem prepareCopyOverwrite_eq (range : AllocRange) (pointerSize : Size)
+    (dest : Allocation P E) :
+    prepareForOverwrite range pointerSize dest =
+      match dest.getBytesUnchecked range with
+      | .error error => .error error dest
+      | .ok _ =>
+        if range.size.bytes == 0 then .ok () dest
+        else if dest.mutability != .Mut then .error .readOnlyAllocation dest
+        else
+          match dest.initializationMask.setRange range true with
+          | .error error => .error (.memory error) dest
+          | .ok mask =>
+            let marked := {dest with initMask := mask}
+            match marked.provenanceMap.clear range marked.rawBytes pointerSize with
+            | .ok () prov => .ok () {marked with provenance := prov}
+            | .error error prov => .error (.provenance error) {marked with provenance := prov} := by
+  simp only [prepareForOverwrite, setInitialization, runProvenanceMutation, Id.run, Bind.bind,
+    Pure.pure, Allocation.getBytesUnchecked, initializationMask, provenanceMap]
+  cases dest.checkedSlice range with
+  | error => rfl
+  | ok bytes =>
+    dsimp only
+    by_cases zero : (range.size.bytes == 0) = true
+    · simp only [zero, ↓reduceIte]
+    by_cases readOnly : (dest.mutability != .Mut) = true
+    · simp only [zero, readOnly, Bool.false_eq_true, ↓reduceIte]
+    simp only [zero, readOnly, Bool.false_eq_true, ↓reduceIte, Except.mapError, Except.bind, Except.pure]
+    cases dest.initMask.setRange range true with
+    | error => rfl
+    | ok mask =>
+      dsimp only
+      cases dest.provenance.clear range dest.rawBytes pointerSize with
+      | ok value => cases value; rfl
+      | error => rfl
+
 /-- Destination preparation can commit initialization before a provenance
 failure. Expose the exact allocation passed to each continuation. -/
 theorem prepareCopyOverwritePre_eq (range : AllocRange) (pointerSize : Size)
@@ -1986,21 +2031,19 @@ theorem prepareCopyOverwritePre_eq (range : AllocRange) (pointerSize : Size)
             match marked.provenanceMap.clear range marked.rawBytes pointerSize with
             | .ok () prov => post {marked with provenance := prov}
             | .error error prov => onError (.provenance error) {marked with provenance := prov} := by
-  simp only [prepareForOverwrite, setInitialization, runProvenanceMutation, Id.run, Bind.bind,
-    Pure.pure, Allocation.getBytesUnchecked, initializationMask, provenanceMap]
-  cases dest.checkedSlice range with
+  rw [prepareCopyOverwrite_eq]
+  cases dest.getBytesUnchecked range with
   | error => rfl
-  | ok bytes =>
-    dsimp only
+  | ok =>
     by_cases zero : (range.size.bytes == 0) = true
     · simp only [zero, ↓reduceIte]
     by_cases readOnly : (dest.mutability != .Mut) = true
     · simp only [zero, readOnly, Bool.false_eq_true, ↓reduceIte]
-    simp only [zero, readOnly, Bool.false_eq_true, ↓reduceIte, Except.mapError, Except.bind, Except.pure]
-    cases dest.initMask.setRange range true with
+    simp only [zero, readOnly, Bool.false_eq_true, ↓reduceIte]
+    cases dest.initializationMask.setRange range true with
     | error => rfl
     | ok mask =>
-      dsimp only
+      dsimp only [provenanceMap]
       cases dest.provenance.clear range dest.rawBytes pointerSize with
       | ok value => cases value; rfl
       | error => rfl

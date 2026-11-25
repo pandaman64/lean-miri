@@ -50,6 +50,7 @@ import MiriTests.Verification.InstructionWP
 import MiriTests.Verification.AssertPanicWP
 import MiriTests.Verification.CopyMemoryWP
 import MiriTests.Verification.CopyTreeWP
+import MiriTests.Verification.CopyInitialWP
 import MiriTests.Verification.CopyLoadObservationWP
 import MiriTests.Verification.CopySuccessorObservation
 import MiriTests.Verification.DiscriminantWP

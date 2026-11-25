@@ -14,11 +14,12 @@ local notation "HookState" => PlaceMachine.AccessState K U
 
 /-- Decode the selected scalar after permission checks, retaining the exact
 cache update and hook state at either exit. -/
-def selectedScalarLoadPre [DecidableEq K] (config : Config)
+def selectedScalarImagePre [DecidableEq K] (config : Config)
     (operand : OpTy Provenance) (before : State) (primitive : BackendPrimitive)
     (accessHooks : HookState) (memory : MemoryState Provenance BorrowTree K)
     (id : AllocId) (provenance : ProvenanceExtra) (offset : Size)
     (entry : LocalAllocation Provenance BorrowTree K) (allocation : Alloc) (range : AllocRange)
+    (bytes : Except AllocError (Array UInt8))
     (post : RvalueImmTy Provenance → State → Prop) (onError : StepError → State → Prop) : Prop :=
     let layout := localMemoryLayout operand.layout
     let accessed := allocRange offset layout.size
@@ -33,11 +34,21 @@ def selectedScalarLoadPre [DecidableEq K] (config : Config)
       accessed
       (fun hooks tree => finish hooks tree
         (((MemoryObservationWP.scalarFromImage config.runtime.base range readPointer
-          (allocation.getBytesUnchecked range) (allocation.initializationMask.isRangeInitialized range)
+          bytes (allocation.initializationMask.isRangeInitialized range)
           allocation.provenanceMap).mapError MemoryOperandError.allocation).map
             fun scalar => ⟨.scalar scalar, layout⟩))
       (fun message hooks tree => finish hooks tree (.error (.pointerAccess
         (.hookFailure "beforeMemoryRead" message))))
+
+/-- Use the selected allocation's own bytes during an ordinary indirect load. -/
+def selectedScalarLoadPre [DecidableEq K] (config : Config)
+    (operand : OpTy Provenance) (before : State) (primitive : BackendPrimitive)
+    (accessHooks : HookState) (memory : MemoryState Provenance BorrowTree K)
+    (id : AllocId) (provenance : ProvenanceExtra) (offset : Size)
+    (entry : LocalAllocation Provenance BorrowTree K) (allocation : Alloc) (range : AllocRange)
+    (post : RvalueImmTy Provenance → State → Prop) (onError : StepError → State → Prop) : Prop :=
+    selectedScalarImagePre config operand before primitive accessHooks memory id provenance offset
+      entry allocation range (allocation.getBytesUnchecked range) post onError
 
 /-- The typed load observes the selected live allocation's physical image.
 A successful permission access changes the tree used for the live commit,
@@ -67,7 +78,7 @@ theorem liveScalarLoadPre [DecidableEq K] (config : Config)
   rw [MemoryWP.immediateReadPre_iff, MemoryWP.readImmediate_iff,
     MemoryWP.scalarRead_resultPre_iff config operand place primitive validRange
     post onError before checked indirect backend width]
-  unfold MemoryWP.CheckedPlaceAccess.pre selectedScalarLoadPre
+  unfold MemoryWP.CheckedPlaceAccess.pre selectedScalarLoadPre selectedScalarImagePre
   dsimp only
   apply Iff.of_eq
   congr 1

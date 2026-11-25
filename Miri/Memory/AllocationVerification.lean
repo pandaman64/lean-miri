@@ -118,7 +118,9 @@ private theorem splice_size (raw data : Array UInt8) (start finish : Nat)
     Nat.sub_zero, h_data_sz]
   omega
 
-private theorem splice_getElem? (raw data : Array UInt8) (start finish k : Nat)
+/-- A byte in the overwritten interval comes from the source snapshot.
+All other indices select the original destination image. -/
+theorem splice_getElem? (raw data : Array UInt8) (start finish k : Nat)
     (h_lo : start ≤ finish) (h_fin : finish ≤ raw.size)
     (h_data_sz : data.size = finish - start) :
     (raw.extract 0 start ++ data ++ raw.extract finish raw.size)[k]? =
