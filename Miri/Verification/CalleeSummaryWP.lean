@@ -67,9 +67,9 @@ local notation "State" => MachineHooks.State K U
 local notation "Limits" => ExecutionMachine.Limits
 local notation "Errors" => StepError → State → Prop
 
-/-- On a normal return with a target, the caller state can be recognized by
-the caller's locals identity and the target's first MIR instruction. The
-entire returned state remains available to the postcondition. -/
+/-- Match the expected caller locals identity and the target's first MIR
+instruction. A normal-return contract can combine this check with facts
+about the return destination and caller memory in the same state. -/
 def resumedAt (caller : LocalsIdentity) (target : BasicBlockId) (after : State) : Prop :=
   ∃ frame, after.stack.currentFrame? = some frame ∧ frame.localsIdentity = caller ∧
     frame.location = .mir ⟨target, 0⟩
@@ -121,7 +121,9 @@ argument setup. Its actual successor is used for the callee WP at the depth
 just above the caller. If the step completes without pushing (for instance
 an intrinsic), the scope exit is immediate. Normal MIR return in the scope
 runs protector release, return copying, cleanup and the caller jump before
-the continuation receives the state. -/
+the continuation receives the state. A scope exit observes active stack
+depth. A contract can check the caller identity and target with `resumedAt`
+when it expects the normal return edge. -/
 def callPre (config : Config) (limits : Limits) (program : BodyCFG.CompiledProgram)
     (allowed : State → C → Prop) (post : Exit → State → Prop)
     (failure : Errors) (before : State) : Prop :=
