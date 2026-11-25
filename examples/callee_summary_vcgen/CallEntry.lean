@@ -14,10 +14,8 @@ def calleeBorrow : BorTag := ⟨4, by decide⟩
 /-- Seed the caller immediately before its imported call. The two live
 references correspond to the borrow of the stack byte and its two-phase
 reborrow in the preceding MIR. -/
-def atBorrowedCall : Except String (Config × ULift.{1} BodyVCGen.LoadedProgram × State) := do
-  let (config, prepared, program) ← configure GeneratedBodySafety.input 0
-  let compiled := prepared.down
-  let loaded := program.down
+def assembleBorrowedCall (config : Config) (compiled : EvalPreparation.Prepared)
+    (loaded : BodyVCGen.LoadedProgram) : Except String (Config × ULift.{1} BodyVCGen.LoadedProgram × State) := do
   let output ← layoutOfLocal compiled loaded 0
   let byte ← layoutOfLocal compiled loaded 3
   let argument ← layoutOfLocal compiled loaded 5
@@ -51,7 +49,11 @@ def atBorrowedCall : Except String (Config × ULift.{1} BodyVCGen.LoadedProgram 
     |>.set! 4 (localImmediate .uninit (some byte.down))
     |>.set! 5 (reference callBorrow)
     |>.set! 6 (reference child)
-  pure (config, program, ⟨⟨#[{frame with locals}]⟩, machine⟩)
+  pure (config, ULift.up loaded, ⟨⟨#[{frame with locals}]⟩, machine⟩)
+
+def atBorrowedCall : Except String (Config × ULift.{1} BodyVCGen.LoadedProgram × State) := do
+  let (config, prepared, program) ← configure GeneratedBodySafety.input 0
+  assembleBorrowedCall config prepared.down program.down
 
 def argumentHasStrongProtector (after : State) : Bool := Id.run do
   let some frame := after.stack.currentFrame? | return false

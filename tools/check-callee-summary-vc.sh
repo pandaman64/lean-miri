@@ -9,7 +9,7 @@ mkdir -p "$out/lib/empty_function" "$out/lib/pointer_observation_vcgen"
 
 export LEAN_NUM_THREADS=1
 export LEAN_PATH="$out:$out/lib:$PWD/.lake/build/lib/lean${LEAN_PATH:+:$LEAN_PATH}"
-flock --no-fork /tmp/lean-miri-lake-build.lock lake build   Miri.Frontend.ImportBodyVC Miri.Verification.CalleeSummaryWP
+flock --no-fork /tmp/lean-miri-lake-build.lock lake build   Miri.Frontend.ImportBodyVC Miri.Verification.CalleeSummaryWP Miri.Verification.PointerFormationWP
 
 LEAN_MIRI_PREPARED_ALLOC_ID_WORLD=1 bash tools/export-mir.sh   --output "$out/runtime.json" --root miri_start -- "$fixture"   --crate-type=bin --crate-name callee_summary -C debug-assertions=no   -C overflow-checks=no -C panic=abort -Zmir-opt-level=0
 tools/body-vc safety "$out/runtime.json" --root miri_start   --output "$out/Generated.lean" --no-build --no-check
@@ -20,6 +20,12 @@ lean -j1 --root=examples -o "$out/lib/pointer_observation_vcgen/Fixture.olean" \
   examples/pointer_observation_vcgen/Fixture.lean
 lean -j1 --root=examples/callee_summary_vcgen -o "$out/CallEntry.olean" \
   examples/callee_summary_vcgen/CallEntry.lean
+cp examples/callee_summary_vcgen/CallCompilerData.lean "$out/CallCompilerData.lean"
+lean -j1 --root="$out" -o "$out/CallCompilerData.olean" "$out/CallCompilerData.lean"
+for module in ReflectedCallEntry CallAbiLiteral CallFrameEntry; do
+  lean -j1 --root=examples/callee_summary_vcgen -o "$out/$module.olean" \
+    "examples/callee_summary_vcgen/$module.lean"
+done
 lean -j1 --root=examples/callee_summary_vcgen -o "$out/CalleeBody.olean" \
   examples/callee_summary_vcgen/CalleeBody.lean
 lean -j1 examples/callee_summary_vcgen/CallerObservation.lean
