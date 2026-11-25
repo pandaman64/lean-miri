@@ -1,9 +1,12 @@
 import Copy
+import CopyPhysical
+import CopyTail
+import Miri.Memory.ProvenanceMapVerification
 import GeneratedCopyRows
 
 namespace PointerObservation.Copy
 
-open Miri.Interpreter Miri.Verification Miri.Memory Miri.MIR Fixture
+open Miri.ABI Miri.Interpreter Miri.Verification Miri.Memory Miri.MIR Miri.TreeBorrows Fixture
 
 /-- The emitted window checks the same executable copy observation, with a
 finite endpoint after the load and the actual failed state on invalidation. -/
@@ -24,6 +27,14 @@ theorem generatedPrefix_iff_checked (source destination : UInt8) (stale : Bool) 
     simp only [required, each]
     exact (prefixPre_iff_windowPrefixPre config _ _ 5 rows
       ((GeneratedBodySafety.window_0_bb0_5 config limits).take 6) entry (by rfl)).symm
+
+set_option maxHeartbeats 500000 in
+set_option maxRecDepth 40000 in
+attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail in
+private theorem entrySelected (source destination : UInt8) (stale : Bool) :
+    (scenario source destination stale).toOption.bind (fun entry => BodyCFG.selected entry.2) =
+      some (⟨0, 5⟩, mir_0_bb0_5) := by
+  cbv
 
 private theorem cachedMove
     (hooks : OperandMachine.Hooks MiriMemoryKind EmptyFunction.Configuration.RootUser Unit)
@@ -143,14 +154,164 @@ theorem reduceCachedCopyOperands
       validation noClock destinationTyped)
     constant
 
+set_option maxHeartbeats 1100000 in
+set_option maxRecDepth 65536 in
+attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail in
+private theorem copyPreflight
+    (source destination : UInt8) (stale : Bool)
+    (copy : Pointer (Option Provenance) → Pointer (Option Provenance) → Size → Bool →
+      (Unit → State → Prop) → (StepError → State → Prop) → State → Prop)
+    (post : State → Unit → State → Prop) (failure : StepError → State → Prop) :
+    match scenario source destination stale with
+    | .error _ => False
+    | .ok (config, before) =>
+      let checked := ExecutionMachine.withValidation config limits
+      let hooks := ExecutionMachine.memoryIntrinsicHooks checked
+      let read := fun operand => OperandMachine.evalOperand (ExecutionMachine.operandHooks checked) () operand none
+      RvalueWP.actionPre (read copyOperands.source) (fun src =>
+        RvalueWP.actionPre (read copyOperands.destination) (fun dst =>
+          RvalueWP.actionPre (read copyOperands.count) (fun count =>
+            NondivergingIntrinsicWP.copyPreUsing hooks copy () src dst count true (post before) failure)
+          failure) failure) failure before =
+        copy (pointer BorTag.one 0).withOptionalProvenance (pointer BorTag.one 1).withOptionalProvenance
+          (Size.ofBytes 1) true (post before) failure before := by
+  cbv
+
+/-- On the imported initial state, the emitted copy row's operand evaluation,
+compiler queries and alignment checks pass a one-byte copy to the memory rule.
+The memory rule still checks live allocations and Tree Borrows and passes the
+actual resulting machine to the statement continuation. -/
+theorem reduceInitialCopy (source destination : UInt8) (stale : Bool)
+    (config : Config) (before : State) (entry : scenario source destination stale = .ok (config, before))
+    (post : Bool → State → Prop) (failure : StepError → State → Prop) :
+    (GeneratedBodySafety.transfer_0_bb0_5 config limits).pre () post failure before ↔
+      let checked := ExecutionMachine.withValidation config limits
+      CopyTreeWP.copyPre checked.access checked.addresses checked.arithmetic
+        (pointer BorTag.one 0).withOptionalProvenance (pointer BorTag.one 1).withOptionalProvenance
+        (Size.ofBytes 1) 1 true
+        (fun _ => InstructionWP.finishStatementResultPre (before.stack.frames.size - 1) post failure)
+        failure before := by
+  let checked := ExecutionMachine.withValidation config limits
+  have evaluated := copyPreflight source destination stale
+    (fun src dst size nonoverlap => CopyTreeWP.copyPre checked.access checked.addresses
+      checked.arithmetic src dst size 1 nonoverlap)
+    (fun initial _ => InstructionWP.finishStatementResultPre (initial.stack.frames.size - 1) post failure)
+    failure
+  simp only [entry] at evaluated
+  rw [(GeneratedBodySafety.transfer_0_bb0_5 config limits).exact]
+  change BodyCFG.nodePre config limits () post failure before GeneratedBodySafety.mir_0_bb0_5 ↔ _
+  rw [show GeneratedBodySafety.mir_0_bb0_5 =
+    .statement (.Intrinsic (.CopyNonOverlapping copyOperands)) from rfl]
+  simp only [BodyCFG.nodePre, NondivergingIntrinsicWP.statementPre_intrinsic,
+    NondivergingIntrinsicWP.evalPre, NondivergingIntrinsicWP.copyPre, CopyTreeWP.copyActionPre_eq]
+  exact Iff.of_eq evaluated
+
+set_option maxHeartbeats 1400000 in
+set_option maxRecDepth 65536 in
+attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail in
+attribute [local cbv_opaque] CopyMemoryWP.snapshotPre in
+section
+
+set_option maxHeartbeats 1800000
+set_option maxRecDepth 40000
+attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail
+attribute [local cbv_opaque] Allocation.Bridge.copyRepeatedlyPre
+
+private theorem prepareByteSnapshot (data : Array UInt8) :
+    (ProvenanceMap.new (Prov := Provenance)).prepareCopy
+      ({start := ⟨⟨0#64⟩⟩, size := ⟨1⟩}) data ⟨⟨8#64⟩⟩ =
+        .ok ⟨#[], #[]⟩ :=
+  ProvenanceMap.prepareCopy_new _ _ _ (Size.ofBytes 1) (by decide) (by decide)
+
+attribute [local cbv_opaque] ProvenanceMap.new ProvenanceMap.prepareCopy
+attribute [local cbv_eval] prepareByteSnapshot
+
+/-- Evaluate memory access and physical copy at the fixture's concrete
+allocation and ranges, carrying the actual committed state into the next row. -/
+private theorem copyMemoryAndAdvance (source destination : UInt8) (stale : Bool)
+    (accept : Bool → State → Prop)
+    (failure : StepError → State → Prop) :
+    match scenario source destination stale with
+    | .error _ => False
+    | .ok (config, before) =>
+      let checked := ExecutionMachine.withValidation config limits
+      CopyTreeWP.copyPre checked.access checked.addresses checked.arithmetic
+        (pointer BorTag.one 0).withOptionalProvenance (pointer BorTag.one 1).withOptionalProvenance
+        (Size.ofBytes 1) 1 true
+        (fun _ => InstructionWP.finishStatementResultPre (before.stack.frames.size - 1) accept failure)
+        failure before =
+      match postCopyTree source stale with
+      | some (_, after) => accept true after
+      | none => False := by
+  cbv
+  change
+    Allocation.Bridge.copyRepeatedlyPre
+      ((unitImage source destination).withExtra ?readTree)
+      (allocRange Size.ZERO (Size.ofBytes 1)) (Size.ofBytes 1) 1 (Size.ofBytes 8)
+      true true ?commit ?reject ((unitImage source destination).withExtra ?writeTree) = _
+  rw [physicalCopyPre]
+  cbv
+
+private theorem copyConfig (source destination : UInt8) (stale : Bool) :
+    ((scenario source destination stale).toOption.map Prod.fst) =
+      (postCopyTree source stale).map Prod.fst := by
+  cbv
+
+end
+
+/-- Discharge the first emitted row and route its committed state through
+the remaining five statements. -/
+theorem checked_of_copy_suffix (source destination : UInt8) (stale : Bool)
+    (suffix : match postCopyTree source stale with
+      | none => False
+      | some (config, after) =>
+        prefixPre config
+          (fun final => stale = false ∧ scalarAt final 0 = some source)
+          (fun error final => stale = true ∧ error = disabledLoad ∧ bytesAt 1 final = some (.ok #[source]))
+          6 rows.tail after) :
+    checked source destination stale = true := by
+  rw [← required_iff_checked, required]
+  have selected := entrySelected source destination stale
+  cases entry : scenario source destination stale with
+  | error error =>
+    simp only [entry, Except.toOption, Option.bind_none] at selected
+    cases selected
+  | ok entered =>
+    obtain ⟨config, before⟩ := entered
+    simp only [entry, Except.toOption, Option.bind_some] at selected
+    change prefixPre config _ _ 5 (mir_0_bb0_5 :: rows.tail) before
+    rw [prefixPre]
+    refine ⟨selected, ?_⟩
+    refine ((GeneratedBodySafety.transfer_0_bb0_5 config limits).exact () _ _ before).mp ?_
+    rw [reduceInitialCopy source destination stale config before entry]
+    have copy := copyMemoryAndAdvance source destination stale
+      (fun more after => more = true ∧ prefixPre config
+        (fun final => stale = false ∧ scalarAt final 0 = some source)
+        (fun error final => stale = true ∧ error = disabledLoad ∧ bytesAt 1 final = some (.ok #[source]))
+        6 rows.tail after)
+      (fun error final => stale = true ∧ error = disabledLoad ∧ bytesAt 1 final = some (.ok #[source]))
+    simp only [entry] at copy
+    rw [copy]
+    cases next : postCopyTree source stale with
+    | none => simp only [next] at suffix
+    | some after =>
+      obtain ⟨resumedConfig, resumed⟩ := after
+      have same := copyConfig source destination stale
+      rw [entry, next] at same
+      have sameConfig : config = resumedConfig := Option.some.inj same
+      exact ⟨trivial, by simpa only [next, sameConfig] using suffix⟩
+
 open Lean Elab Command in
 run_cmd liftTermElabM do
-  for name in [``generatedPrefix_iff_checked, ``reduceCachedCopyOperands] do
+  for name in [``generatedPrefix_iff_checked, ``entrySelected,
+      ``reduceCachedCopyOperands, ``reduceInitialCopy,
+      ``copyMemoryAndAdvance, ``checked_of_copy_suffix] do
     for dependency in (← collectAxioms name) do
       unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
         throwError "{name} depends on unapproved axiom {dependency}"
 
 #print axioms generatedPrefix_iff_checked
 #print axioms reduceCachedCopyOperands
+#print axioms reduceInitialCopy
 
 end PointerObservation.Copy
