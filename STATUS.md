@@ -1288,26 +1288,24 @@ vector-clock backend.
   prove the accepted store through the original tag and the exact Frozen-tag
   store error with the initial byte retained. The reference proofs check the
   actual typed retags and shallow validation. These guarantees cover the
-  selected prefixes and prepared states, not complete arbitrary pointer programs.
-  Fresh integrated validation of the expanded pointer check script remains pending.
+  selected prefixes and prepared states.
   [Check the normalized rows and pointer observations](tools/check-pointer-observation-vc.sh).
 
   [Callee summaries](Miri/Verification/CalleeSummaryWP.lean) compose the
   canonical dispatch and callee scope with the caller's continuation on
-  the returned state. The imported call proof assumes local obligations for
-  callee entry, the write, return-value assignment, cleanup and the continuation.
-  Component proofs cover the emitted immediate result assignment, a protected
-  one-byte write, and singleton protector release while preserving the caller
-  allocation's bytes. An executable check follows the actual exported call
-  through the callee's write of 42, return of 7, protector release and resumed
-  caller identity; the complete imported Rust example also has a finite runtime
-  check reaching normal scope exit. Proving this callee contract from concrete
-  call-entry facts, rather than assuming its local row obligations, remains open.
-  The caller continuation must then prove its tests of 7 and 42 and its later
-  store of 99 from the returned contract. That contract must retain the live
-  allocation, provenance and Tree Borrows rights needed for those accesses:
-  returned scalar values and removal of the callee's protector alone do not
-  establish the caller's permission to write.
+  the returned state. The exported `update(&mut u8)` fixture uses a prepared
+  concrete caller at the selected call row with a Unit choice policy.
+  `updateSummary` derives the canonical dispatch, protected callee entry,
+  write of 42, assignment of return value 7, and canonical Return from that
+  state. The postcondition checks both values, absence of the callee's
+  strong argument protector, and resumption at bb1.0 in the original caller
+  frame. Its exact state equality also carries the live allocation,
+  provenance and Tree Borrows rights into `updateThenCallerStore`, which
+  checks the accepting branches for 7 and 42 and the write of 99 in the
+  actual emitted caller rows. Both theorems express partial safety for the
+  fixture. The executable check also follows the complete Rust example
+  through a finite normal scope exit.
+  [Exported call and caller proofs](examples/callee_summary_vcgen/UpdateSummary.lean).
   [Check the exported callee example](tools/check-callee-summary-vc.sh).
 
   The [duplicate_prefix example](examples/duplicate_prefix_vcgen/README.md)
