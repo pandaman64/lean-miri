@@ -74,7 +74,7 @@ example (config : Config) (limits : ExecutionMachine.Limits) (choice : C)
     RvalueWP.actionPre ((ExecutionMachine.rvalueHooks config limits).withRetagMode choice .None
       ((ExecutionMachine.rvalueHooks config limits).copyOp choice source dest)) post onError =
       RvalueWP.retagModePullback .None (fun _ failed => failed error) post onError := by
-  simp only [RvalueWP.canonical_copyOp, RvalueWP.actionPre_rvalueHooks_withRetagMode, miri_initial_wp]
+  simp only [miri_initial_wp]
   congr 1
   funext success failed
   simp only [Miri.Verification.PlaceReadWriteWP.copyPre,

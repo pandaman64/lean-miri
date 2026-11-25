@@ -313,6 +313,9 @@ theorem actionPre_scopedWriteLocal [DecidableEq K] (access : ValidityMachine.Acc
       writePre (ExecutionMachine.projectionHooks config).place choice value dest post onError := by
   rw [← actionPre_eq_wp, actionPre_canonicalWrite]
 
+attribute [miri_initial_wp] RvalueWP.canonical_copyOp RvalueWP.canonical_copyOpAllowTransmute
+  RvalueWP.actionPre_rvalueHooks_withRetagMode
+
 /-- Reify the retag scope's action as a predicate so the enclosed copy can
 be simplified without expanding the borrow tracker scope. -/
 @[miri_initial_wp] theorem retagModePre_eq_pullback {A : Type}
