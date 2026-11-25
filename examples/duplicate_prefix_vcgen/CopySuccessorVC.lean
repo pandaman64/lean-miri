@@ -55,22 +55,21 @@ theorem copy_and_load_pre_eq
 
 end
 
--- Inspect the predicate field independently of the row equivalence proof.
-open Lean Elab Command in
-run_cmd do
-  for (row, expected) in [
-      (``transfer_0_bb0_5, ``CopyTreeWP.copyPre),
-      (``transfer_0_bb0_10, ``PlaceReadWriteWP.copyPre)] do
-    let some (.defnInfo info) := (← getEnv).find? row
-      | throwError "missing generated transfer {row}"
-    let value := info.value.getLambdaBody
-    unless value.getAppFn.isConstOf ``GeneratedBodyVC.ReducedNode.mk do
-      throwError "unexpected generated transfer shape for {row}"
-    let args := value.getAppArgs
-    let some predicate := args[args.size - 2]?
-      | throwError "missing generated predicate for {row}"
-    unless (predicate.find? (·.isConstOf expected)).isSome do
-      throwError "generated transfer {row} lost {expected}"
+-- Inspect the predicate independently of the row equivalence proof.
+open Lean Elab Command Meta in
+run_cmd liftTermElabM do
+  let rows := [
+    (``transfer_0_bb0_5, [``CopyTreeWP.copyPre]),
+    (``transfer_0_bb0_10, [``ExecutionLeaves.Operand.dereference, ``PlaceReadWriteWP.copyPre])]
+  for (row, expected) in rows do
+    let declaration ← getConstInfo row
+    forallTelescope declaration.type fun arguments _ => do
+      let transfer := mkAppN (mkConst row (declaration.levelParams.map Level.param)) arguments
+      -- Reduce the projection and any alias sharing the same transfer.
+      let predicate ← whnf (← mkAppM ``GeneratedBodyVC.ReducedNode.pre #[transfer])
+      for name in expected do
+        unless (predicate.find? (·.isConstOf name)).isSome do
+          throwError "{row}.pre is missing {name}"
 
 #print axioms copy_and_load_pre_eq
 
