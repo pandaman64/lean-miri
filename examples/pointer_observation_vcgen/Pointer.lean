@@ -10,6 +10,7 @@ open Miri.TreeBorrows Miri.Verification Fixture
 
 set_option maxHeartbeats 10000000
 set_option maxRecDepth 65536
+attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail
 
 import_body_vc_mir "pointers.mir.json" 0 as input
 
@@ -123,12 +124,19 @@ theorem required_iff_checked (observation : Observation) (initial : UInt8) :
   unless checked .frozenWrite 13 do
     throw (IO.userError "frozen tag did not produce the expected UB and retain the original byte")
 
+/-- The imported shared-read body and its typed entry state can be prepared
+for any initialized byte. -/
+theorem sharedEntryReady (initial : UInt8) : (scenario 2 initial false).isOk = true := by
+  cbv
+
 open Lean Elab Command in
 run_cmd liftTermElabM do
-  for dependency in (← collectAxioms ``required_iff_checked) do
-    unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
-      throwError "pointer observation VC depends on unapproved axiom {dependency}"
+  for name in [``required_iff_checked, ``sharedEntryReady] do
+    for dependency in (← collectAxioms name) do
+      unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
+        throwError "{name} depends on unapproved axiom {dependency}"
 
 #print axioms required_iff_checked
+#print axioms sharedEntryReady
 
 end PointerObservation
