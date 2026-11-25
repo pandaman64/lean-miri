@@ -209,14 +209,31 @@ For a direct Lean `vcgen` proof, use this operation in a `Triple` with your
 precondition and success and error postconditions.
 
 ```lean
-GeneratedBodyVC.run config limits program
-  (GeneratedBodySafety.transferTable config limits) allowed
+GeneratedBodySafety.run config limits program allowed
 ```
 
-Enable `set_option experimental.vcgen true`. After `vcgen`, use
-`miri_generated_program` to expose one transfer through the reduced table.
-`GeneratedBodyVC.rule_pre_of_row` selects a reduced predicate once the active
-body, location and node match the imported row.
+Enable `set_option experimental.vcgen true`. After `vcgen`, unfold
+`GeneratedBodySafety.entryPre` to expose the compiler-selected entry window.
+Each `window_<body>_bb<block>_<slot>` composes the transfers through the rest
+of that basic block. The continuation sees the actual successor state,
+including the state used to check the next permitted choice. Use
+`GeneratedBodyVC.windowPre_at` when you have a proof of the next selected row.
+If the successor leaves the window, the VC uses the shared whole-body
+continuation. A matched call terminator opens the actual callee scope and
+resumes the caller from the state left by the callee. Use
+`GeneratedBodyVC.windowPre_call` to select that summary at a known row,
+or `GeneratedBodyVC.sharedPre_iff_call` at a live call boundary in the
+shared continuation.
+
+After selecting a window row, unfold its emitted transfer to expose its
+effects. `miri_copy_initial_wp` applies the checked copy and successor-load
+rewrites when the necessary range and provenance facts are in scope.
+The `miri_initial_wp` simp set also exposes typed pointer formation and
+the associated Tree Borrows checks.
+
+Use `miri_generated_program` for the single-row view of
+`GeneratedBodyVC.run`. Use `miri_generated_window` with an emitted window name
+to substitute that window into a generated control precondition.
 
 Export the Rust function and import the execution input with
 `Miri.Frontend.ImportMIR`. In a Lean client, import

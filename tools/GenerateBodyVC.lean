@@ -49,9 +49,16 @@ def main (args : List String) : IO UInt32 := do
           | none =>
             representatives := representatives.insert key (candidates.push (equation.node, here))
             pure here
+        let statement := match equation.node with
+          | .statement _ => true
+          | .terminator _ => false
+        let call := match equation.node with
+          | .terminator { kind := .Call .., .. } => true
+          | _ => false
         equations := equations.push (Json.mkObj [("pc", locJson equation.pc),
           ("operation", toJson (opcode equation.node)),
-          ("targets", Json.arr (equation.targets.map locJson)),
+          ("targets", Json.arr (equation.targets.map locJson)), ("statement", toJson statement),
+          ("call", toJson call),
           ("representative", toJson #[representative.body.index, representative.pc.block,
             representative.pc.statementIndex])])
     functions := functions.push (Json.mkObj [("identity", toJson body.identity.index),

@@ -1,5 +1,7 @@
 import Miri.Verification.BodyVCGen
 import Miri.Verification.InitialWPAttr
+import Miri.Verification.CalleeSummaryWP
+import Miri.Verification.CopyInitialWP
 
 namespace Miri.Verification.GeneratedBodyVC
 
@@ -141,6 +143,136 @@ theorem controlPre_eq (config : Config) (limits : Limits) (graph : BodyCFG.Compi
   simp only [controlPre, WholeBodyWP.catalogControlPre_shared, WholeBodyWP.catalogSharedPre,
     WholeBodyWP.eliminate_iff, WholeBodyWP.solve_iff]
 
+/-- At a live call site, open the actual callee scope and resume the
+generated continuation on the state left by return. -/
+theorem sharedPre_iff_call (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) (before : State)
+    (live : depth ≤ before.stack.frames.size) :
+    sharedPre config limits graph table allowed depth post failure before ↔
+      CalleeSummaryWP.callPre config limits graph allowed
+        (CalleeSummaryWP.continueWith config limits graph allowed depth post failure)
+        failure before := by
+  have same := congrFun (controlPre_eq config limits graph table allowed depth post failure) before
+  have shared := WholeBodyWP.eliminate_iff (rule config limits graph table)
+    (fun state => state.stack.frames.size) allowed depth post failure (BodyCFG.programRank graph) before
+  change controlPre config limits graph table allowed depth post failure before ↔
+    sharedPre config limits graph table allowed depth post failure before at shared
+  rw [← shared, same]
+  exact (CalleeSummaryWP.callPre_continue_iff config limits graph allowed depth post failure before live).symm
+
+/-- A statically selected instruction and its reduced transfer. The live
+frame and instruction are checked before the transfer can be used. -/
+structure WindowRow (config : Config) (limits : Limits) where
+  location : BodyCFG.ProgramLocation
+  reduced : ReducedNode config limits
+  summarizeCall : Bool := false
+
+/-- Compose a list of straight-line transfers. Each continuing transfer
+passes its actual successor state to the next row. A selected call
+summarizes the actual entered scope. Other edges leaving the window use
+the shared whole-body equation. -/
+def windowPre (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) :
+    List (WindowRow config limits) → State → Prop
+  | [], before => sharedPre config limits graph table allowed depth post failure before
+  | row :: rest, before =>
+    if depth ≤ before.stack.frames.size then
+      match graph.equationFor before with
+      | some (location, equation) =>
+        if location = row.location ∧ equation.node = row.reduced.node then
+          if row.summarizeCall then
+            CalleeSummaryWP.callPre config limits graph allowed
+              (CalleeSummaryWP.continueWith config limits graph allowed depth post failure)
+              failure before
+          else
+            ∀ choice, allowed before choice →
+              row.reduced.pre choice
+                (fun more after => if more then windowPre config limits graph table allowed depth
+                  post failure rest after else post .stopped after) failure before
+        else sharedPre config limits graph table allowed depth post failure before
+      | none => sharedPre config limits graph table allowed depth post failure before
+    else post .scopeExit before
+
+/-- Select the first transfer of a window when the live state is at its row. -/
+theorem windowPre_at (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure)
+    (row : WindowRow config limits) (rest : List (WindowRow config limits)) (before : State)
+    {equation : BodyCFG.Equation} (inside : depth ≤ before.stack.frames.size)
+    (selected : graph.equationFor before = some (row.location, equation))
+    (same : equation.node = row.reduced.node) (ordinary : row.summarizeCall = false) :
+    windowPre config limits graph table allowed depth post failure (row :: rest) before ↔
+      ∀ choice, allowed before choice →
+        row.reduced.pre choice (fun more after => if more then
+          windowPre config limits graph table allowed depth post failure rest after
+          else post .stopped after) failure before := by
+  simp only [windowPre, inside, ↓reduceIte, selected, same, and_self, ordinary, Bool.false_eq_true]
+
+/-- Select the scope summary when the live state selects the emitted call. -/
+theorem windowPre_call (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure)
+    (row : WindowRow config limits) (rest : List (WindowRow config limits)) (before : State)
+    {equation : BodyCFG.Equation} (inside : depth ≤ before.stack.frames.size)
+    (selected : graph.equationFor before = some (row.location, equation))
+    (same : equation.node = row.reduced.node) (isCall : row.summarizeCall = true) :
+    windowPre config limits graph table allowed depth post failure (row :: rest) before ↔
+      CalleeSummaryWP.callPre config limits graph allowed
+        (CalleeSummaryWP.continueWith config limits graph allowed depth post failure) failure before := by
+  simp only [windowPre, inside, ↓reduceIte, selected, same, and_self, isCall]
+
+theorem windowPre_iff (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure)
+    (rows : List (WindowRow config limits)) (before : State) :
+    windowPre config limits graph table allowed depth post failure rows before ↔
+      sharedPre config limits graph table allowed depth post failure before := by
+  induction rows generalizing before with
+  | nil => rfl
+  | cons row rest ih =>
+    have sharedStep := WholeBodyWP.solve_unfold (rule config limits graph table)
+      (fun state : State => state.stack.frames.size) allowed depth post failure before
+    by_cases inside : depth ≤ before.stack.frames.size
+    · cases active : graph.graphFor before with
+      | none =>
+        simp only [windowPre, inside, ↓reduceIte, BodyCFG.CompiledProgram.equationFor,
+          active, bind, Bind.bind, Option.bind]
+      | some found =>
+        obtain ⟨identity, cfg⟩ := found
+        cases selected : cfg.equationFor before with
+        | none =>
+          simp only [windowPre, inside, ↓reduceIte, BodyCFG.CompiledProgram.equationFor,
+            active, selected, bind, Bind.bind, Option.bind]
+        | some equation =>
+          by_cases sameRow : (⟨identity, equation.pc⟩ : BodyCFG.ProgramLocation) = row.location ∧
+              equation.node = row.reduced.node
+          · cases isCall : row.summarizeCall
+            · rw [show sharedPre config limits graph table allowed depth post failure before ↔ _ from sharedStep]
+              simp only [windowPre, inside, ↓reduceIte, BodyCFG.CompiledProgram.equationFor, active,
+                selected, bind, Bind.bind, Option.bind, pure, Pure.pure, sameRow, isCall, Bool.false_eq_true,
+                WholeBodyWP.transfer, rule, tablePre, ih, rowPre_eq]
+              exact forall_congr' fun choice => imp_congr_right fun _ => row.reduced.exact choice _ _ _
+            · simpa only [windowPre, inside, ↓reduceIte, BodyCFG.CompiledProgram.equationFor, active,
+                selected, bind, Bind.bind, Option.bind, pure, Pure.pure, sameRow, and_self, isCall] using
+                (sharedPre_iff_call config limits graph table allowed depth post failure before inside).symm
+          · simp only [windowPre, inside, ↓reduceIte, BodyCFG.CompiledProgram.equationFor, active,
+              selected, bind, Bind.bind, Option.bind, pure, Pure.pure, sameRow]
+    · have same := sharedStep.symm
+      simpa only [windowPre, inside, ↓reduceIte, WholeBodyWP.transfer, sharedPre] using same
+
+/-- Expose a generated straight-line window at the current state through the
+normal program VC. The final continuation remains shared. -/
+theorem controlPre_iff_window (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure)
+    (rows : List (WindowRow config limits)) (before : State) :
+    controlPre config limits graph table allowed depth post failure before ↔
+      windowPre config limits graph table allowed depth post failure rows before :=
+  (WholeBodyWP.eliminate_iff _ _ _ _ _ _ _ _).trans
+    (windowPre_iff config limits graph table allowed depth post failure rows before).symm
+
 /-- Use the existing graph rank and shared fixed point with the reduced
 transfer equations. -/
 def pre (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
@@ -208,11 +340,31 @@ def run (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
       post failure :=
   Triple.iff.mpr fun before checked => (pre_iff config limits program table allowed post failure before).mp checked
 
+/-- A direct VC for the compiler-selected window at the prepared entry. -/
+theorem spec_run_window (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
+    (table : Table config limits) (allowed : State → C → Prop)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure)
+    (rows : List (WindowRow config limits)) :
+    Triple (run config limits program table allowed)
+      (fun before => WholeBodyWP.entryMatchesLoaded program.root before ∧
+        windowPre config limits (BodyCFG.compileProgram program.bodies) table allowed
+          before.stack.frames.size post failure rows before) post failure :=
+  Triple.iff.mpr fun before checked => (pre_iff config limits program table allowed post failure before).mp
+    ⟨checked.1, (controlPre_iff_window config limits (BodyCFG.compileProgram program.bodies)
+      table allowed before.stack.frames.size post failure rows before).mpr checked.2⟩
+
 /-- Open one layer of the reduced program without expanding its successors. -/
 macro "miri_generated_program" : tactic =>
   `(tactic| first
     | rw [pre, controlPre_reduce]
     | rw [controlPre_reduce])
+
+/-- Open the straight-line window emitted for an imported location. -/
+macro "miri_generated_window" rows:term : tactic =>
+  `(tactic| first
+    | rw [pre, controlPre_iff_window (rows := $rows)]
+    | rw [controlPre_iff_window (rows := $rows)]
+    | rw [← windowPre_iff (rows := $rows)])
 
 /-- Normalize the concrete instruction, leaving configured effects and shared
 success and failure continuations symbolic. -/

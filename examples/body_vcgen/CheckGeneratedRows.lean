@@ -27,6 +27,11 @@ run_cmd liftTermElabM do
           throwError "{row}.pre still contains {name}"
 
   for (api, expected) in [
+      (``GeneratedBodySafety.window_0_bb0_0, [``GeneratedBodySafety.transfer_0_bb0_0,
+        ``GeneratedBodySafety.window_0_bb0_1]),
+      (``GeneratedBodySafety.entryPre, [``GeneratedBodyVC.windowPre,
+        ``GeneratedBodySafety.entryWindow]),
+      (``GeneratedBodySafety.requiredAt, [``GeneratedBodySafety.entryPre]),
       (``GeneratedBodySafety.body_0_bb0_2, [``GeneratedBodySafety.safetyEquation]),
       (``GeneratedBodySafety.safetyEquation, [``GeneratedBodyVC.generateProgram,
         ``GeneratedBodyVC.controlPre, ``GeneratedBodySafety.transferTable]),
@@ -37,5 +42,12 @@ run_cmd liftTermElabM do
       unless (definition.value.find? (·.isConstOf name)).isSome do
         throwError "{api} does not use {name}"
 
+example {K U C O X Host : Type} [DecidableEq K]
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits) :
+    (GeneratedBodySafety.window_0_bb2_5 config limits).head?.map (·.summarizeCall) = some true ∧
+      (GeneratedBodySafety.window_0_bb2_5 config limits).tail = [] := ⟨rfl, rfl⟩
+
 #print axioms GeneratedBodySafety.verification_eq
 #print axioms GeneratedBodySafety.safetyEquation_eq
+#print axioms GeneratedBodySafety.spec_run
+#print axioms GeneratedBodyVC.sharedPre_iff_call

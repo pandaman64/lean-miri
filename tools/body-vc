@@ -59,6 +59,7 @@ def vc_source(mir, metadata):
     names = []
     entries = []
     obligations = []
+    entry_window = "[]"
     for body in metadata["bodies"]:
         identity = body["identity"]
         names.append(f"-- Body {identity}" + (" (selected root)" if identity == metadata["rootIdentity"] else ""))
@@ -93,6 +94,27 @@ def vc_source(mir, metadata):
                     "    GeneratedBodyVC.ReducedNode config limits :=",
                     f"  transfer_{representative} config limits",
                 ])
+        # Emit one reusable suffix at each row. Only the compiler's next
+        # statement in the same block is substituted. Calls use the exact
+        # callee scope before the shared continuation.
+        windows = {}
+        for row in reversed(body["equations"]):
+            block, slot = row["pc"]
+            suffix = f"{identity}_bb{block}_{slot}"
+            next_pc = (block, slot + 1)
+            tail = (windows.get(next_pc, "[]")
+                    if row["statement"] and row["targets"] == [list(next_pc)] else "[]")
+            summarize_call = "true" if row["call"] else "false"
+            names.extend([
+                f"def window_{suffix} (config : Config) (limits : ExecutionMachine.Limits) :",
+                "    List (GeneratedBodyVC.WindowRow config limits) :=",
+                f"  ⟨⟨.ofCanonicalIndex {identity}, ⟨{block}, {slot}⟩⟩,",
+                f"    transfer_{suffix} config limits, {summarize_call}⟩ ::",
+                f"    {tail}",
+            ])
+            windows[block, slot] = f"window_{suffix} config limits"
+        if identity == metadata["rootIdentity"]:
+            entry_window = windows.get((0, 0), "[]")
         names.append("")
     nodes = "\n".join(names)
     table = ",\n".join(entries)
@@ -121,14 +143,50 @@ def transferTable (config : Config) (limits : ExecutionMachine.Limits) :
     GeneratedBodyVC.Table config limits := Std.HashMap.ofList [
 {table}]
 
+/-- Expose the compiler-selected entry window in a direct `vcgen` proof. -/
+abbrev entryWindow (config : Config) (limits : ExecutionMachine.Limits) :
+    List (GeneratedBodyVC.WindowRow config limits) :=
+  {entry_window}
+
+def entryPre (config : Config) (limits : ExecutionMachine.Limits)
+    (program : BodyVCGen.LoadedProgram) (allowed : State → C → Prop)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : StepError → State → Prop)
+    (before : State) : Prop :=
+  WholeBodyWP.entryMatchesLoaded program.root before ∧
+    GeneratedBodyVC.windowPre config limits (BodyCFG.compileProgram program.bodies)
+      (transferTable config limits) allowed before.stack.frames.size post failure
+      (entryWindow config limits) before
+
+theorem entryPre_eq (config : Config) (limits : ExecutionMachine.Limits)
+    (program : BodyVCGen.LoadedProgram) (allowed : State → C → Prop)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : StepError → State → Prop) :
+    entryPre config limits program allowed post failure =
+      (BodyVCGen.generateProgram config limits program allowed post failure).pre := by
+  funext before
+  apply propext
+  rw [entryPre, ← GeneratedBodyVC.controlPre_iff_window]
+  exact GeneratedBodyVC.pre_iff _ _ _ _ _ _ _ _
+
+/-- The imported whole-body operation with its compiler-selected entry window. -/
+def run (config : Config) (limits : ExecutionMachine.Limits) (program : BodyVCGen.LoadedProgram)
+    (allowed : State → C → Prop) : BodyVCGen.RunProgram config limits program allowed :=
+  GeneratedBodyVC.run config limits program (transferTable config limits) allowed
+
+@[spec] theorem spec_run (config : Config) (limits : ExecutionMachine.Limits)
+    (program : BodyVCGen.LoadedProgram) (allowed : State → C → Prop)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : StepError → State → Prop) :
+    Triple (run config limits program allowed) (entryPre config limits program allowed post failure)
+      post failure :=
+  GeneratedBodyVC.spec_run_window config limits program (transferTable config limits)
+    allowed post failure (entryWindow config limits)
+
 /-- The exact pointwise safety VC at the supplied prepared state. -/
 def requiredAt (config : Config) (limits : ExecutionMachine.Limits)
     (allowed : State → C → Prop) (before : State) : Prop :=
   match loaded with
   | .error _ => False
   | .ok program =>
-    GeneratedBodyVC.pre config limits program (transferTable config limits) allowed
-      (fun _ _ => True) BodyVCGen.noUB before
+    entryPre config limits program allowed (fun _ _ => True) BodyVCGen.noUB before
 
 /-- Replace the reduced VC with the canonical one when applying existing proofs. -/
 theorem requiredAt_eq (config : Config) (limits : ExecutionMachine.Limits)
@@ -138,8 +196,7 @@ theorem requiredAt_eq (config : Config) (limits : ExecutionMachine.Limits)
       | .error _ => False
       | .ok program => (BodyVCGen.generateProgram config limits program allowed
           (fun _ _ => True) BodyVCGen.noUB).pre before) := by
-  apply propext
-  cases selected : loaded <;> simp only [requiredAt, selected, GeneratedBodyVC.pre_iff]
+  cases selected : loaded <;> simp only [requiredAt, selected, entryPre_eq]
 
 /-- The same VC with every typed choice admitted. -/
 abbrev requiredForEveryChoiceAt (config : Config) (limits : ExecutionMachine.Limits)
@@ -154,8 +211,8 @@ def requiredFromRoot (config : Config) (limits : ExecutionMachine.Limits)
   match loaded with
   | .error _ => False
   | .ok program => wp (BodyVCGen.prepareRoot config limits program launch arguments destination span)
-      (fun _ => GeneratedBodyVC.pre config limits program (transferTable config limits) allowed
-        (fun _ _ => True) BodyVCGen.noUB) BodyVCGen.noUB before
+      (fun _ => entryPre config limits program allowed (fun _ _ => True) BodyVCGen.noUB)
+      BodyVCGen.noUB before
 
 /-- The reduced root VC is exact through the same production preparation. -/
 theorem requiredFromRoot_eq (config : Config) (limits : ExecutionMachine.Limits)
@@ -167,14 +224,8 @@ theorem requiredFromRoot_eq (config : Config) (limits : ExecutionMachine.Limits)
       | .error _ => False
       | .ok program => BodyVCGen.preparedProgramPre config limits program launch arguments destination
           span allowed (fun _ _ => True) BodyVCGen.noUB before) := by
-  cases selected : loaded with
-  | error error => simp only [requiredFromRoot, selected]
-  | ok program =>
-    have same : GeneratedBodyVC.pre config limits program (transferTable config limits) allowed
-        (fun _ _ => True) BodyVCGen.noUB =
-        (BodyVCGen.generateProgram config limits program allowed (fun _ _ => True) BodyVCGen.noUB).pre :=
-      funext fun entry => propext (GeneratedBodyVC.pre_iff _ _ _ _ _ _ _ entry)
-    simp only [requiredFromRoot, selected, BodyVCGen.preparedProgramPre, same]
+  cases selected : loaded <;> simp only [requiredFromRoot, selected, BodyVCGen.preparedProgramPre,
+    entryPre_eq]
 
 /-- The saved VC holds exactly when the initialized state is at the imported
 entry and every permitted finite error in the call scope is non-UB. -/
@@ -203,7 +254,9 @@ def verification (config : Config) (limits : ExecutionMachine.Limits)
     (allowed : State → C → Prop) (post : WholeBodyWP.Exit → State → Prop)
     (failure : StepError → State → Prop) : Except String (BodyVCGen.ProgramConditions State) :=
   loaded.map fun program =>
-    GeneratedBodyVC.generateProgram config limits program (transferTable config limits) allowed post failure
+    {{ GeneratedBodyVC.generateProgram config limits program (transferTable config limits)
+        allowed post failure with
+      pre := entryPre config limits program allowed post failure }}
 
 /-- Transport verification for arbitrary postconditions to the canonical table. -/
 theorem verification_eq (config : Config) (limits : ExecutionMachine.Limits)
@@ -211,7 +264,7 @@ theorem verification_eq (config : Config) (limits : ExecutionMachine.Limits)
     (failure : StepError → State → Prop) :
     verification config limits allowed post failure =
       loaded.map (fun program => BodyVCGen.generateProgram config limits program allowed post failure) := by
-  simp only [verification, GeneratedBodyVC.generateProgram_eq]
+  simp only [verification, GeneratedBodyVC.generateProgram_eq, entryPre_eq] <;> rfl
 
 /-- Individual compiler-bound safety obligations share the whole-body
 continuation at every successor, including loop and call successors. -/
