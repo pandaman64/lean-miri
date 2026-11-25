@@ -1,5 +1,6 @@
 import Miri.Verification.CopyLoadObservationWP
 import Miri.Verification.TreeObservationWP
+import Init.Internal.Order.While
 
 /-! Initial-state normalization for an ordered copy and its successor. -/
 namespace Miri.Verification.CopyInitialWP
@@ -58,6 +59,63 @@ theorem scalarLoadFromImage [DecidableEq K] (config : Config)
     checked entry live indirect backend width aligned range component]
   unfold CopyLoadObservationWP.selectedScalarLoadPre
   rw [Allocation.Bridge.getBytesUnchecked_eq_extract _ _ _ _ full endpoint ordered bound]
+
+private theorem truncateByte (byte : UInt8) :
+    (Size.mk 1).truncate (BitVec.ofNat 128 byte.toNat) =
+      .ok (BitVec.ofNat 128 byte.toNat) := by
+  change (Except.ok ((BitVec.ofNat 128 byte.toNat).extractLsb 7 0 |>.zeroExtend 128)) = _
+  congr 1
+  apply BitVec.eq_of_toNat_eq
+  have byteBound : byte.toNat < 256 := byte.toNat_lt_size
+  rw [BitVec.toNat_setWidth_of_le (by decide)]
+  simp only [BitVec.extractLsb_toNat, Nat.shiftRight_zero, BitVec.toNat_ofNat]
+  have wide : byte.toNat < 2 ^ 128 := by omega
+  rw [Nat.mod_eq_of_lt wide, Nat.mod_eq_of_lt byteBound]
+
+section
+attribute [local cbv_opaque] Size.truncate BitVec.ofNat UInt8.toNat Nat.beq
+private theorem natBEq_self (n : Nat) : Nat.beq n n = true := Nat.beq_refl n
+attribute [local cbv_eval] truncateByte natBEq_self
+
+private theorem tryFromUInt_ofUInt8 (byte : UInt8) :
+    ScalarInt.tryFromUInt (BitVec.ofNat 128 byte.toNat) ⟨1⟩ =
+      .ok (some (ScalarInt.ofUInt8 byte)) := by
+  cbv
+end
+
+/-- A checked one-byte integer conversion preserves the source byte. -/
+theorem fromUInt_byte (byte : UInt8) :
+    Scalar.fromUInt (Prov := Provenance) (BitVec.ofNat 128 byte.toNat) ⟨1⟩ =
+      .ok (Scalar.fromScalarInt (ScalarInt.ofUInt8 byte)) := by
+  unfold Scalar.fromUInt
+  rw [tryFromUInt_ofUInt8]
+  rfl
+
+/-- Read a scalar constructed from one byte back at its original width. -/
+theorem toUInt8_byte (byte : UInt8) :
+    (Scalar.fromScalarInt (Prov := Provenance) (ScalarInt.ofUInt8 byte)).toUInt8 = .ok byte := by
+  change Except.ok (UInt8.ofNat (BitVec.ofNat 128 byte.toNat).toNat) = _
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (show byte.toNat < 2 ^ 128 from
+    Nat.lt_trans byte.toNat_lt_size (by decide)), UInt8.ofNat_toNat]
+
+section
+private theorem natAdd_zero_left (n : Nat) : Nat.add 0 n = n := Nat.zero_add n
+
+attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail
+attribute [local cbv_opaque] BitVec.ofNat Nat.add UInt8.toNat
+  Scalar.fromUInt Scalar.fromScalarInt ScalarInt.ofUInt8
+
+/-- Decode an initialized one-byte image at any offset and endianness. -/
+theorem scalarFromImage_byte (layout : TargetDataLayout) (start : Size)
+    (byte : UInt8) (provenance : ProvenanceMap Provenance) :
+    MemoryObservationWP.scalarFromImage layout (allocRange start (Size.ofBytes 1))
+      false (.ok #[byte]) (.ok (.ok ())) provenance =
+        .ok (Scalar.fromScalarInt (ScalarInt.ofUInt8 byte)) := by
+  obtain ⟨endian, pointerWidth⟩ := layout
+  cases endian <;>
+    (cbv; simp only [natAdd_zero_left, fromUInt_byte])
+
+end
 
 /-- Normalize the access checks after the concrete policy results are known.
 An error still receives the partially updated tree on the exact path. -/
@@ -130,14 +188,15 @@ macro "miri_copy_initial_wp" : tactic =>
     | (simp (disch := assumption) only [
         lookup_after_copy_accesses, CopyLoadObservationWP.liveLookup_insert,
         CopyLoadObservationWP.copyCommit_eq, CopyLoadObservationWP.copyCommitPre,
-        Allocation.splice_getElem?, and_true, true_and, ↓reduceIte, *]; done)
+        Allocation.splice_getElem?, scalarFromImage_byte, toUInt8_byte, Except.toOption, Option.bind,
+        and_true, true_and, ↓reduceIte, *]; done)
     | (simp only [CopyLoadObservationWP.wp_copyThenLoad, CopyTreeWP.copyPre,
         CopyMemoryWP.copyPreUsing, CopyMemoryWP.pointerPre, CopyMemoryWP.memoryHookPre, *]; done)
     | simp (config := { failIfUnchanged := false }) (disch := assumption) only [
     lookup_after_copy_accesses, CopyLoadObservationWP.liveLookup_insert,
     CopyLoadObservationWP.copyCommit_eq, CopyLoadObservationWP.copyCommitPre,
     CopyLoadObservationWP.getAllocRaw_insert, MemoryLifecycle.getAllocRawFromLookup,
-    MemoryObservationWP.readScalar_eq_image, accessPre_checkedBytes, TreeOverlapWP.accessPre_byteObservation_iff,
+    MemoryObservationWP.readScalar_eq_image, scalarFromImage_byte, accessPre_checkedBytes, TreeOverlapWP.accessPre_byteObservation_iff,
     CopyLoadObservationWP.wp_copyThenLoad,
     CopyTreeWP.intrinsicCopyPre_eq, CopyTreeWP.copyActionPre_eq,
     CopyTreeWP.copyPre, CopyMemoryWP.copyPreUsing, CopyMemoryWP.pointerPre,

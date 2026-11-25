@@ -60,9 +60,18 @@ theorem rejected_source_pointer (config : PlaceMachine.AccessConfig Unit Unit)
         {before with machine := {result.state.machine with memory := result.memory}} := by
   miri_copy_initial_wp
 
+/-- The loaded bits produce the same value for an arbitrary initial byte. -/
+theorem observes_symbolic_byte (layout : TargetDataLayout) (start : Size) (byte : UInt8)
+    (provenance : ProvenanceMap Provenance) :
+    (MemoryObservationWP.scalarFromImage layout (allocRange start (Size.ofBytes 1))
+      false (.ok #[byte]) (.ok (.ok ())) provenance).toOption.bind
+        (fun scalar => scalar.toUInt8.toOption) = some byte := by
+  miri_copy_initial_wp
+
 #print axioms arbitrary_observer_id
 #print axioms arbitrary_observer_byte
 #print axioms arbitrary_commit_result
 #print axioms rejected_source_pointer
+#print axioms observes_symbolic_byte
 
 end MiriTests.Verification.CopyInitialWP
