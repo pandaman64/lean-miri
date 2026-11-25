@@ -506,6 +506,23 @@ theorem visit_integer [PointerProvenance P] [DecidableEq P]
       ranges, read, clear, reset, Immediate.toScalar, Except.mapError,
       bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
 
+/-- A Boolean visit checks the scalar encoding and clears provenance when
+requested. An immediate with no tracked data bytes keeps its session. -/
+theorem visit_boolean [PointerProvenance P] [DecidableEq P]
+    (h : Hooks P S C E F A Pad) (c : C) (fuel : Nat) (session : Session P)
+    (place : RuntimePlace P) (state : S) (value : Scalar P) (layout : LocalLayout)
+    (bit : Bool)
+    (classify : h.classify c place.layout.ty state = .ok .boolean state)
+    (read : h.readImmediate c place .boolean state = .ok ⟨.scalar value, layout⟩ state)
+    (valid : value.toBool = .ok bit)
+    (clear : h.clearProvenance c place state = .ok () state)
+    (ranges : session.dataBytes = none) :
+    visit h c (fuel + 1) session place state = .ok session state := by
+  cases reset : session.flags.resetProvenanceAndPadding <;>
+    simp [visit, classify, primitive, scalarOf, liftResult, markPlace,
+      ranges, read, valid, clear, reset, Immediate.toScalar, Except.mapError,
+      bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+
 /-- Integer validation in a sized memory place marks its byte range after
 reading the value and clearing provenance. -/
 theorem visit_integer_memory [PointerProvenance P] [DecidableEq P]
