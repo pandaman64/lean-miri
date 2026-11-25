@@ -334,6 +334,20 @@ private theorem actionPre_operandProjections (h : OperandMachine.Hooks K U C) (c
   rw [actionPre_evalPlaceToOp]
   rfl
 
+/-- A singleton dereference resolves the pointer local with its own layout.
+The destination's suggested layout applies only to an unprojected operand. -/
+@[miri_initial_wp high] theorem actionPre_evalPlaceToOpDeref (h : OperandMachine.Hooks K U C)
+    (choice : C) (id : MIR.LocalId) (known : Option LocalLayout) (post : Op → State → Prop)
+    (onError : Errors) :
+    actionPre (OperandMachine.evalPlaceToOp h choice ⟨id, #[.Deref]⟩ known) post onError =
+      localOperandPre h choice id none (fun base =>
+        actionPre (h.dereference choice base) (fun memory =>
+          let result : Op := ⟨.indirect memory.mplace, memory.layout⟩
+          actionPre (h.checkPlaceType choice ⟨id, #[.Deref]⟩ result)
+            (fun _ => post result) onError) onError) onError := by
+  rw [actionPre_evalPlaceToOp]
+  rfl
+
 @[miri_initial_wp] theorem actionPre_evalOperand (h : OperandMachine.Hooks K U C) (choice : C)
     (operand : MIR.Operand) (known : Option LocalLayout) (post : Op → State → Prop) (onError : Errors) :
     actionPre (OperandMachine.evalOperand h choice operand known) post onError =
