@@ -57,7 +57,12 @@ tools/body-vc safety "$out/pointers.mir.json" --root shared_read --no-build --no
   --output "$out/GeneratedPointerRows.lean"
 lean -j1 --root="$out" -o "$out/lib/GeneratedPointerRows.olean" "$out/GeneratedPointerRows.lean"
 lean -j1 "$fixture/CheckGeneratedPointerRows.lean"
-lean -j1 "$fixture/GeneratedPointer.lean" | tee "$out/GeneratedPointer.log"
+lean -j1 --root="$fixture" -o "$out/lib/GeneratedPointer.olean" "$fixture/GeneratedPointer.lean" | tee "$out/GeneratedPointer.log"
 if rg 'sorryAx|native_decide' "$out/GeneratedPointer.log"; then
+  exit 1
+fi
+
+lean -j1 "$fixture/RawObservation.lean" | tee "$out/RawObservation.log"
+if rg 'sorryAx|native_decide' "$out/RawObservation.log"; then
   exit 1
 fi
