@@ -213,8 +213,10 @@ GeneratedBodyVC.run config limits program
   (GeneratedBodySafety.transferTable config limits) allowed
 ```
 
-Enable `set_option experimental.vcgen true`. The proof tactic exposes the
-reduced precondition from the generated table.
+Enable `set_option experimental.vcgen true`. After `vcgen`, use
+`miri_generated_program` to expose one transfer through the reduced table.
+`GeneratedBodyVC.rule_pre_of_row` selects a reduced predicate once the active
+body, location and node match the imported row.
 
 Export the Rust function and import the execution input with
 `Miri.Frontend.ImportMIR`. In a Lean client, import

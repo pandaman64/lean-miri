@@ -23,6 +23,28 @@ structure ReducedNode (config : Config) (limits : Limits) where
 abbrev Table (config : Config) (limits : Limits) :=
   Std.HashMap (Nat × Nat × Nat) (ReducedNode config limits)
 
+private def rowPre (config : Config) (limits : Limits) (table : Table config limits)
+    (identity : BodyIdentity) (eq : BodyCFG.Equation) (choice : C) (post : Success)
+    (failure : Failure) (before : State) : Prop :=
+  match table[(identity.index, eq.pc.block, eq.pc.statementIndex)]? with
+  | some reduced =>
+    if reduced.node = eq.node then reduced.pre choice post failure before
+    else BodyCFG.nodePre config limits choice post failure before eq.node
+  | none => BodyCFG.nodePre config limits choice post failure before eq.node
+
+private theorem rowPre_eq (config : Config) (limits : Limits) (table : Table config limits)
+    (identity : BodyIdentity) (eq : BodyCFG.Equation) (choice : C) (post : Success)
+    (failure : Failure) (before : State) :
+    rowPre config limits table identity eq choice post failure before =
+      BodyCFG.nodePre config limits choice post failure before eq.node := by
+  unfold rowPre
+  split
+  next reduced atIndex =>
+    split
+    next same => rw [propext (reduced.exact choice post failure before), same]
+    · rfl
+  · rfl
+
 private def tablePre (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
     (table : Table config limits) (choice : C) (post : Success) (failure : Failure)
     (before : State) : Prop :=
@@ -31,12 +53,7 @@ private def tablePre (config : Config) (limits : Limits) (graph : BodyCFG.Compil
   | some (identity, cfg) =>
     match cfg.equationFor before with
     | none => CanonicalStepWP.choicePre config limits choice post failure before
-    | some eq =>
-      match table[(identity.index, eq.pc.block, eq.pc.statementIndex)]? with
-      | some reduced =>
-        if reduced.node = eq.node then reduced.pre choice post failure before
-        else BodyCFG.nodePre config limits choice post failure before eq.node
-      | none => BodyCFG.nodePre config limits choice post failure before eq.node
+    | some eq => rowPre config limits table identity eq choice post failure before
 
 private theorem tablePre_iff (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
     (table : Table config limits) (choice : C) (post : Success) (failure : Failure)
@@ -59,13 +76,7 @@ private theorem tablePre_iff (config : Config) (limits : Limits) (graph : BodyCF
     | none => simp only [tablePre, BodyCFG.programTablePre, BodyCFG.tablePre, active, selected]
     | some eq =>
       simp only [tablePre, BodyCFG.programTablePre, BodyCFG.tablePre, active, selected,
-        BodyCFG.Equation.pre, postEq cfg]
-      split
-      next reduced atIndex =>
-        split
-        next same => rw [reduced.exact, same]
-        · rfl
-      · rfl
+        BodyCFG.Equation.pre, postEq cfg, rowPre_eq]
 
 /-- Dispatch using the actual active frame, MIR location and instruction.
 Rows with missing or different MIR use the canonical exact precondition. -/
@@ -76,6 +87,60 @@ def rule (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
     (tablePre_iff config limits graph table choice post failure before).trans
       (BodyCFG.programTablePre_iff config limits graph choice post failure before)
 
+/-- A known row applies when it matches the active frame and MIR instruction. -/
+theorem rule_pre_of_row (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (choice : C) (post : Success) (failure : Failure) (before : State)
+    {identity : BodyIdentity} {cfg : BodyCFG.Compiled} {eq : BodyCFG.Equation}
+    {reduced : ReducedNode config limits}
+    (active : graph.graphFor before = some (identity, cfg))
+    (selected : cfg.equationFor before = some eq)
+    (found : table[(identity.index, eq.pc.block, eq.pc.statementIndex)]? = some reduced)
+    (same : reduced.node = eq.node) :
+    (rule config limits graph table).pre choice post failure before =
+      reduced.pre choice post failure before := by
+  simp only [rule, tablePre, active, selected, rowPre, found, same, ↓reduceIte]
+
+/-- Joins and back edges reuse the same exact solution for the active state. -/
+def sharedPre (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) : State → Prop :=
+  WholeBodyWP.solve (rule config limits graph table) (fun state => state.stack.frames.size)
+    allowed depth post failure
+
+/-- The same control graph and rank with the reduced transfer table. -/
+def controlPre (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) : State → Prop :=
+  WholeBodyWP.eliminate (rule config limits graph table) (fun state => state.stack.frames.size)
+    allowed depth post failure (BodyCFG.programRank graph)
+
+theorem controlPre_reduce (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) (before : State) :
+    controlPre config limits graph table allowed depth post failure before ↔
+      if depth ≤ before.stack.frames.size then
+        ∀ choice, allowed before choice →
+          (rule config limits graph table).pre choice (fun more after => if more then
+            if 0 < BodyCFG.programRank graph after ∧
+                BodyCFG.programRank graph after < BodyCFG.programRank graph before then
+              controlPre config limits graph table allowed depth post failure after
+            else sharedPre config limits graph table allowed depth post failure after
+          else post .stopped after) failure before
+      else post .scopeExit before := by
+  unfold controlPre
+  rw [WholeBodyWP.eliminate]
+  rfl
+
+theorem controlPre_eq (config : Config) (limits : Limits) (graph : BodyCFG.CompiledProgram)
+    (table : Table config limits) (allowed : State → C → Prop) (depth : Nat)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) :
+    controlPre config limits graph table allowed depth post failure =
+      WholeBodyWP.catalogControlPre config limits graph allowed depth post failure := by
+  funext before
+  apply propext
+  simp only [controlPre, WholeBodyWP.catalogControlPre_shared, WholeBodyWP.catalogSharedPre,
+    WholeBodyWP.eliminate_iff, WholeBodyWP.solve_iff]
+
 /-- Use the existing graph rank and shared fixed point with the reduced
 transfer equations. -/
 def pre (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
@@ -83,16 +148,51 @@ def pre (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
     (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) (before : State) : Prop :=
   let graph := BodyCFG.compileProgram program.bodies
   WholeBodyWP.entryMatchesLoaded program.root before ∧
-    WholeBodyWP.eliminate (rule config limits graph table) (fun state => state.stack.frames.size)
-      allowed before.stack.frames.size post failure (BodyCFG.programRank graph) before
+    controlPre config limits graph table allowed before.stack.frames.size post failure before
 
 theorem pre_iff (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
     (table : Table config limits) (allowed : State → C → Prop)
     (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) (before : State) :
     pre config limits program table allowed post failure before ↔
       (BodyVCGen.generateProgram config limits program allowed post failure).pre before := by
-  rw [BodyVCGen.generatedProgramPre_eq, WholeBodyWP.catalogBodyPre_iff]
-  simp only [pre, WholeBodyWP.eliminate_iff, WholeBodyWP.solve_iff]
+  simp only [pre, controlPre_eq, BodyVCGen.generatedProgramPre_eq, WholeBodyWP.catalogBodyPre]
+
+/-- Emit the entry, selected-location and residual obligations with the same
+reduced table. Successors use caller-supplied shared predicates. -/
+def generateProgram (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
+    (table : Table config limits) (allowed : State → C → Prop)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) : BodyVCGen.ProgramConditions State :=
+  let graph := BodyCFG.compileProgram program.bodies
+  let continued := fun atPC fallback more after =>
+    if more then BodyCFG.programRoute graph atPC fallback after else post .stopped after
+  { graph
+    pre := pre config limits program table allowed post failure
+    equations := fun atPC fallback identity => (graph.lookup identity).map fun cfg =>
+      cfg.equations.map fun equation =>
+        let location : BodyCFG.ProgramLocation := ⟨identity, equation.pc⟩
+        ∀ before, graph.equationFor before = some (location, equation) → atPC location before →
+          ∀ choice, allowed before choice →
+            rowPre config limits table identity equation choice (continued atPC fallback) failure before
+    residual := fun atPC fallback =>
+      ∀ before, graph.equationFor before = none → fallback before →
+        ∀ choice, allowed before choice →
+          tablePre config limits graph table choice (continued atPC fallback) failure before }
+
+theorem generateProgram_eq (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
+    (table : Table config limits) (allowed : State → C → Prop)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) :
+    generateProgram config limits program table allowed post failure =
+      BodyVCGen.generateProgram config limits program allowed post failure := by
+  have samePre : pre config limits program table allowed post failure =
+      (BodyVCGen.generateProgram config limits program allowed post failure).pre :=
+    funext fun before => propext (pre_iff config limits program table allowed post failure before)
+  have sameTable : tablePre config limits (BodyCFG.compileProgram program.bodies) table =
+      BodyCFG.programTablePre config limits (BodyCFG.compileProgram program.bodies) := by
+    funext choice next onError before
+    exact propext (tablePre_iff config limits (BodyCFG.compileProgram program.bodies) table
+      choice next onError before)
+  simp only [generateProgram, samePre, sameTable, rowPre_eq, BodyVCGen.generateProgram]
+  rfl
 
 /-- Use the canonical program operation with the specialized transfer table
 as the proof interface. -/
@@ -107,6 +207,12 @@ def run (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
     Triple (run config limits program table allowed) (pre config limits program table allowed post failure)
       post failure :=
   Triple.iff.mpr fun before checked => (pre_iff config limits program table allowed post failure before).mp checked
+
+/-- Open one layer of the reduced program without expanding its successors. -/
+macro "miri_generated_program" : tactic =>
+  `(tactic| first
+    | rw [pre, controlPre_reduce]
+    | rw [controlPre_reduce])
 
 /-- Normalize the concrete instruction, leaving configured effects and shared
 success and failure continuations symbolic. -/

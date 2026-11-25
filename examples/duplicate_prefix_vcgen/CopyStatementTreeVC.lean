@@ -104,7 +104,7 @@ theorem generated_copy_pre_eq
   rw [selected_statement] at selected
   change CanonicalStepWP.statementPre config limits choice (.Intrinsic (.CopyNonOverlapping copyArgs))
     post onError before ↔ loweredPre config limits choice post onError before
-  rw [selected]
+  exact Iff.of_eq selected
 
 #print axioms selected_statement
 #print axioms statement_vc

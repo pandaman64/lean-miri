@@ -25,3 +25,17 @@ run_cmd liftTermElabM do
       for name in unresolved do
         if (pre.find? (·.isConstOf name)).isSome then
           throwError "{row}.pre still contains {name}"
+
+  for (api, expected) in [
+      (``GeneratedBodySafety.body_0_bb0_2, [``GeneratedBodySafety.safetyEquation]),
+      (``GeneratedBodySafety.safetyEquation, [``GeneratedBodyVC.generateProgram,
+        ``GeneratedBodyVC.controlPre, ``GeneratedBodySafety.transferTable]),
+      (``GeneratedBodySafety.verification, [``GeneratedBodyVC.generateProgram,
+        ``GeneratedBodySafety.transferTable])] do
+    let .defnInfo definition ← getConstInfo api | throwError "missing generated definition {api}"
+    for name in expected do
+      unless (definition.value.find? (·.isConstOf name)).isSome do
+        throwError "{api} does not use {name}"
+
+#print axioms GeneratedBodySafety.verification_eq
+#print axioms GeneratedBodySafety.safetyEquation_eq

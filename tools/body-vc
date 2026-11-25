@@ -203,8 +203,15 @@ def verification (config : Config) (limits : ExecutionMachine.Limits)
     (allowed : State → C → Prop) (post : WholeBodyWP.Exit → State → Prop)
     (failure : StepError → State → Prop) : Except String (BodyVCGen.ProgramConditions State) :=
   loaded.map fun program =>
-    {{ BodyVCGen.generateProgram config limits program allowed post failure with
-      pre := GeneratedBodyVC.pre config limits program (transferTable config limits) allowed post failure }}
+    GeneratedBodyVC.generateProgram config limits program (transferTable config limits) allowed post failure
+
+/-- Transport verification for arbitrary postconditions to the canonical table. -/
+theorem verification_eq (config : Config) (limits : ExecutionMachine.Limits)
+    (allowed : State → C → Prop) (post : WholeBodyWP.Exit → State → Prop)
+    (failure : StepError → State → Prop) :
+    verification config limits allowed post failure =
+      loaded.map (fun program => BodyVCGen.generateProgram config limits program allowed post failure) := by
+  simp only [verification, GeneratedBodyVC.generateProgram_eq]
 
 /-- Individual compiler-bound safety obligations share the whole-body
 continuation at every successor, including loop and call successors. -/
@@ -213,11 +220,26 @@ def safetyEquation (config : Config) (limits : ExecutionMachine.Limits)
   match loaded with
   | .error _ => False
   | .ok program =>
-    let plan := BodyVCGen.generateProgram config limits program allowed (fun _ _ => True)
+    let table := transferTable config limits
+    let plan := GeneratedBodyVC.generateProgram config limits program table allowed (fun _ _ => True)
       BodyVCGen.noUB
-    let again := WholeBodyWP.catalogControlPre config limits plan.graph allowed depth
+    let again := GeneratedBodyVC.controlPre config limits plan.graph table allowed depth
       (fun _ _ => True) BodyVCGen.noUB
     ((plan.equations (fun _ => again) again identity).bind (·[index]?)).getD False
+
+/-- Transport a named safety obligation to the canonical equation. -/
+theorem safetyEquation_eq (config : Config) (limits : ExecutionMachine.Limits)
+    (allowed : State → C → Prop) (depth : Nat) (identity : BodyIdentity) (index : Nat) :
+    safetyEquation config limits allowed depth identity index =
+      (match loaded with
+      | .error _ => False
+      | .ok program =>
+        let plan := BodyVCGen.generateProgram config limits program allowed (fun _ _ => True) BodyVCGen.noUB
+        let again := WholeBodyWP.catalogControlPre config limits plan.graph allowed depth
+          (fun _ _ => True) BodyVCGen.noUB
+        ((plan.equations (fun _ => again) again identity).bind (·[index]?)).getD False) := by
+  cases selected : loaded <;> simp only [safetyEquation, selected, GeneratedBodyVC.generateProgram_eq,
+    GeneratedBodyVC.controlPre_eq]
 
 {checks}
 end
