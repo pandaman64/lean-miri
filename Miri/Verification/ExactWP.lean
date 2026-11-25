@@ -5,6 +5,7 @@ import Miri.Verification.CanonicalStepWP
 import Miri.Verification.AssertPanicWP
 import Miri.Verification.DiscriminantWP
 import Miri.Verification.CopyTreeWP
+import Miri.Verification.CopyLoadObservationWP
 import Miri.Verification.DropWP
 import Miri.Verification.NondivergingIntrinsicWP
 import Miri.Verification.PlaceMentionWP
