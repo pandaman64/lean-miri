@@ -22,13 +22,17 @@ lean -j1 --root=examples/callee_summary_vcgen -o "$out/CallEntry.olean" \
   examples/callee_summary_vcgen/CallEntry.lean
 cp examples/callee_summary_vcgen/CallCompilerData.lean "$out/CallCompilerData.lean"
 lean -j1 --root="$out" -o "$out/CallCompilerData.olean" "$out/CallCompilerData.lean"
-for module in ReflectedCallEntry CallAbiLiteral CallDispatchHandoff CallFrameEntry CalleeReturn; do
+for module in ReflectedCallEntry CallAbiLiteral CallDispatchHandoff CalleeReturn \
+  CalleeFinishReturn CalleeAssignments CallFrameEntry CallExecution; do
   lean -j1 --root=examples/callee_summary_vcgen -o "$out/$module.olean" \
     "examples/callee_summary_vcgen/$module.lean"
 done
 lean -j1 --root=examples/callee_summary_vcgen -o "$out/CalleeBody.olean" \
   examples/callee_summary_vcgen/CalleeBody.lean
-lean -j1 examples/callee_summary_vcgen/CallerObservation.lean
+lean -j1 --root=examples/callee_summary_vcgen -o "$out/CallerObservation.olean" \
+  examples/callee_summary_vcgen/CallerObservation.lean
+lean -j1 --root=examples/callee_summary_vcgen -o "$out/CallerWindow.olean" \
+  examples/callee_summary_vcgen/CallerWindow.lean
 lean -j1 examples/callee_summary_vcgen/Verify.lean
 lean -j1 examples/callee_summary_vcgen/ProtectorCleanup.lean
 lean -j1 examples/callee_summary_vcgen/AssignResult.lean
