@@ -145,6 +145,22 @@ def pointerRetagPre [DecidableEq K] (hooks : TypedRetag.Hooks K U) (budget : Nat
     | invalidType =>
       simp only [actionPre_bind_fun, throwPre]
 
+/-- Recover an executable retag result after checking both the returned value
+and the retained machine with the exact retag continuation. -/
+theorem machineRetagPtrValue_ok [DecidableEq K]
+    (hooks : TypedRetag.Hooks K U) (budget : Nat) (value : Value) (ty : TyId)
+    (before after : State) (result : Option (RvalueImmTy Provenance))
+    (checks : pointerRetagPre hooks budget value ty
+      (fun value state => value = result ∧ state = after) (fun _ _ => False) before) :
+    TypedRetag.machineRetagPtrValue hooks budget value ty before = .ok result after := by
+  have exactPre := checks
+  rw [← actionPre_machineRetagPtrValue] at exactPre
+  unfold RvalueWP.actionPre at exactPre
+  generalize ran : TypedRetag.machineRetagPtrValue hooks budget value ty before = outcome at exactPre ⊢
+  cases outcome with
+  | error _ _ => exact False.elim exactPre
+  | ok value done => rw [exactPre.1, exactPre.2]
+
 attribute [miri_initial_wp] CanonicalStepWP.canonical_rvalue_retagPtrValue
 
 @[miri_initial_wp] theorem canonical_forceAllocation [DecidableEq K] (config : Config)

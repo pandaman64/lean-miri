@@ -552,6 +552,40 @@ theorem visit_reference [PointerProvenance P] [DecidableEq P]
   simp only [visit, bind, Bind.bind, EStateM.bind, kind, primitive, Pure.pure, EStateM.pure]
   cases checkSafe h c session place place.layout.ty (.reference isMutable) before <;> rfl
 
+/-- Shallow validation of a sized reference keeps the session after the
+actual reborrow and immediate write-back. Each policy runs in source order
+on the machine returned by the preceding phase. -/
+theorem visit_reference_local [PointerProvenance P] [DecidableEq P]
+    (h : Hooks P S C E F A Pad) (c : C) (fuel : Nat)
+    (session : Session P) (value : RuntimePlace P) (before retagged written : S)
+    (mutable : Bool) (pointer adjusted : RvalueImmTy P) (place : MPlaceTy P)
+    (scalar : Scalar P) (dynamic : Option (Size × Align))
+    (classify : h.classify c value.layout.ty before = .ok (.reference mutable) before)
+    (read : h.readImmediate c value .reference before = .ok pointer before)
+    (ranges : session.dataBytes = none) (reset : session.flags.resetProvenanceAndPadding = true)
+    (metadata : h.ptrToPlace c pointer before = .ok place before)
+    (sized : place.layout.layout.isSized = true)
+    (sizeAlign : h.sizeAndAlign c place before = .ok dynamic before)
+    (live : session.flags.mayDangle = false)
+    (access : h.checkPointerAccess c place.mplace.ptr
+      ((dynamic.getD (place.layout.layout.size, place.layout.layout.align.abi)).1) before =
+        .ok (.ok ()) before)
+    (retag : h.retagPointer c pointer value.layout.ty before = .ok (some adjusted) retagged)
+    (write : h.writeNoValidate c adjusted.imm value retagged = .ok () written)
+    (formed : Scalar.fromMaybePointer h.target.base place.mplace.ptr = .ok scalar)
+    (nonNull : h.scalarMayBeNull c scalar written = .ok false written)
+    (inhabited : h.opsemInhabited c place.layout.ty written = .ok true written)
+    (alignment : h.checkPointerAlignResult c place.mplace.ptr
+      ((dynamic.getD (place.layout.layout.size, place.layout.layout.align.abi)).2) written =
+        .ok (.ok ()) written) (tracking : session.refTracking = none) :
+    visit h c (fuel + 1) session value before = .ok session written := by
+  rw [visit_reference h c fuel session value before mutable classify]
+  simp only [checkSafe, read, markPlace, ranges, reset, metadata, sized, live, sizeAlign,
+    access, retagSafePointer, mapRetagOutcome, retag, write, formed, nonNull, inhabited,
+    mapPointerAlignmentOutcome, alignment, tracking, bind, Bind.bind, EStateM.bind,
+    pure, Pure.pure, EStateM.pure, Bool.not_true, Bool.not_false, Bool.false_eq_true,
+    ↓reduceIte, Option.isNone, Except.mapError, liftResult]
+
 private def resetPadding (h : Hooks P S C E F A Pad) (c : C) (session : Session P)
     (place : RuntimePlace P) : M S Unit := do
   let some ranges := session.dataBytes | return

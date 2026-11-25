@@ -1,5 +1,6 @@
 import Pointer
 import GeneratedPointerRows
+import Miri.Verification.PointerFormationWP
 
 namespace PointerObservation
 
@@ -37,6 +38,38 @@ theorem generatedPrefix_iff_checked (observation : Observation) (initial : UInt8
     simp only [required, shape, prepared]
     exact (prefixPre_iff_windowPrefixPre config _ _ 0 rows (emittedRows config observation) before
       (by simpa only [shape] using sameRows config)).symm
+
+/-- Discharge the visitor at the supplied fixture's immediate reference.
+The consuming proof leaves the validity visit and typed retag opaque until
+this tactic checks their actual hook results. -/
+macro "miri_check_fixture_reference" mutable:term : tactic => `(tactic|
+  conv =>
+    pattern ValidityVisitor.visit _ _ _ _ _ _
+    tactic =>
+      refine ValidityVisitor.visit_reference_local _ _ 31 _ _ _ ?retagged ?written
+        $mutable ?pointer ?adjusted ?place ?scalar ?dyn ?classified ?read ?ranges ?reset
+        ?metadata ?sized ?sizeAlign ?live ?access ?retag ?write ?formed ?nonNull ?inhabited
+        ?alignment ?tracking
+      case classified => cbv <;> rfl
+      case read => cbv <;> rfl
+      case ranges => rfl
+      case reset => rfl
+      case metadata => cbv <;> rfl
+      case sized => cbv <;> rfl
+      case sizeAlign => cbv <;> rfl
+      case live => rfl
+      case access => cbv <;> rfl
+      case retag =>
+        conv => lhs; cbv
+        refine PointerFormationWP.machineRetagPtrValue_ok _ _ _ _ _ _ _ ?checks
+        conv => cbv
+        constructor <;> rfl
+      case write => cbv <;> rfl
+      case formed => cbv <;> rfl
+      case nonNull => cbv <;> rfl
+      case inhabited => cbv <;> rfl
+      case alignment => cbv <;> rfl
+      case tracking => rfl)
 
 #print axioms generatedPrefix_iff_checked
 
