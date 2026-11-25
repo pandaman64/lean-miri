@@ -24,6 +24,13 @@ under the concrete runtime input tape and every typed core choice (`Unit`).
 The profile reports certificate replay time separately from generation and
 Lean typechecking.
 
+[CheckGeneratedCopy.lean](CheckGeneratedCopy.lean) checks each generated
+`CopyNonOverlapping` transfer in the current compiler input. The fixed-site
+proof in [CopyStatementTreeVC.lean](CopyStatementTreeVC.lean) uses body 5,
+`bb7[8]`, and its three move operands. Set `DUPLICATE_PREFIX_COPY_MIR` to
+the saved MIR JSON for that layout when the current sysroot exports the helper
+at a different location.
+
 | Slice length | Count | Result |
 | --- | --- | --- |
 | 8 | 0 | Accept |

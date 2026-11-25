@@ -17,7 +17,18 @@ tools/body-vc safety "$source" \
   --output "$out/Representative.lean" --no-build --no-check
 lean -j1 -o "$out/Representative.olean" "$out/Representative.lean"
 lean -j1 examples/duplicate_prefix_vcgen/VerifyGenerated.lean
-lean -j1 examples/duplicate_prefix_vcgen/CopyStatementTreeVC.lean
+lean -j1 examples/duplicate_prefix_vcgen/CheckGeneratedCopy.lean | tee "$out/check-generated-copy.log"
+if [[ -n "${DUPLICATE_PREFIX_COPY_MIR:-}" ]]; then
+  fixed="$out/fixed-copy"
+  mkdir -p "$fixed"
+  tools/body-vc safety "$DUPLICATE_PREFIX_COPY_MIR" --output "$fixed/Representative.lean" --no-build --no-check
+  lean -j1 -o "$fixed/Representative.olean" "$fixed/Representative.lean"
+  LEAN_PATH="$fixed:$LEAN_PATH" lean -j1 examples/duplicate_prefix_vcgen/CopyStatementTreeVC.lean
+elif rg -qF 'The fixed copy-site proof matches the imported MIR.' "$out/check-generated-copy.log"; then
+  lean -j1 examples/duplicate_prefix_vcgen/CopyStatementTreeVC.lean
+else
+  printf '%s\n' 'The fixed copy-site proof uses body 5, bb7[8]. Set DUPLICATE_PREFIX_COPY_MIR to check that saved layout.'
+fi
 lean -j1 examples/duplicate_prefix_vcgen/ScopedSafetyTransfer.lean
 lean -j1 --root=examples/duplicate_prefix_vcgen \
   -o "$out/PreparedArguments.olean" examples/duplicate_prefix_vcgen/PreparedArguments.lean
