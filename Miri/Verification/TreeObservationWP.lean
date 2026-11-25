@@ -216,74 +216,107 @@ theorem wp_plan_bytes_iff (tree : BorrowTree) (plan : List PlannedAccess)
           TreeOverlapWP.wp_access_byteObservation_iff _ _ _ _ _ _ _ _ formed checkedEnd bound]
         rfl
 
-/-- Normalize a straight-line sequence of three access actions when the
-continuation observes only byte locations. The ordinary final trace is ignored. -/
-theorem wp_three_accesses_bytes_iff (tree : BorrowTree)
-    (p₁ p₂ p₃ : ProvenanceExtra) (o₁ l₁ f₁ o₂ l₂ f₂ o₃ l₃ f₃ : Size)
-    (k₁ k₂ k₃ : AccessKind) (t₁ t₂ t₃ : ProtectedTags) (m₁ m₂ m₃ : Tree.ChildrenVisitMode)
-    (formed : tree.locations.WellFormed)
-    (end₁ : o₁.add l₁ = .ok f₁) (end₂ : o₂.add l₂ = .ok f₂) (end₃ : o₃.add l₃ = .ok f₃)
-    (bound₁ : f₁.bytes ≤ tree.locations.size.bytes) (bound₂ : f₂.bytes ≤ tree.locations.size.bytes)
-    (bound₃ : f₃.bytes ≤ tree.locations.size.bytes) (post : ByteLocations → Prop) :
-    wp (do
-      let _ ← TreeBorrowsWP.access p₁ o₁ l₁ k₁ t₁ m₁
-      let _ ← TreeBorrowsWP.access p₂ o₂ l₂ k₂ t₂ m₂
-      TreeBorrowsWP.access p₃ o₃ l₃ k₃ t₃ m₃)
-      (fun _ final => post final.locations.MapAt) (fun _ _ => False) tree ↔
-    planBytePre tree post [⟨⟨p₁, o₁, l₁, t₁, m₁⟩, k₁, f₁⟩,
-      ⟨⟨p₂, o₂, l₂, t₂, m₂⟩, k₂, f₂⟩, ⟨⟨p₃, o₃, l₃, t₃, m₃⟩, k₃, f₃⟩]
-      tree.locations.MapAt := by
-  refine Iff.trans ?_ (wp_plan_bytes_iff tree _ formed ?_ ?_ post)
-  · simp only [runPlan, wp_bind_iff]
-    have last (before : BorrowTree) :
-        wp (TreeBorrowsWP.access p₃ o₃ l₃ k₃ t₃ m₃) (fun _ final => post final.locations.MapAt)
-            (fun _ _ => False) before =
-          wp (TreeBorrowsWP.access p₃ o₃ l₃ k₃ t₃ m₃)
-            (fun _ final => wp (pure () : EStateM RangeAccessError BorrowTree Unit)
-              (fun _ done => post done.locations.MapAt) (fun _ _ => False) final)
-            (fun _ _ => False) before := rfl
-    simp only [last]
-  · intro access included
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at included
-    rcases included with rfl | rfl | rfl
-    · exact end₁
-    · exact end₂
-    · exact end₃
-  · intro access included
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at included
-    rcases included with rfl | rfl | rfl
-    · exact bound₁
-    · exact bound₂
-    · exact bound₃
+private theorem wp_pure_iff {E S A : Type} (value : A) (post : A → S → Prop)
+    (failure : E → S → Prop) (before : S) :
+    wp (pure value : EStateM E S A) post failure before ↔ post value before := Iff.rfl
 
-/-- The same byte-only check applies directly to three nested access
-continuations emitted by verification condition generation. -/
-theorem accessPre_three_bytes_iff (tree : BorrowTree)
-    (p₁ p₂ p₃ : ProvenanceExtra) (o₁ l₁ f₁ o₂ l₂ f₂ o₃ l₃ f₃ : Size)
-    (k₁ k₂ k₃ : AccessKind) (t₁ t₂ t₃ : ProtectedTags) (m₁ m₂ m₃ : Tree.ChildrenVisitMode)
+private def planAccessPre (post : ByteLocations → Prop) :
+    List PlannedAccess → BorrowTree → Prop
+  | [], before => post before.locations.MapAt
+  | step :: rest, before =>
+    TreeBorrowsWP.accessPre before step.provenance step.offset step.length step.kind step.tags step.mode
+      (fun after _ => planAccessPre post rest after) (fun _ _ _ => False)
+
+private theorem wp_plan_accessPre_iff (plan : List PlannedAccess)
+    (post : ByteLocations → Prop) (tree : BorrowTree) :
+    wp (runPlan plan) (fun _ final => post final.locations.MapAt) (fun _ _ => False) tree ↔
+      planAccessPre post plan tree := by
+  induction plan generalizing tree with
+  | nil => rfl
+  | cons step rest ih =>
+    simp only [runPlan, wp_bind_iff, wp_access_outcomePre_iff, planAccessPre, ih]
+
+private theorem planAccessPre_bytes_iff (tree : BorrowTree) (plan : List PlannedAccess)
     (formed : tree.locations.WellFormed)
-    (end₁ : o₁.add l₁ = .ok f₁) (end₂ : o₂.add l₂ = .ok f₂) (end₃ : o₃.add l₃ = .ok f₃)
-    (bound₁ : f₁.bytes ≤ tree.locations.size.bytes) (bound₂ : f₂.bytes ≤ tree.locations.size.bytes)
-    (bound₃ : f₃.bytes ≤ tree.locations.size.bytes) (post : ByteLocations → Prop) :
-    TreeBorrowsWP.accessPre tree p₁ o₁ l₁ k₁ t₁ m₁ (fun after₁ _ =>
-      TreeBorrowsWP.accessPre after₁ p₂ o₂ l₂ k₂ t₂ m₂ (fun after₂ _ =>
-        TreeBorrowsWP.accessPre after₂ p₃ o₃ l₃ k₃ t₃ m₃
-          (fun final _ => post final.locations.MapAt) (fun _ _ _ => False)) (fun _ _ _ => False))
-      (fun _ _ _ => False) ↔
-    planBytePre tree post [⟨⟨p₁, o₁, l₁, t₁, m₁⟩, k₁, f₁⟩,
-      ⟨⟨p₂, o₂, l₂, t₂, m₂⟩, k₂, f₂⟩, ⟨⟨p₃, o₃, l₃, t₃, m₃⟩, k₃, f₃⟩]
-      tree.locations.MapAt := by
-  simpa only [wp_bind_iff, wp_access_outcomePre_iff] using
-    wp_three_accesses_bytes_iff tree p₁ p₂ p₃ o₁ l₁ f₁ o₂ l₂ f₂ o₃ l₃ f₃
-      k₁ k₂ k₃ t₁ t₂ t₃ m₁ m₂ m₃ formed end₁ end₂ end₃ bound₁ bound₂ bound₃ post
+    (ends : ∀ access ∈ plan, access.offset.add access.length = .ok access.finish)
+    (bounds : ∀ access ∈ plan, access.finish.bytes ≤ tree.locations.size.bytes)
+    (post : ByteLocations → Prop) :
+    planAccessPre post plan tree ↔ planBytePre tree post plan tree.locations.MapAt :=
+  (wp_plan_accessPre_iff plan post tree).symm.trans (wp_plan_bytes_iff tree plan formed ends bounds post)
+
+open Lean Meta Elab Tactic in
+/-- Recognize linear access continuations with a byte-only postcondition.
+Checked endpoints come from local facts. Definitional equality verifies the
+whole reified plan before the byte-fold equivalence is applied. -/
+elab "miri_observe_linear_accesses" : tactic => withMainContext do
+  evalTactic (← `(tactic| first | simp only [wp_bind_iff, wp_pure_iff, wp_access_outcomePre_iff] | skip))
+  withMainContext do
+    let goal ← getMainGoal
+    let mut current := (← instantiateMVars (← goal.getType)).consumeMData
+    unless current.getAppFn.isConstOf ``TreeBorrowsWP.accessPre do
+      throwError "expected a linear Tree Borrows access continuation"
+    let some before := current.getAppArgs[0]?
+      | throwError "missing initial borrow tree"
+    let mut accesses := #[]
+    let mut finalPost := none
+    repeat
+      let args := current.getAppArgs
+      let #[_, provenance, offset, length, kind, tags, mode, success, failure] := args
+        | throwError "expected a complete Tree Borrows access"
+      let .lam _ _ (.lam _ _ (.lam _ _ fail _) _) _ := failure.consumeMData
+        | throwError "expected a failure continuation that rejects every error"
+      unless fail.consumeMData.isConstOf ``False do
+        throwError "the byte fold is for failure-rejecting continuations"
+      unless !(#[provenance, offset, length, kind, tags, mode].any Expr.hasLooseBVars) do
+        throwError "an access depends on an earlier state or trace"
+      let finish ← mkFreshExprMVar (some (mkConst ``Size))
+      let ending ← mkAppM ``Size.add #[offset, length]
+      let successfulEnd ← mkAppOptM ``Except.ok #[some (mkConst ``SizeError), some (mkConst ``Size), some finish]
+      let some _ ← findLocalDeclWithType? (← mkEq ending successfulEnd)
+        | throwError "missing checked endpoint for offset {offset} and length {length}"
+      let finish ← instantiateMVars finish
+      let access ← mkAppM ``Access.mk #[provenance, offset, length, tags, mode]
+      accesses := accesses.push (← mkAppM ``PlannedAccess.mk #[access, kind, finish])
+      let .lam _ _ (.lam _ _ body _) _ := success.consumeMData
+        | throwError "expected a state and trace continuation"
+      let body := body.consumeMData
+      if body.getAppFn.isConstOf ``TreeBorrowsWP.accessPre then
+        current := body
+      else
+        finalPost ← lambdaTelescope success fun args body => do
+          let #[after, trace] := args | throwError "expected the final state and trace"
+          let locations ← mkAppM ``BorrowTree.locations #[after]
+          let mapAt ← mkAppM ``DedupRangeMap.MapAt #[locations]
+          let post := mkLambda `locations BinderInfo.default (mkConst ``ByteLocations) (← kabstract body mapAt)
+          if post.hasLooseBVars || post.containsFVar after.fvarId! || post.containsFVar trace.fvarId! then
+            throwError "the final continuation must inspect only the byte map"
+          pure (some post)
+        break
+    let some post := finalPost | throwError "missing final byte observation"
+    let plan ← mkListLit (mkConst ``PlannedAccess) accesses.toList
+    let goal ← goal.change (← mkAppM ``planAccessPre #[post, plan, before])
+    let rule := mkApp2 (mkConst ``planAccessPre_bytes_iff) before plan
+    let (prerequisites, _, _) ← forallMetaTelescopeReducing (← inferType rule) (some 3)
+    let law := mkAppN rule (prerequisites.push post)
+    let result ← goal.apply (← mkAppM ``Iff.mpr #[law])
+    replaceMainGoal (prerequisites.toList.map Expr.mvarId! ++ result)
+    evalTactic (← `(tactic| (
+      · assumption
+      · simp only [List.forall_mem_cons, List.forall_mem_nil, and_true]
+        repeat' apply And.intro
+        all_goals first | assumption | exact List.forall_mem_nil _
+      · simp only [List.forall_mem_cons, List.forall_mem_nil, and_true]
+        repeat' apply And.intro
+        all_goals first | assumption | exact List.forall_mem_nil _)))
 
 attribute [miri_initial_wp] TreeOverlapWP.wp_access_byteObservation_iff
   TreeOverlapWP.accessPre_byteObservation_iff wp_plan_bytes_iff
-  wp_three_accesses_bytes_iff accessPre_three_bytes_iff
 
 macro "miri_tree_range_wp" &"observe" : tactic =>
-  `(tactic| simp (disch := assumption) only [wp_plan_bytes_iff,
-    TreeOverlapWP.wp_access_byteObservation_iff, TreeOverlapWP.accessPre_byteObservation_iff,
-    wp_three_accesses_bytes_iff, accessPre_three_bytes_iff, wp_readWriteObserve_iff])
+  `(tactic| first
+    | miri_observe_linear_accesses
+    | simp (disch := assumption) only [wp_plan_bytes_iff, TreeOverlapWP.wp_access_byteObservation_iff,
+        TreeOverlapWP.accessPre_byteObservation_iff, wp_readWriteObserve_iff,
+        wp_bind_iff, wp_pure_iff, wp_access_outcomePre_iff])
 
 end Miri.Verification.TreeObservationWP

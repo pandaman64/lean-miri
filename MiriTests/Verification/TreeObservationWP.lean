@@ -116,22 +116,52 @@ theorem initial_byte_observed :
       fun inside => (outsideObserve inside).elim, fun _ => rfl⟩, ?_⟩
     cbv
 
-/-- Ordinary do notation needs no hand-written plan or trace-packaging action. -/
+private def emptyAccess := { read with offset := Size.ofBytes 3, length := Size.ZERO }
+
+/-- Ordinary do notation needs no hand-written plan. The fourth access
+checks its tag and leaves all earlier byte observations intact. -/
 theorem ordinary_access_sequence :
     wp (do
       let _ ← TreeBorrowsWP.access read.provenance read.offset read.length .Read read.tags read.mode
       let _ ← TreeBorrowsWP.access write.provenance write.offset write.length .Write write.tags write.mode
-      TreeBorrowsWP.access observe.provenance observe.offset observe.length .Read observe.tags observe.mode)
+      let _ ← TreeBorrowsWP.access observe.provenance observe.offset observe.length .Read observe.tags observe.mode
+      TreeBorrowsWP.access emptyAccess.provenance emptyAccess.offset emptyAccess.length .Read emptyAccess.tags
+        emptyAccess.mode)
       (fun _ after => frozenAtZero after.locations.MapAt) (fun _ _ => False) tree := by
   have wellFormed := formed
   have readEnd : read.offset.add read.length = .ok (Size.ofBytes 1) := by cbv
   have writeEnd : write.offset.add write.length = .ok (Size.ofBytes 2) := by cbv
   have observeEnd : observe.offset.add observe.length = .ok (Size.ofBytes 3) := by cbv
+  have emptyEnd : emptyAccess.offset.add emptyAccess.length = .ok (Size.ofBytes 3) := by cbv
   have readBound : (Size.ofBytes 1).bytes ≤ tree.locations.size.bytes := by cbv
   have writeBound : (Size.ofBytes 2).bytes ≤ tree.locations.size.bytes := by cbv
   have observeBound : (Size.ofBytes 3).bytes ≤ tree.locations.size.bytes := by cbv
   miri_tree_range_wp observe
-  exact (wp_plan_bytes_iff tree plan formed endpoints bounds frozenAtZero).mp initial_byte_observed
+  obtain ⟨first, second, third, observed⟩ :=
+    (wp_plan_bytes_iff tree plan formed endpoints bounds frozenAtZero).mp initial_byte_observed
+  refine ⟨first, second, third, ⟨by cbv, ?_⟩, ?_⟩
+  · intro position _ _ inside
+    exact (UInt64.not_lt.mpr inside.1 inside.2).elim
+  · obtain ⟨location, found, frozen⟩ := observed
+    exact ⟨location, ⟨location, found, fun inside => (UInt64.not_lt.mpr inside.1 inside.2).elim,
+      fun _ => rfl⟩, frozen⟩
+
+/-- A shorter ordinary block can discard every trace and return unit. -/
+theorem ordinary_access_pair :
+    wp (do
+      let _ ← TreeBorrowsWP.access read.provenance read.offset read.length .Read read.tags read.mode
+      let _ ← TreeBorrowsWP.access write.provenance write.offset write.length .Write write.tags write.mode
+      pure ())
+      (fun _ _ => True) (fun _ _ => False) tree := by
+  have wellFormed := formed
+  have readEnd : read.offset.add read.length = .ok (Size.ofBytes 1) := by cbv
+  have writeEnd : write.offset.add write.length = .ok (Size.ofBytes 2) := by cbv
+  have readBound : (Size.ofBytes 1).bytes ≤ tree.locations.size.bytes := by cbv
+  have writeBound : (Size.ofBytes 2).bytes ≤ tree.locations.size.bytes := by cbv
+  miri_tree_range_wp observe
+  obtain ⟨first, second, _, _⟩ :=
+    (wp_plan_bytes_iff tree plan formed endpoints bounds frozenAtZero).mp initial_byte_observed
+  exact ⟨first, second, trivial⟩
 
 /-- Generated nested access continuations use the same initial byte predicate. -/
 theorem nested_access_sequence :
@@ -149,7 +179,7 @@ theorem nested_access_sequence :
   have readBound : (Size.ofBytes 1).bytes ≤ tree.locations.size.bytes := by cbv
   have writeBound : (Size.ofBytes 2).bytes ≤ tree.locations.size.bytes := by cbv
   have observeBound : (Size.ofBytes 3).bytes ≤ tree.locations.size.bytes := by cbv
-  simp (disch := assumption) only [miri_initial_wp]
+  miri_tree_range_wp observe
   exact (wp_plan_bytes_iff tree plan formed endpoints bounds frozenAtZero).mp initial_byte_observed
 
 open Miri.Verification.TreeOverlapWP in
@@ -177,6 +207,7 @@ theorem single_byte_observed :
 #print axioms initial_byte_observed
 #print axioms single_byte_observed
 #print axioms ordinary_access_sequence
+#print axioms ordinary_access_pair
 #print axioms nested_access_sequence
 #print axioms wp_readWriteObserve_bytes_iff
 
