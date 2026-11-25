@@ -491,6 +491,37 @@ theorem visit_fieldless [PointerProvenance P] [DecidableEq P]
     cases flags
     simp_all
 
+/-- An integer visit reads the scalar and applies provenance reset, if requested.
+Without tracked data bytes, it retains the current validation session. -/
+theorem visit_integer [PointerProvenance P] [DecidableEq P]
+    (h : Hooks P S C E F A Pad) (c : C) (fuel : Nat) (session : Session P)
+    (place : RuntimePlace P) (state : S) (value : Scalar P) (layout : LocalLayout)
+    (classify : h.classify c place.layout.ty state = .ok .integer state)
+    (read : h.readImmediate c place .integer state = .ok ⟨.scalar value, layout⟩ state)
+    (clear : h.clearProvenance c place state = .ok () state)
+    (ranges : session.dataBytes = none) :
+    visit h c (fuel + 1) session place state = .ok session state := by
+  cases reset : session.flags.resetProvenanceAndPadding <;>
+    simp [visit, classify, primitive, scalarOf, liftResult, markPlace,
+      ranges, read, clear, reset, Immediate.toScalar, Except.mapError,
+      bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+
+/-- A sized raw pointer with pointer provenance needs no metadata lookup.
+Its pointer scalar already carries provenance, so reset leaves it intact. -/
+theorem visit_raw_sized_pointer [PointerProvenance P] [DecidableEq P]
+    (h : Hooks P S C E F A Pad) (c : C) (fuel : Nat) (session : Session P)
+    (place : RuntimePlace P) (state : S) (value : Scalar P) (layout : LocalLayout)
+    (target : MIR.TyId) (abi : ABI.Scalar)
+    (classify : h.classify c place.layout.ty state = .ok (.rawPointer target true) state)
+    (read : h.readImmediate c place .rawPointer state = .ok ⟨.scalar value, layout⟩ state)
+    (backend : layout.layout.backendRepr = .Scalar abi) (pointer : value.isPointer = true)
+    (ranges : session.dataBytes = none) :
+    visit h c (fuel + 1) session place state = .ok session state := by
+  cases reset : session.flags.resetProvenanceAndPadding <;>
+    simp [visit, classify, primitive, resetPointer, scalarOf, liftResult, markPlace,
+      ranges, read, backend, pointer, reset, Immediate.toScalar, Except.mapError,
+      bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+
 private def resetPadding (h : Hooks P S C E F A Pad) (c : C) (session : Session P)
     (place : RuntimePlace P) : M S Unit := do
   let some ranges := session.dataBytes | return
@@ -554,6 +585,28 @@ def validatePlace [PointerProvenance P] [DecidableEq P] (h : Hooks P S C E F A P
           let child : RuntimePlace P := ⟨.memory key.mplace,key.layout⟩
           let visited ← visit h c fuel childSession child
           resetPadding h c visited child
+
+/-- Shallow validation runs the root visit in ghost mode and performs its
+padding reset within the same scope. -/
+theorem validatePlace_shallow [PointerProvenance P] [DecidableEq P]
+    (h : Hooks P S C E F A Pad) (c : C) (fuel : Nat)
+    (place : RuntimePlace P) (reset : Bool) :
+    validatePlace h c fuel place false reset = (do
+      let name ← h.typeName c place.layout.ty
+      let initial : Session P := {
+        path := ⟨name, #[]⟩, flags := ⟨reset, false⟩, ctfeMode := none,
+        refTracking := none, dataBytes := none }
+      let _ ← h.withGhostValidation do
+        let mut session := initial
+        if reset then
+          if let .indirect _ := (← h.toOp c place).op then
+            session := {session with dataBytes := some .empty}
+        session ← visit h c fuel session place
+        resetPadding h c session place
+        return session
+      return ()) := by
+  unfold validatePlace
+  simp only [Bool.false_eq_true, ↓reduceIte]
 
 /-- Const validation exposes the updated worklist to its outer interning loop;
 CTFE restrictions are distinct from ordinary recursive runtime checks. -/
