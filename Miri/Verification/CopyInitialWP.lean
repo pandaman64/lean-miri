@@ -5,7 +5,7 @@ import Init.Internal.Order.While
 /-! Initial-state normalization for an ordered copy and its successor. -/
 namespace Miri.Verification.CopyInitialWP
 
-open Miri.ABI Miri.Interpreter Miri.Memory Miri.TreeBorrows
+open Miri.ABI Miri.Interpreter Miri.Memory Miri.TreeBorrows Std.WP
 
 variable {K U : Type}
 local notation "State" => MachineHooks.State K U
@@ -59,6 +59,125 @@ theorem scalarLoadFromImage [DecidableEq K] (config : Config)
     checked entry live indirect backend width aligned range component]
   unfold CopyLoadObservationWP.selectedScalarLoadPre
   rw [Allocation.Bridge.getBytesUnchecked_eq_extract _ _ _ _ full endpoint ordered bound]
+
+/-- Install the physical result at the live destination key before selecting
+the observer's allocation. -/
+def committedCopyState (before : State) (id : AllocId)
+    (entry : LocalAllocation Provenance BorrowTree K) (updated : Alloc) : State :=
+  {before with machine := {before.machine with memory :=
+    {before.machine.memory with live :=
+      (before.machine.memory.live.insert id {entry with allocation := updated})}}}
+
+/-- Reduce the checked physical commit and its typed successor to the
+observer's selected pre-copy image. The source entry contains its retained
+read tree and the physical result contains the write tree. Selection gives
+priority to the copy destination, then the source, then the original map.
+The copy's checked allocation bridge supplies the destination splice fact.
+Configuration-dependent hooks still run on the actual committed machine. -/
+theorem physicalCopyThenObserve [DecidableEq K] (config : Config)
+    (before : State) (initial : MemoryState Provenance BorrowTree K) (sourceId destId : AllocId)
+    (readEntry writtenEntry : LocalAllocation Provenance BorrowTree K)
+    (retained : before.machine.memory.live =
+      (initial.live.insert sourceId readEntry).insert destId writtenEntry)
+    (updated : Alloc) (sourceRange : AllocRange) (destStart pointerSize : Size)
+    (nonoverlap : Bool)
+    (copied : readEntry.allocation.copyRepeatedly sourceRange destStart 1 pointerSize
+      (sourceId == destId) nonoverlap writtenEntry.allocation = .ok () updated)
+    (operand : OpTy Provenance) (place : MemPlace Provenance)
+    (primitive : BackendPrimitive) (validRange : WrappingRange)
+    (checked : let after := committedCopyState before destId writtenEntry updated
+      MemoryWP.CheckedPlaceAccess config false after.machine.memory ⟨after.machine, none⟩
+        ⟨place, localMemoryLayout operand.layout⟩)
+    (selected : LocalAllocation Provenance BorrowTree K)
+    (live : (if checked.resolved.allocId = destId then some {writtenEntry with allocation := updated}
+      else if checked.resolved.allocId = sourceId then some readEntry
+      else initial.live[checked.resolved.allocId]?) = some selected)
+    (indirect : operand.op = .indirect place)
+    (backend : (localMemoryLayout operand.layout).backendRepr =
+      .Scalar (.Initialized (value := primitive) (validRange := validRange)))
+    (width : primitive.size config.runtime = .ok (localMemoryLayout operand.layout).size)
+    (aligned : place.misaligned = none)
+    (range : AllocRange)
+    (component : (allocRange checked.resolved.offset (localMemoryLayout operand.layout).size).subrange
+      (allocRange Size.ZERO (localMemoryLayout operand.layout).size) = .ok range)
+    (finish destFinish : Size) (priorImage destImage copiedBytes : Array UInt8)
+    (destFull : updated.getBytesUnchecked (allocRange Size.ZERO updated.byteSize) =
+      .ok (destImage.extract 0 destStart.bytes.toNat ++ copiedBytes ++
+        destImage.extract destFinish.bytes.toNat destImage.size))
+    (otherFull : checked.resolved.allocId ≠ destId →
+      selected.allocation.getBytesUnchecked (allocRange Size.ZERO selected.allocation.byteSize) =
+        .ok priorImage)
+    (endpoint : range.endExclusive = .ok finish)
+    (ordered : range.start.bytes.toNat ≤ finish.bytes.toNat)
+    (bound : finish.bytes.toNat ≤ selected.allocation.byteSize.bytes.toNat)
+    (post : RvalueImmTy Provenance → State → Prop) (onError : StepError → State → Prop) :
+    CopyMemoryWP.commitPre config destId
+      (readEntry.allocation.copyRepeatedly sourceRange destStart 1 pointerSize (sourceId == destId)
+        nonoverlap writtenEntry.allocation)
+      (fun _ after => MemoryWP.immediateReadPre config operand after post onError) onError before =
+    CopyLoadObservationWP.selectedScalarImagePre config operand
+      (committedCopyState before destId writtenEntry updated) primitive checked.accessHooks
+      (committedCopyState before destId writtenEntry updated).machine.memory checked.resolved.allocId
+      checked.resolved.extra checked.resolved.offset selected selected.allocation range
+      (.ok ((if checked.resolved.allocId = destId then
+        destImage.extract 0 destStart.bytes.toNat ++ copiedBytes ++
+          destImage.extract destFinish.bytes.toNat destImage.size
+      else priorImage).extract range.start.bytes.toNat finish.bytes.toNat)) post onError := by
+  let image := if checked.resolved.allocId = destId then
+    destImage.extract 0 destStart.bytes.toNat ++ copiedBytes ++
+      destImage.extract destFinish.bytes.toNat destImage.size
+    else priorImage
+  have full : selected.allocation.getBytesUnchecked (allocRange Size.ZERO selected.allocation.byteSize) =
+      .ok image := by
+    by_cases same : checked.resolved.allocId = destId
+    · have entry := Option.some.inj ((ite_eq_left same).symm.trans live)
+      rw [← entry]
+      simpa only [image, same, ↓reduceIte] using destFull
+    · simpa only [image, same, ↓reduceIte] using otherFull same
+  have destLive : before.machine.memory.live[destId]? = some writtenEntry := by
+    rw [retained]
+    simp
+  let after := committedCopyState before destId writtenEntry updated
+  have installed : before.machine.memory.setLiveAllocation destId updated = .ok after.machine.memory :=
+    before.machine.memory.setLiveAllocation_of_find destId writtenEntry updated destLive
+  have observedLive : (committedCopyState before destId writtenEntry updated).machine.memory.live[
+      checked.resolved.allocId]? = some selected := by
+    change (before.machine.memory.live.insert destId
+      {writtenEntry with allocation := updated})[checked.resolved.allocId]? = some selected
+    rw [CopyLoadObservationWP.liveLookup_insert, retained, lookup_after_copy_accesses]
+    split
+    · next same => exact (ite_eq_left same).symm.trans live
+    · next distinct => simpa only [ite_eq_right distinct] using live
+  have raw := checked.raw
+  simp only [Bool.false_eq_true, ↓reduceIte, MemoryLifecycle.getAllocRaw, observedLive,
+    Id.run, pure, Pure.pure, MemoryAccessResult.mk.injEq, Except.ok.injEq] at raw
+  have observedInRaw : checked.rawMemory.live[checked.resolved.allocId]? = some selected :=
+    raw.1 ▸ observedLive
+  simp only [copied, CopyMemoryWP.commitPre, installed]
+  change MemoryWP.immediateReadPre config operand after post onError = _
+  rw [scalarLoadFromImage config operand after place primitive validRange checked selected
+    observedInRaw indirect backend width aligned range component finish image
+    (raw.2.2 ▸ full) endpoint ordered (raw.2.2 ▸ bound), ← raw.1, ← raw.2.2]
+
+/-- A physical copy error commits its retained allocation and ends the
+sequence before the observer runs. A missing destination key takes priority
+over the byte-stage error. -/
+theorem physicalCopyError [DecidableEq K] (config : Config) (before : State)
+    (sourceId destId : AllocId) (source destination retained : Alloc)
+    (sourceRange : AllocRange) (destStart pointerSize : Size) (nonoverlap : Bool)
+    (error : AllocError)
+    (copied : source.copyRepeatedly sourceRange destStart 1 pointerSize (sourceId == destId)
+      nonoverlap destination = .error error retained)
+    (post : Unit → State → Prop) (onError : StepError → State → Prop) :
+    CopyMemoryWP.commitPre config destId
+      (source.copyRepeatedly sourceRange destStart 1 pointerSize (sourceId == destId)
+        nonoverlap destination) post onError before =
+      match before.machine.memory.live[destId]? with
+      | none => onError (config.memoryError (.memoryUpdate (.unavailable destId))) before
+      | some entry => onError (config.memoryError (.allocation error))
+          (committedCopyState before destId entry retained) := by
+  rw [copied, CopyLoadObservationWP.copyCommit_eq]
+  rfl
 
 private theorem truncateByte (byte : UInt8) :
     (Size.mk 1).truncate (BitVec.ofNat 128 byte.toNat) =
@@ -137,6 +256,32 @@ theorem trackedAccessPre [DecidableEq K] (config : Config) (write : Bool)
             (.error (reprStr error)) post onError) := by
   rw [← CopyTreeWP.accessPre_eq, RvalueWP.actionPre_eq_wp]
   exact CopyTreeWP.access_iff config write allocation id provenance range before ready post onError
+
+/-- The observer starts at the selected allocation's retained tree when the
+actual diagnostic and race phases have reached a tracked read. Both the
+permission failure and synchronization continuations keep their hook state. -/
+theorem trackedReadAccessPre (config : Config) (before : State)
+    (hooks : PlaceMachine.AccessState K U) (allocation : Alloc)
+    (id : AllocId) (provenance : ProvenanceExtra) (range : AllocRange)
+    (ready : CopyTreeWP.Ready config false id range {before with machine := hooks.machine})
+    (post : PlaceMachine.AccessState K U → BorrowTree → Prop)
+    (onError : String → PlaceMachine.AccessState K U → BorrowTree → Prop) :
+    MemoryWP.memoryAccessPre config false hooks allocation.extra id provenance range post onError =
+      TreeBorrowsWP.accessPre allocation.extra provenance range.start range.size .Read
+        ready.tracker.global.protectedTags .VisitChildrenOfAccessed
+        (fun updated _ =>
+          MemoryWP.policyPre (config.syncAccess false id range) {hooks with machine := ready.machine}
+            updated post onError)
+        (fun status retained _ =>
+          MemoryWP.failurePre (PlaceMachine.treeError false status) {hooks with machine := ready.machine}
+            retained onError) := by
+  have diagnostic := ready.diagnostic
+  have race := ready.race
+  have machine := ready.weak
+  simp only [Bool.false_eq_true, ↓reduceIte] at race machine
+  have tracked := ready.tracked
+  simp only [MemoryWP.memoryAccessPre, MemoryWP.policyPre, wp, WP.wpTrans, diagnostic,
+    race, ← machine, tracked, Bool.false_eq_true, ↓reduceIte]
 
 /-- A checked access with a rejecting error continuation can be proved from
 the permission of each initial byte even when its success continuation also
