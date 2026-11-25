@@ -41,7 +41,7 @@ done
 
 tools/body-vc safety "$out/copy.mir.json" --no-build --no-check --output "$out/GeneratedCopyRows.lean"
 lean -j1 --root="$out" -o "$out/lib/GeneratedCopyRows.olean" "$out/GeneratedCopyRows.lean"
-for component in CopyPhysical CopyTail CopyReturnValidation; do
+for component in CopyPhysical CopyTail CopyReturnValidation CopyObserver; do
   lean -j1 --root="$fixture" -o "$out/lib/$component.olean" "$fixture/$component.lean" | tee "$out/$component.log"
   if rg 'sorryAx|native_decide' "$out/$component.log"; then
     exit 1

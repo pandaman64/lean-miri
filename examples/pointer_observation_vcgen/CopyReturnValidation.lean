@@ -24,13 +24,13 @@ def postCopyReturnWritePre (source : UInt8) (layout4 : LocalLayout)
         let value : Immediate Provenance := .scalar (.fromScalarInt (ScalarInt.ofUInt8 source))
         let entry := {entry with machine := {entry.machine with memory}}
         let hooks := (ExecutionMachine.projectionHooks checked).place
-        PlaceReadWriteWP.writeNoValidatePre hooks () value dest (fun _ after =>
+        PlaceReadWriteWP.writeNoValidatePre hooks () value dest (fun _ =>
           if validate then
             RvalueWP.actionPre (hooks.enforceValidity () layout)
-              (fun enabled after => if enabled then
-                RvalueWP.actionPre (hooks.validate () dest) (fun _ => post) onError after
-                else post after) onError after
-          else post after) onError entry
+              (fun enabled => if enabled then
+                RvalueWP.actionPre (hooks.validate () dest) (fun _ => post) onError
+                else post) onError
+          else post) onError entry
 
 /-- Shallow validation of the written u8 leaves the output and every other
 machine field unchanged, for arbitrary retained memory and continuations. -/

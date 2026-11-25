@@ -1,4 +1,5 @@
 import Copy
+import CopyObserver
 import CopyPhysical
 import CopyTail
 import Miri.Memory.ProvenanceMapVerification
@@ -8,17 +9,20 @@ namespace PointerObservation.Copy
 
 open Miri.ABI Miri.Interpreter Miri.Verification Miri.Memory Miri.MIR Miri.TreeBorrows Fixture
 
-/-- The emitted window checks the same executable copy observation, with a
-finite endpoint after the load and the actual failed state on invalidation. -/
+/-- The actual emitted six-row copy and observer window. -/
+def generatedPrefix (source destination : UInt8) (stale : Bool) : Prop :=
+  match scenario source destination stale with
+  | .error _ => False
+  | .ok (config, entry) =>
+    GeneratedBodyVC.windowPrefixPre config limits (fun _ _ => True)
+      (fun after => stale = false ∧ scalarAt after 0 = some source)
+      (fun error after => stale = true ∧ error = disabledLoad ∧ bytesAt 1 after = some (.ok #[source]))
+      ((GeneratedBodySafety.window_0_bb0_5 config limits).take 6) entry
+
+/-- The executable observation checker and the emitted window agree. -/
 theorem generatedPrefix_iff_checked (source destination : UInt8) (stale : Bool) :
-    (match scenario source destination stale with
-    | .error _ => False
-    | .ok (config, entry) =>
-      GeneratedBodyVC.windowPrefixPre config limits (fun _ _ => True)
-        (fun after => stale = false ∧ scalarAt after 0 = some source)
-        (fun error after => stale = true ∧ error = disabledLoad ∧ bytesAt 1 after = some (.ok #[source]))
-        ((GeneratedBodySafety.window_0_bb0_5 config limits).take 6) entry) ↔
-      checked source destination stale = true := by
+    generatedPrefix source destination stale ↔ checked source destination stale = true := by
+  unfold generatedPrefix
   rw [← required_iff_checked]
   cases each : scenario source destination stale with
   | error error => simp only [required, each]
@@ -301,11 +305,41 @@ theorem checked_of_copy_suffix (source destination : UInt8) (stale : Bool)
       have sameConfig : config = resumedConfig := Option.some.inj same
       exact ⟨trivial, by simpa only [next, sameConfig] using suffix⟩
 
+private theorem checked_initialCopy (source destination : UInt8) (stale : Bool) :
+    checked source destination stale = true := by
+  apply checked_of_copy_suffix source destination stale
+  refine (postCopyTreeSuffix source stale
+    (fun final => stale = false ∧ scalarAt final 0 = some source)
+    (fun error final => stale = true ∧ error = disabledLoad ∧ bytesAt 1 final = some (.ok #[source]))).mpr ?_
+  cases unitLayout : row6Layout with
+  | none =>
+    have ready := row6LayoutReady
+    simp only [unitLayout, Option.isSome_none, Bool.false_eq_true] at ready
+  | some layout =>
+    have observed := postCopyLoad_observation source stale layout
+    cases next : postCopyLoadEntry source stale layout with
+    | none => simp only [next] at observed
+    | some pair =>
+      obtain ⟨config, after⟩ := pair
+      simpa only [Option.bind_some, next] using observed
+
+/-- With the root observer, the emitted six-row prefix succeeds and returns
+the original source byte, for every pair of initial bytes. -/
+theorem generatedCopyThenLoad (source destination : UInt8) :
+    generatedPrefix source destination false :=
+  (generatedPrefix_iff_checked source destination false).mpr (checked_initialCopy source destination false)
+
+/-- With the stale child observer, the load in the emitted prefix returns
+the exact Disabled-tag UB and the retained destination contains the copied byte. -/
+theorem generatedCopyThenDisabledLoad (source destination : UInt8) :
+    generatedPrefix source destination true :=
+  (generatedPrefix_iff_checked source destination true).mpr (checked_initialCopy source destination true)
+
 open Lean Elab Command in
 run_cmd liftTermElabM do
   for name in [``generatedPrefix_iff_checked, ``entrySelected,
       ``reduceCachedCopyOperands, ``reduceInitialCopy,
-      ``copyMemoryAndAdvance, ``checked_of_copy_suffix] do
+      ``copyMemoryAndAdvance, ``checked_of_copy_suffix, ``generatedCopyThenLoad, ``generatedCopyThenDisabledLoad] do
     for dependency in (← collectAxioms name) do
       unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
         throwError "{name} depends on unapproved axiom {dependency}"
@@ -313,5 +347,7 @@ run_cmd liftTermElabM do
 #print axioms generatedPrefix_iff_checked
 #print axioms reduceCachedCopyOperands
 #print axioms reduceInitialCopy
+#print axioms generatedCopyThenLoad
+#print axioms generatedCopyThenDisabledLoad
 
 end PointerObservation.Copy
