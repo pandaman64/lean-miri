@@ -16,6 +16,7 @@ tools/body-vc safety "$out/runtime.json" --root miri_start   --output "$out/Gene
 lean -j1 --root="$out" -o "$out/Generated.olean" "$out/Generated.lean"
 lean -j1 examples/callee_summary_vcgen/Verify.lean
 lean -j1 examples/callee_summary_vcgen/ProtectorCleanup.lean
+lean -j1 examples/callee_summary_vcgen/AssignResult.lean
 
 "$runner" "$out/runtime.json" --ui-source "$fixture" --ui-flags '["-Zmiri-tree-borrows"]'   --check-body-vc-input "$out/Generated.mir.json" 0 >"$out/runtime.log" 2>&1
 rg -x -F 'body_vc: outcome=Except.ok (Miri.Verification.WholeBodyWP.Exit.scopeExit); normal=true; stopped=false; impossible=false; no_ub=true'   "$out/runtime.log"
