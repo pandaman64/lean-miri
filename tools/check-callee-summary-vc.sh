@@ -33,6 +33,7 @@ lean -j1 --root=examples/callee_summary_vcgen -o "$out/CallerObservation.olean" 
   examples/callee_summary_vcgen/CallerObservation.lean
 lean -j1 --root=examples/callee_summary_vcgen -o "$out/CallerWindow.olean" \
   examples/callee_summary_vcgen/CallerWindow.lean
+lean -j1 examples/callee_summary_vcgen/UpdateSummary.lean
 lean -j1 examples/callee_summary_vcgen/Verify.lean
 lean -j1 examples/callee_summary_vcgen/ProtectorCleanup.lean
 lean -j1 examples/callee_summary_vcgen/AssignResult.lean
