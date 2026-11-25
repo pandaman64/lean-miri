@@ -56,12 +56,16 @@ import MiriTests.Verification.NondivergingIntrinsicWP
 import MiriTests.Verification.PlaceMentionWP
 import MiriTests.Verification.StorageLiveWP
 import MiriTests.Verification.TreeOverlapWP
+import MiriTests.Verification.TreeObservationWP
 import MiriTests.Verification.TreeWildcardPairWP
 import MiriTests.Verification.TreeRangeCursorsWP
 import MiriTests.Verification.TreeRangeOutcomeWP
 import MiriTests.Verification.TreeRangePointwiseWP
 import MiriTests.Verification.BranchControlWP
+import MiriTests.Verification.MemoryObservationWP
 import MiriTests.Verification.MemoryWP
+import MiriTests.Verification.OperandPlaceWP
+import MiriTests.Verification.PlaceReadWriteWP
 import MiriTests.Verification.ScalarMemoryWP
 import MiriTests.Verification.RvalueWP
 import MiriTests.Verification.TreeBorrowsWP

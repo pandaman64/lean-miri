@@ -3,7 +3,7 @@ import Miri.Verification.InitialWPAttr
 
 namespace Miri.Verification.GeneratedBodyVC
 
-open Miri.Interpreter Miri.MIR
+open Miri.Interpreter Miri.MIR Std.WP
 
 variable {K U C O X Host : Type} [DecidableEq K]
 local notation "State" => MachineHooks.State K U
@@ -93,6 +93,20 @@ theorem pre_iff (config : Config) (limits : Limits) (program : BodyVCGen.LoadedP
       (BodyVCGen.generateProgram config limits program allowed post failure).pre before := by
   rw [BodyVCGen.generatedProgramPre_eq, WholeBodyWP.catalogBodyPre_iff]
   simp only [pre, WholeBodyWP.eliminate_iff, WholeBodyWP.solve_iff]
+
+/-- Use the canonical program operation with the specialized transfer table
+as the proof interface. -/
+def run (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
+    (_table : Table config limits) (allowed : State → C → Prop) :
+    BodyVCGen.RunProgram config limits program allowed :=
+  BodyVCGen.runProgram config limits program allowed
+
+@[spec] theorem spec_run (config : Config) (limits : Limits) (program : BodyVCGen.LoadedProgram)
+    (table : Table config limits) (allowed : State → C → Prop)
+    (post : WholeBodyWP.Exit → State → Prop) (failure : Failure) :
+    Triple (run config limits program table allowed) (pre config limits program table allowed post failure)
+      post failure :=
+  Triple.iff.mpr fun before checked => (pre_iff config limits program table allowed post failure before).mp checked
 
 /-- Normalize the concrete instruction, leaving configured effects and shared
 success and failure continuations symbolic. -/

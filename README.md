@@ -205,6 +205,17 @@ connects the generated condition to proofs over the canonical VC. To see a
 proof that supplies these facts for a concrete Rust function and its admitted
 caller domain, follow the [empty_function example](examples/empty_function/README.md#generated-body-verification-condition).
 
+For a direct Lean `vcgen` proof, use this operation in a `Triple` with your
+precondition and success and error postconditions.
+
+```lean
+GeneratedBodyVC.run config limits program
+  (GeneratedBodySafety.transferTable config limits) allowed
+```
+
+Enable `set_option experimental.vcgen true`. The proof tactic exposes the
+reduced precondition from the generated table.
+
 Export the Rust function and import the execution input with
 `Miri.Frontend.ImportMIR`. In a Lean client, import
 `Miri.Verification.BodyVCGen` and enable `set_option experimental.vcgen true`.

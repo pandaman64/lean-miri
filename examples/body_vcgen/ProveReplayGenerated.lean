@@ -3,7 +3,7 @@ import MiriTests.Verification.WholeBodyReplay
 
 namespace BodyVCGenReplayExample
 
-open Miri.Interpreter Miri.Verification
+open Miri.Interpreter Miri.Verification Std.WP
 open MiriTests.Verification.WholeBodyReplay
 
 variable {K U O X Host : Type} [DecidableEq K]
@@ -24,5 +24,21 @@ theorem savedSafetyFromReplay (config : Config) (limits : ExecutionMachine.Limit
   simpa only [GeneratedBodySafety.requiredForEveryChoiceAt, GeneratedBodySafety.requiredAt_eq,
     BodyVCGen.noUB, loaded, choices] using certificate.verdict.exactNoUB
 
+set_option experimental.vcgen true in
+/-- Direct Lean clients can ask `vcgen` for the specialized precondition with
+arbitrary success and failure continuations. -/
+theorem generatedTriple (config : Config) (limits : ExecutionMachine.Limits)
+    (program : BodyVCGen.LoadedProgram) (allowed : State → Unit → Prop)
+    (initial : State → Prop) (post : WholeBodyWP.Exit → State → Prop)
+    (failure : StepError → State → Prop)
+    (valid : ∀ state, initial state → GeneratedBodyVC.pre config limits program
+      (GeneratedBodySafety.transferTable config limits) allowed post failure state) :
+    Triple (GeneratedBodyVC.run config limits program (GeneratedBodySafety.transferTable config limits) allowed)
+      initial post failure := by
+  vcgen
+  rename_i state entered
+  exact valid state entered
+
 #print axioms savedSafetyFromReplay
+#print axioms generatedTriple
 end BodyVCGenReplayExample
