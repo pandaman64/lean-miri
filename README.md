@@ -235,6 +235,14 @@ Use `miri_generated_program` for the single-row view of
 `GeneratedBodyVC.run`. Use `miri_generated_window` with an emitted window name
 to substitute that window into a generated control precondition.
 
+To check an observation partway through a block, take the relevant prefix of
+the emitted window and use `GeneratedBodyVC.windowPrefixPre` with a
+postcondition on the state at its last step. This condition checks each
+selected instruction and passes an error and its retained state directly to
+the error postcondition. The copy and pointer examples connect this exact
+prefix condition to executable checks on exported MIR.
+[Copy and pointer examples](examples/pointer_observation_vcgen)
+
 Export the Rust function and import the execution input with
 `Miri.Frontend.ImportMIR`. In a Lean client, import
 `Miri.Verification.BodyVCGen` and enable `set_option experimental.vcgen true`.
