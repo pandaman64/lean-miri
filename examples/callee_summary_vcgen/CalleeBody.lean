@@ -64,6 +64,8 @@ def checkUpdateReturn : Except String Unit :=
       tracker.global.protectedTags.get calleeBorrow)
     unless decide (returned.stack.frames.size = 1 ∧
         returned.stack.currentFrame?.map (·.location) = some (.mir ⟨1, 0⟩) ∧
+        returned.stack.currentFrame?.map (·.localsIdentity) =
+          caller.stack.currentFrame?.map (·.localsIdentity) ∧
         scalarAt returned 4 = some 7 ∧ bytesAt 0 returned = some (.ok #[42]) ∧ tracker = some none) do
       throw "update did not resume its caller with byte 42, result 7 and the protector released"
 
