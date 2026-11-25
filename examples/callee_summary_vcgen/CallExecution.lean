@@ -108,7 +108,7 @@ theorem protectedCallNode :
                     rw [RvalueWP.actionPre_ok ran', RvalueWP.actionPre_ok ran'] at handed
                     rw [RvalueWP.actionPre_ok ran'] at dispatched
                     simp only [BodyCFG.nodePre, GeneratedBodySafety.mir_0_bb0_7,
-                      CanonicalStepWP.terminatorPre, ← RvalueWP.actionPre_eq_wp] 
+                      CanonicalStepWP.terminatorPre, ← RvalueWP.actionPre_eq_wp]
                     change RvalueWP.actionPre preamble _ _ before
                     simp only [RvalueWP.actionPre_ok ran, CanonicalStepWP.selectedTerminatorPre,
                       CallWP.callPre, ite_self, true_and]
