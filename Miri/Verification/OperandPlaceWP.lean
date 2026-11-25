@@ -344,28 +344,34 @@ skip-validity path. -/
   · rw [← PlaceMentionWP.actionPre_evalPlace]
     simp only [PlaceDynamic.evalPlace, bypass, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
 
-/-- A source immediate with race tracking checks for a global clock, then
-commits both clocks before classifying the race outcome. -/
-@[miri_initial_wp] theorem actionPre_afterLocalRead (id : MIR.LocalId) (post : Unit → State → Prop) (onError : Errors) :
+/-- A local race check commits the global and frame clocks before branching
+on its result. Keep this transfer named in generated continuations so each
+operand cache branch can share it. -/
+def localReadClockPre (id : MIR.LocalId) (post : Unit → State → Prop) (onError : Errors) :
+    State → Prop :=
+  StorageLiveWP.currentFramePre (fun frame before =>
+    match frame.extra.dataRace with
+    | none => post () before
+    | some clocks =>
+      match before.machine.dataRace with
+      | none => onError (.invalidProgram "frame has vector clocks but machine does not") before
+      | some global =>
+        let result := Miri.Concurrency.LocalRace.localRead clocks global before.machine.threads id
+        let state := { before with machine.dataRace := some result.global }
+        StorageLiveWP.setCurrentFramePre
+          { frame with extra.dataRace := some result.frame }
+          (fun _ => match result.outcome with
+            | .ok () => post ()
+            | .error error => onError (.callback s!"after_local_read: {reprStr error}"))
+          onError state) onError
+
+@[miri_initial_wp] theorem actionPre_afterLocalRead (id : MIR.LocalId)
+    (post : Unit → State → Prop) (onError : Errors) :
     actionPre (MachineHooks.afterLocalRead id) post onError =
-      StorageLiveWP.currentFramePre (fun frame before =>
-        match frame.extra.dataRace with
-        | none => post () before
-        | some clocks =>
-          match before.machine.dataRace with
-          | none => onError (.invalidProgram "frame has vector clocks but machine does not") before
-          | some global =>
-            let result := Miri.Concurrency.LocalRace.localRead clocks global before.machine.threads id
-            let state := { before with machine.dataRace := some result.global }
-            StorageLiveWP.setCurrentFramePre
-              { frame with extra.dataRace := some result.frame }
-              (fun _ => match result.outcome with
-                | .ok () => post ()
-                | .error error => onError (.callback s!"after_local_read: {reprStr error}"))
-              onError state) onError := by
+      localReadClockPre id post onError := by
   funext before
   rw [MachineHooks.afterLocalRead, actionPre_bind_fun, StorageLiveWP.actionPre_currentFrame]
-  unfold StorageLiveWP.currentFramePre
+  unfold localReadClockPre StorageLiveWP.currentFramePre
   cases before.stack.currentFrame? with
   | none => rfl
   | some frame =>
@@ -390,7 +396,8 @@ commits both clocks before classifying the race outcome. -/
         congr 2
         funext _
         cases result.outcome with
-        | ok unitValue => cases unitValue; rfl
+        | ok unitValue => cases unitValue
+                          rfl
         | error => rfl
 
 @[miri_initial_wp] theorem actionPre_placeLength [PointerProvenance P] (h : PlaceProjectionHooks P S C E) (choice : C)
@@ -418,8 +425,8 @@ commits both clocks before classifying the race outcome. -/
     cases slice
     · rfl
     · let metadata : MemPlaceMeta P := match base.ref with
-              | .local .. => .none
-              | .memory memory => memory.metadata
+        | .local .. => .none
+        | .memory memory => memory.metadata
       change actionPre (checked (metadata.unwrapMeta.mapError fun error => .invalidProgram (reprStr error)) >>= _) _ _ = _
       rw [actionPre_bind_fun, checkedPre]
       congr 1
@@ -586,6 +593,22 @@ local notation "Config" => ExecutionMachine.Config K U C O X Host
       OperandMachine.evalOperand
         (ExecutionMachine.operandHooks (ExecutionMachine.withValidation config limits))
         choice operand known := rfl
+
+@[miri_initial_wp] theorem canonical_operandCompiler (config : Config) :
+    (ExecutionMachine.operandHooks config).compiler = config.compiler := rfl
+
+@[miri_initial_wp] theorem canonical_operandLayoutCompatible (config : Config)
+    (computed known : LocalLayout) :
+    (ExecutionMachine.operandHooks config).layoutCompatible computed known =
+      config.copy.compatible computed known := rfl
+
+@[miri_initial_wp] theorem canonical_operandDebug (config : Config) (limits : ExecutionMachine.Limits) :
+    (ExecutionMachine.withValidation config limits).compiler.debugAssertions =
+      config.compiler.debugAssertions := rfl
+
+@[miri_initial_wp] theorem canonical_operandValidation (config : Config) (limits : ExecutionMachine.Limits) :
+    (ExecutionMachine.withValidation config limits).compiler.validationInProgress =
+      config.compiler.validationInProgress := rfl
 
 @[miri_initial_wp] theorem actionPre_canonicalOperandType (config : Config)
     (choice : C) (place : MIR.Place) (op : Op) (post : Unit → State → Prop) (onError : Errors) :

@@ -19,7 +19,7 @@ example (config : Config) (limits : ExecutionMachine.Limits) (choice : C)
     (localFound : current.getLocal id = .ok slot)
     (layoutFound : slot.layout = some cached)
     (valueFound : current.getLocalOperand id = .ok (.indirect operand))
-    (debug : (ExecutionMachine.withValidation config limits).compiler.debugAssertions = false) :
+    (debug : config.compiler.debugAssertions = false) :
     let hooks := ExecutionMachine.rvalueHooks config limits
     let place : Place := ⟨id, #[]⟩
     actionPre (hooks.evalOperand choice (.Copy place) (some hint)) post onError before =
@@ -88,5 +88,28 @@ example (hooks : OperandMachine.Hooks K U C) (choice : C)
       post onError before = onError error failed := by
   rw [actionPre_evalOperand]
   simp only [actionPre, flag, layout]
+
+/-- The immediate-local path checks the machine clock after the validation
+probe. A missing global clock reports the state left by that probe. -/
+example (hooks : OperandMachine.Hooks K U C) (choice : C) (id : LocalId)
+    (layout : LocalLayout) (before checked : State)
+    (current checkedFrame : Frame Provenance LocalLayout MachineHooks.FrameExtra)
+    (slot : LocalState Provenance LocalLayout) (value : Immediate Provenance)
+    (clocks : Miri.Concurrency.LocalRace.FrameState) (post : Op → State → Prop)
+    (onError : StepError → State → Prop)
+    (frame : before.stack.currentFrame? = some current)
+    (localFound : current.getLocal id = .ok slot) (cached : slot.layout = some layout)
+    (operand : current.getLocalOperand id = .ok (.immediate value))
+    (sized : layout.layout.backendRepr.isUnsized = false)
+    (validation : hooks.compiler.validationInProgress before = .ok false checked)
+    (checkedFrameFound : checked.stack.currentFrame? = some checkedFrame)
+    (frameClocks : checkedFrame.extra.dataRace = some clocks)
+    (globalClock : checked.machine.dataRace = none) :
+    actionPre (OperandMachine.localToOp hooks choice id none) post onError before =
+      onError (.invalidProgram "frame has vector clocks but machine does not") checked := by
+  simp only [miri_initial_wp]
+  simp only [StorageLiveWP.currentFramePre, frame, localFound, cached, operand, sized, validation,
+    Except.mapError, scalarCheckPre, actionPre, Bool.false_eq_true, ↓reduceIte, localReadClockPre,
+    checkedFrameFound, frameClocks, globalClock]
 
 end MiriTests.Verification.OperandPlaceWP
