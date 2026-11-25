@@ -64,9 +64,26 @@ def argumentHasStrongProtector (after : State) : Bool := Id.run do
     allocation = allocId ∧ called = calleeBorrow ∧
     tracker.global.protectedTags.get called = some .StrongProtector)
 
+section
+
+set_option maxRecDepth 65536
+set_option maxHeartbeats 4000000
+set_option cbv.maxSteps 180000
+attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail Std.HashMap.getElem?_emptyWithCapacity Std.HashMap.getElem?_empty
+attribute [local cbv_opaque] Std.HashMap.emptyWithCapacity Std.HashMap.insert
+
+theorem emittedCallMatchesRoot :
+    (GeneratedBodySafety.loaded.toOption.bind fun program =>
+      program.root.body.basicBlocks[0]?.map fun block =>
+        (block.statements.size, BodyCFG.Node.terminator block.terminator)) =
+      some (7, GeneratedBodySafety.mir_0_bb0_7) := by
+  cbv
+
+end
+
 open Lean Elab Command in
 run_cmd liftTermElabM do
-  for name in [``atBorrowedCall, ``argumentHasStrongProtector] do
+  for name in [``atBorrowedCall, ``argumentHasStrongProtector, ``emittedCallMatchesRoot] do
     for dependency in (← collectAxioms name) do
       unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
         throwError "{name} depends on unapproved axiom {dependency}"
