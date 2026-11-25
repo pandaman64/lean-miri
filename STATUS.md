@@ -1267,32 +1267,47 @@ vector-clock backend.
   allocation and a checked byte image. The rule keeps the load's permission
   check and the error result's retained state. The generated copy fixture
   proves entry preparation and equivalence between its prefix VC and its
-  executable checker for arbitrary initial bytes. Its finite checks include a same-allocation copy
-  whose observer sees the source byte and a stale observer that reaches
-  Tree Borrows UB after the destination has been updated. Discharging that
-  emitted prefix for every initial byte pair remains open.
+  executable checker for arbitrary initial bytes.
+  [The emitted six-row prefix](examples/pointer_observation_vcgen/GeneratedCopy.lean)
+  is now proved for every pair of initial source and destination bytes. The
+  root observer returns the source byte; the stale child observer reports the
+  exact Disabled-tag load error and retains the copied byte at the destination.
+  These are bounded-prefix guarantees for the fixture's prepared machine state.
   [Check the copy and pointer fixtures](tools/check-pointer-observation-vc.sh).
 
   [Pointer formation rules](Miri/Verification/PointerFormationWP.lean)
   expose typed shared, mutable and raw formation, including policy selection,
   tag reconstruction and the ordinary write to the destination place. The
   generated pointer fixture proves the prefix VC equivalent to its executable
-  checker for arbitrary initial bytes. Its finite checks cover a shared load
-  and mutable store through fresh tags, a raw store through the original tag,
-  and a failed Frozen-tag store that preserves the initial byte. The shared
-  fixture's entry preparation is proved for every initial byte. Discharging
-  every emitted pointer prefix for every initial byte remains open.
+  checker for arbitrary initial bytes. Its emitted prefixes are now proved
+  for every initial byte: a [shared load](examples/pointer_observation_vcgen/SharedReference.lean)
+  returns that byte through fresh tag 3; a
+  [mutable store](examples/pointer_observation_vcgen/MutableObservation.lean)
+  writes byte 73 through fresh tag 4; and the
+  [raw-pointer observations](examples/pointer_observation_vcgen/RawObservation.lean)
+  prove the accepted store through the original tag and the exact Frozen-tag
+  store error with the initial byte retained. The reference proofs check the
+  actual typed retags and shallow validation. These guarantees cover the
+  selected prefixes and prepared states, not complete arbitrary pointer programs.
+  Fresh integrated validation of the expanded pointer check script remains pending.
   [Check the normalized rows and pointer observations](tools/check-pointer-observation-vc.sh).
 
   [Callee summaries](Miri/Verification/CalleeSummaryWP.lean) compose the
   canonical dispatch and callee scope with the caller's continuation on
   the returned state. The imported call proof assumes local obligations for
   callee entry, the write, return-value assignment, cleanup and the continuation.
-  Component proofs cover the emitted immediate result assignment and singleton
-  protector release while preserving the caller allocation's bytes. A finite
-  runtime check of the imported Rust example reaches a normal scope exit.
-  Proving the complete caller and callee contract from concrete entry facts,
-  including the remaining call and return obligations, remains open.
+  Component proofs cover the emitted immediate result assignment, a protected
+  one-byte write, and singleton protector release while preserving the caller
+  allocation's bytes. An executable check follows the actual exported call
+  through the callee's write of 42, return of 7, protector release and resumed
+  caller identity; the complete imported Rust example also has a finite runtime
+  check reaching normal scope exit. Proving this callee contract from concrete
+  call-entry facts, rather than assuming its local row obligations, remains open.
+  The caller continuation must then prove its tests of 7 and 42 and its later
+  store of 99 from the returned contract. That contract must retain the live
+  allocation, provenance and Tree Borrows rights needed for those accesses:
+  returned scalar values and removal of the callee's protector alone do not
+  establish the caller's permission to write.
   [Check the exported callee example](tools/check-callee-summary-vc.sh).
 
   The [duplicate_prefix example](examples/duplicate_prefix_vcgen/README.md)
