@@ -46,6 +46,11 @@ if rg 'sorryAx|native_decide' "$out/GeneratedCopy.log"; then
   exit 1
 fi
 
+lean -j1 "$fixture/CopyTail.lean" | tee "$out/CopyTail.log"
+if rg 'sorryAx|native_decide' "$out/CopyTail.log"; then
+  exit 1
+fi
+
 tools/body-vc safety "$out/pointers.mir.json" --root shared_read --no-build --no-check \
   --output "$out/GeneratedPointerRows.lean"
 lean -j1 --root="$out" -o "$out/lib/GeneratedPointerRows.olean" "$out/GeneratedPointerRows.lean"
