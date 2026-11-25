@@ -89,12 +89,19 @@ theorem required_iff_checked (source destination : UInt8) (stale : Bool) :
   unless checked 73 13 true do throw (IO.userError "copy stale observer did not yield the expected UB and bytes")
   unless checked 9 255 false do throw (IO.userError "copy observer did not follow the source byte")
 
+/-- Compiler preparation and the typed input construction accept every initial byte pair. -/
+theorem entryReady (source destination : UInt8) (stale : Bool) :
+    (scenario source destination stale).isOk = true := by
+  cbv
+
 open Lean Elab Command in
 run_cmd liftTermElabM do
-  for dependency in (← collectAxioms ``required_iff_checked) do
-    unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
-      throwError "copy VC depends on unapproved axiom {dependency}"
+  for name in [``required_iff_checked, ``entryReady] do
+    for dependency in (← collectAxioms name) do
+      unless #[``propext, ``Quot.sound, ``Classical.choice].contains dependency do
+        throwError "{name} depends on unapproved axiom {dependency}"
 
 #print axioms required_iff_checked
+#print axioms entryReady
 
 end PointerObservation.Copy
