@@ -70,6 +70,7 @@ import MiriTests.Verification.MemoryWP
 import MiriTests.Verification.OperandPlaceWP
 import MiriTests.Verification.PlaceReadWriteWP
 import MiriTests.Verification.PointerFormationWP
+import MiriTests.Verification.PointerSuccessorWP
 import MiriTests.Verification.ScalarMemoryWP
 import MiriTests.Verification.RvalueWP
 import MiriTests.Verification.TreeBorrowsWP
