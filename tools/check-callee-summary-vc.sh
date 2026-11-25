@@ -22,7 +22,7 @@ lean -j1 --root=examples/callee_summary_vcgen -o "$out/CallEntry.olean" \
   examples/callee_summary_vcgen/CallEntry.lean
 cp examples/callee_summary_vcgen/CallCompilerData.lean "$out/CallCompilerData.lean"
 lean -j1 --root="$out" -o "$out/CallCompilerData.olean" "$out/CallCompilerData.lean"
-for module in ReflectedCallEntry CallAbiLiteral CallFrameEntry; do
+for module in ReflectedCallEntry CallAbiLiteral CallDispatchHandoff CallFrameEntry; do
   lean -j1 --root=examples/callee_summary_vcgen -o "$out/$module.olean" \
     "examples/callee_summary_vcgen/$module.lean"
 done
