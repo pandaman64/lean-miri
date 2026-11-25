@@ -23,32 +23,51 @@ def writeValidityPre (hooks : PlaceHooks P S C E) (choice : C) (dest : RuntimePl
 
 /-- A sized place dispatches to either the typed memory writer or the
 optimized-local writer. The resolver can materialize a projected local. -/
-def writePre (hooks : PlaceHooks P S C E) (choice : C) (value : Immediate P)
+def writeNoValidatePre (hooks : PlaceHooks P S C E) (choice : C) (value : Immediate P)
     (dest : RuntimePlace P) (post : Unit → S → Prop) (onError : StepError → S → Prop) : S → Prop :=
   if dest.layout.layout.isSized then
     actionPre (asMplaceOrMutableLocal hooks choice dest) (fun
-      | .memory place =>
-        actionPre (hooks.writeMemoryNoValidate choice value place)
-          (fun _ => writeValidityPre hooks choice dest post onError) onError
+      | .memory place => actionPre (hooks.writeMemoryNoValidate choice value place) post onError
       | .immediateLocal id layout =>
-        actionPre (hooks.writeLocalImmediate choice id layout value)
-          (fun _ => writeValidityPre hooks choice dest post onError) onError) onError
+        actionPre (hooks.writeLocalImmediate choice id layout value) post onError) onError
   else onError (.invalidProgram "unsized immediate destination")
+
+@[miri_initial_wp, miri_rvalue] theorem actionPre_writePlaceImmediateNoValidate
+    (hooks : PlaceHooks P S C E) (choice : C) (value : Immediate P) (dest : RuntimePlace P)
+    (post : Unit → S → Prop) (onError : StepError → S → Prop) :
+    actionPre (writePlaceImmediateNoValidate hooks choice value dest) post onError =
+      writeNoValidatePre hooks choice value dest post onError := by
+  simp only [writePlaceImmediateNoValidate, writeNoValidatePre, actionPre_ite]
+  cases dest.layout.layout.isSized <;>
+    simp only [Bool.false_eq_true, Bool.not_false, Bool.not_true, ↓reduceIte]
+  · rfl
+  · rw [actionPre_bind_fun]
+    congr 1
+    funext target
+    cases target <;> rfl
+
+def writePre (hooks : PlaceHooks P S C E) (choice : C) (value : Immediate P)
+    (dest : RuntimePlace P) (post : Unit → S → Prop) (onError : StepError → S → Prop) : S → Prop :=
+  writeNoValidatePre hooks choice value dest (fun _ => writeValidityPre hooks choice dest post onError) onError
 
 @[miri_initial_wp, miri_rvalue] theorem actionPre_writePlaceImmediate (hooks : PlaceHooks P S C E) (choice : C)
     (value : Immediate P) (dest : RuntimePlace P)
     (post : Unit → S → Prop) (onError : StepError → S → Prop) :
     actionPre (writePlaceImmediate hooks choice value dest) post onError =
       writePre hooks choice value dest post onError := by
-  simp only [writePlaceImmediate, writePlaceImmediateNoValidate, writePre, writeValidityPre,
-    actionPre_bind_fun, actionPre_ite]
-  cases dest.layout.layout.isSized
-  · simp only [Bool.false_eq_true, Bool.not_false, ↓reduceIte]
-    rfl
-  · simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-    congr 1
-    funext target
-    cases target <;> congr 2 <;> funext flag <;> cases flag <;> rfl
+  simp only [writePlaceImmediate, writePre, writeValidityPre, actionPre_bind_fun,
+    actionPre_writePlaceImmediateNoValidate, actionPre_ite]
+  congr 2
+
+/-- Lower the typed read after its callback projection has been reduced. -/
+@[miri_initial_wp] theorem actionPre_readImmediate [DecidableEq K] (access : Access)
+    (operand : OpTy Provenance) (post : RvalueImmTy Provenance → State → Prop)
+    (onError : StepError → State → Prop) :
+    actionPre (PlaceMachine.readImmediate access operand) post onError =
+      fun before => MemoryWP.immediateReadPre access operand before post onError := by
+  rw [actionPre_eq_wp]
+  exact funext fun before =>
+    propext (MemoryWP.immediateReadPre_iff access operand before post onError).symm
 
 /-- The canonical read callback uses the primitive operand and memory
 dispatcher with exactly the same postconditions. -/
@@ -57,9 +76,7 @@ dispatcher with exactly the same postconditions. -/
     (post : RvalueImmTy Provenance → State → Prop) (onError : StepError → State → Prop) :
     actionPre ((ExecutionMachine.rvalueHooks config limits).readImmediate choice operand) post onError =
       fun before => MemoryWP.immediateReadPre config.access operand before post onError := by
-  rw [canonical_readImmediate, actionPre_eq_wp]
-  exact funext fun before =>
-    propext (MemoryWP.immediateReadPre_iff config.access operand before post onError).symm
+  rw [canonical_readImmediate, actionPre_readImmediate]
 
 /-- The canonical write callback uses the projection dictionary already
 installed in the execution configuration. -/
@@ -78,7 +95,7 @@ theorem writePre_memory (hooks : PlaceHooks P S C E) (choice : C) (value : Immed
     writePre hooks choice value dest post onError =
       actionPre (hooks.writeMemoryNoValidate choice value ⟨memory, dest.layout⟩)
         (fun _ => writeValidityPre hooks choice dest post onError) onError := by
-  simp only [writePre, sized, ↓reduceIte, asMplaceOrMutableLocal, target]
+  simp only [writePre, writeNoValidatePre, sized, ↓reduceIte, asMplaceOrMutableLocal, target]
   rfl
 
 /-- A source-owned memory callback samples ghost mode and validation policy
@@ -136,7 +153,7 @@ theorem writePre_wholeLocal (hooks : PlaceHooks P S C E) (choice : C)
         actionPre (hooks.writeLocalImmediate choice id layout value)
           (fun _ => writeValidityPre hooks choice dest post onError) onError checked := by
   dsimp only
-  simp only [writePre, sized, ↓reduceIte, asMplaceOrMutableLocal, Option.isSome,
+  simp only [writePre, writeNoValidatePre, sized, ↓reduceIte, asMplaceOrMutableLocal, Option.isSome,
     Bool.false_eq_true, requireCurrent_eq, actionPre_bind_fun,
     pure_bind, checkLocalIdentity_debugOff _ _ debugOff, debugOff]
   cases operand <;> simp only [actionPre, index, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte, frameRead, loaded,
@@ -295,5 +312,117 @@ theorem actionPre_scopedWriteLocal [DecidableEq K] (access : ValidityMachine.Acc
     wp ((ExecutionMachine.rvalueHooks config limits).writeImmediate choice value dest) post onError =
       writePre (ExecutionMachine.projectionHooks config).place choice value dest post onError := by
   rw [← actionPre_eq_wp, actionPre_canonicalWrite]
+
+/-- Reify the retag scope's action as a predicate so the enclosed copy can
+be simplified without expanding the borrow tracker scope. -/
+@[miri_initial_wp] theorem retagModePre_eq_pullback {A : Type}
+    (mode : Miri.TreeBorrows.RetagPolicy.RetagMode) (action : MachineHooks.M K U A)
+    (post : A → State → Prop) (onError : StepError → State → Prop) :
+    RvalueWP.retagModePre mode action post onError =
+      RvalueWP.retagModePullback mode (actionPre action) post onError := rfl
+
+/-- A copy checks type compatibility and padding before the source read.
+An immediate is written directly when compatible, or through a materialized
+destination for transmute. An indirect source uses the configured byte copy. -/
+def copyNoValidatePre (hooks : PlaceHooks P S C E) (copy : PlaceCopyHooks P S C)
+    (choice : C) (source : OpTy P) (dest : RuntimePlace P) (allowTransmute : Bool)
+    (post : Unit → S → Prop) (onError : StepError → S → Prop) : S → Prop :=
+  match copy.compatible source.layout dest.layout with
+  | .error error => onError error
+  | .ok compatible =>
+    if !compatible && !allowTransmute then onError (.invalidProgram "copy type mismatch")
+    else
+      match copy.hasPadding source.layout with
+      | .error error => onError error
+      | .ok padding =>
+        let write : ImmediateOrPlace P → S → Prop := fun
+          | .immediate value =>
+            if !source.layout.layout.isSized || !dest.layout.layout.isSized then
+              onError (.invalidProgram "copy immediate is unsized")
+            else if source.layout.layout.size != dest.layout.layout.size then
+              onError (.invalidProgram "copy immediate size mismatch")
+            else if compatible then
+              writeNoValidatePre hooks choice value.value dest post onError
+            else
+              actionPre (forceAllocation hooks choice dest) (fun memory =>
+                actionPre (hooks.writeMemoryNoValidate choice value.value ⟨memory.mplace, source.layout⟩)
+                  post onError) onError
+          | .place memory =>
+            actionPre (forceAllocation hooks choice dest) (fun target =>
+              actionPre (copy.memoryCopy choice ⟨memory.mplace, source.layout⟩ target) post onError) onError
+        if padding then
+          write (match source.op with
+            | .immediate value => .immediate ⟨value, localMemoryLayout source.layout⟩
+            | .indirect mplace => .place ⟨mplace, localMemoryLayout source.layout⟩)
+        else actionPre (copy.readRaw choice source) write onError
+
+@[miri_initial_wp, miri_rvalue] theorem actionPre_copyRuntimePlaceNoValidate
+    (hooks : PlaceHooks P S C E) (copy : PlaceCopyHooks P S C)
+    (choice : C) (source : OpTy P) (dest : RuntimePlace P) (allowTransmute : Bool)
+    (post : Unit → S → Prop) (onError : StepError → S → Prop) :
+    actionPre (copyRuntimePlaceNoValidate hooks copy choice source dest allowTransmute) post onError =
+      copyNoValidatePre hooks copy choice source dest allowTransmute post onError := by
+  simp only [copyRuntimePlaceNoValidate, copyNoValidatePre]
+  cases copy.compatible source.layout dest.layout with
+  | error error => rfl
+  | ok compatible =>
+    change actionPre ((pure compatible : PlaceM S Bool) >>= _) post onError = _
+    rw [pure_bind, actionPre_ite]
+    split
+    · simp only [actionPre_bind_fun, ite_eq_left ‹_›]
+      rfl
+    · simp only [ite_eq_right ‹_›]
+      cases copy.hasPadding source.layout with
+      | error error => rfl
+      | ok padding =>
+        change actionPre ((pure padding : PlaceM S Bool) >>= _) post onError = _
+        simp only [pure_bind, actionPre_ite, actionPre_bind_fun]
+        suffices branches : (fun value : ImmediateOrPlace P => actionPre (match value with
+            | .immediate value => do
+              if !source.layout.layout.isSized || !dest.layout.layout.isSized then
+                throw (.invalidProgram "copy immediate is unsized")
+              if source.layout.layout.size != dest.layout.layout.size then
+                throw (.invalidProgram "copy immediate size mismatch")
+              if compatible then writePlaceImmediateNoValidate hooks choice value.value dest
+              else
+                let memory ← forceAllocation hooks choice dest
+                hooks.writeMemoryNoValidate choice value.value ⟨memory.mplace, source.layout⟩
+            | .place memory => do
+              let target ← forceAllocation hooks choice dest
+              copy.memoryCopy choice ⟨memory.mplace, source.layout⟩ target) post onError) = _ by
+          split
+          case isFalse =>
+            exact congrArg (fun success => actionPre (copy.readRaw choice source) success onError) branches
+          case isTrue => exact congrFun branches _
+        funext value
+        cases value with
+        | immediate value =>
+          simp only [actionPre_ite, actionPre_bind_fun, actionPre_writePlaceImmediateNoValidate]
+          rfl
+        | place memory => rw [actionPre_bind_fun]
+
+/-- Validity runs only after the copy. A type-changing copy validates the
+source layout first, then validates the destination in the resulting state. -/
+def copyPre (hooks : PlaceHooks P S C E) (copy : PlaceCopyHooks P S C)
+    (choice : C) (source : OpTy P) (dest : RuntimePlace P) (allowTransmute : Bool)
+    (post : Unit → S → Prop) (onError : StepError → S → Prop) : S → Prop :=
+      copyNoValidatePre hooks copy choice source dest allowTransmute (fun _ =>
+        actionPre (hooks.enforceValidity choice dest.layout) (fun validate =>
+          if validate then
+            if source.layout.ty != dest.layout.ty then
+              actionPre (copy.validateSource choice source.layout dest)
+                (fun _ => actionPre (hooks.validate choice dest) post onError) onError
+            else actionPre (hooks.validate choice dest) post onError
+          else post ()) onError) onError
+
+@[miri_initial_wp, miri_rvalue] theorem actionPre_copyRuntimePlace
+    (hooks : PlaceHooks P S C E) (copy : PlaceCopyHooks P S C)
+    (choice : C) (source : OpTy P) (dest : RuntimePlace P) (allowTransmute : Bool) :
+    actionPre (copyRuntimePlace hooks copy choice source dest allowTransmute) =
+      copyPre hooks copy choice source dest allowTransmute := by
+  funext post onError
+  simp only [copyRuntimePlace, copyPre, actionPre_bind_fun, actionPre_ite,
+    actionPre_copyRuntimePlaceNoValidate]
+  congr 2
 
 end Miri.Verification.PlaceReadWriteWP

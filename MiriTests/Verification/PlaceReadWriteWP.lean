@@ -64,6 +64,22 @@ example (config : Config) (limits : ExecutionMachine.Limits) (choice : C)
   exact MemoryWP.scalarLoad_uninit_resultPre_iff config.access before (localMemoryLayout operand.layout)
     primitive access selected range bad loaded component uninitialized _ onError
 
+-- An ordinary copy inside a retag scope checks compatibility before it
+-- reaches the raw read, then takes the same scope restoration on failure.
+example (config : Config) (limits : ExecutionMachine.Limits) (choice : C)
+    (source : OpTy Provenance) (dest : RuntimePlace Provenance) (error : StepError)
+    (post : Unit → State → Prop) (onError : StepError → State → Prop)
+    (incompatible : (ExecutionMachine.withValidation config limits).copy.compatible
+      source.layout dest.layout = .error error) :
+    RvalueWP.actionPre ((ExecutionMachine.rvalueHooks config limits).withRetagMode choice .None
+      ((ExecutionMachine.rvalueHooks config limits).copyOp choice source dest)) post onError =
+      RvalueWP.retagModePullback .None (fun _ failed => failed error) post onError := by
+  simp only [RvalueWP.canonical_copyOp, RvalueWP.actionPre_rvalueHooks_withRetagMode, miri_initial_wp]
+  congr 1
+  funext success failed
+  simp only [Miri.Verification.PlaceReadWriteWP.copyPre,
+    Miri.Verification.PlaceReadWriteWP.copyNoValidatePre, incompatible]
+
 #print axioms Miri.Verification.PlaceReadWriteWP.wp_canonicalRead
 #print axioms Miri.Verification.PlaceReadWriteWP.wp_canonicalWrite
 #print axioms Miri.Verification.PlaceReadWriteWP.writePre_wholeLocal
@@ -71,5 +87,6 @@ example (config : Config) (limits : ExecutionMachine.Limits) (choice : C)
 #print axioms Miri.Verification.PlaceReadWriteWP.actionPre_scopedWriteLocal
 #print axioms Miri.Verification.PlaceReadWriteWP.immediateReadPre_scalar
 #print axioms Miri.Verification.PlaceReadWriteWP.immediateWritePre_scalar
+#print axioms Miri.Verification.PlaceReadWriteWP.actionPre_copyRuntimePlace
 
 end MiriTests.PlaceReadWriteWP
