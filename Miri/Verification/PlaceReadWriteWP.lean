@@ -313,6 +313,12 @@ theorem actionPre_scopedWriteLocal [DecidableEq K] (access : ValidityMachine.Acc
       writePre (ExecutionMachine.projectionHooks config).place choice value dest post onError := by
   rw [← actionPre_eq_wp, actionPre_canonicalWrite]
 
+@[miri_initial_wp] theorem withRetag_yes :
+    (Miri.MIR.WithRetag.Yes == Miri.MIR.WithRetag.Yes) = true := rfl
+
+@[miri_initial_wp] theorem withRetag_no :
+    (Miri.MIR.WithRetag.No == Miri.MIR.WithRetag.Yes) = false := rfl
+
 attribute [miri_initial_wp] RvalueWP.canonical_copyOp RvalueWP.canonical_copyOpAllowTransmute
   RvalueWP.actionPre_rvalueHooks_withRetagMode
 
