@@ -62,7 +62,9 @@ if rg 'sorryAx|native_decide' "$out/GeneratedPointer.log"; then
   exit 1
 fi
 
-lean -j1 "$fixture/RawObservation.lean" | tee "$out/RawObservation.log"
-if rg 'sorryAx|native_decide' "$out/RawObservation.log"; then
-  exit 1
-fi
+for observation in MutableObservation SharedReference RawObservation; do
+  lean -j1 "$fixture/$observation.lean" | tee "$out/$observation.log"
+  if rg 'sorryAx|native_decide' "$out/$observation.log"; then
+    exit 1
+  fi
+done
