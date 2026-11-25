@@ -90,8 +90,25 @@ theorem step_vc
       rw [selected_statement] at lowered
       exact (Eq.mpr lowered) (checked choice permitted)
 
+/-- The default generated row for the actual helper's bb7[8] exposes the
+ordered copy WPs with arbitrary successor and error predicates. -/
+theorem generated_copy_pre_eq
+    (config : ExecutionMachine.Config K U C O X Host) (limits : ExecutionMachine.Limits)
+    (choice : C) (post : Bool → State → Prop) (onError : StepError → State → Prop)
+    (before : State) :
+    (GeneratedBodySafety.transfer_5_bb7_8 config limits).pre choice post onError before =
+      loweredPre config limits choice post onError before := by
+  apply propext
+  refine ((GeneratedBodySafety.transfer_5_bb7_8 config limits).exact choice post onError before).trans ?_
+  have selected := statement_vc config limits choice post onError before
+  rw [selected_statement] at selected
+  change CanonicalStepWP.statementPre config limits choice (.Intrinsic (.CopyNonOverlapping copyArgs))
+    post onError before ↔ loweredPre config limits choice post onError before
+  rw [selected]
+
 #print axioms selected_statement
 #print axioms statement_vc
 #print axioms step_vc
+#print axioms generated_copy_pre_eq
 
 end DuplicatePrefix.CopyStatementTreeVC

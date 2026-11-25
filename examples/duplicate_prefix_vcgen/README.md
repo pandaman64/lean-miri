@@ -61,11 +61,47 @@ its calling context, including compatibility with the permissions and active
 protectors at the bytes it can touch. Layout, initialization, and the slice
 descriptor can all agree while that authority differs.
 
+### Copy followed by a load through an alias
+
+Run `tools/check-copy-successor-vc.sh` with the pinned exporter, MIR-enabled
+sysroot, and `native_runner`. The helper in
+[runtime_copy_successor.rs](runtime_copy_successor.rs) copies one byte between
+adjacent offsets of a single allocation. It then dereferences the observation
+pointer. After the copy at bb0[5], the exported MIR assigns the unit result
+and kills three temporaries before loading at bb0[10].
+
+[CopySuccessorVC.lean](CopySuccessorVC.lean) composes those six generated
+transfers and proves equivalence to the corresponding canonical node
+conditions. It starts at the copy row with an arbitrary incoming machine
+state and a choice function applied to each intermediate state. It preserves
+the configured effects and both continuations throughout. The test also
+checks that the emitted copy and load predicates reach the Tree Borrows copy
+rule and the typed place-copy rule.
+
+[CopySuccessorObservation.lean](../../MiriTests/Verification/CopySuccessorObservation.lean)
+starts with initialized bytes `[73, 13]`, empty provenance, and an
+unprotected Unique child at offset one. At the successful write
+continuation, the byte-copy rule establishes that the destination contains
+73 and still has the permission tree left by the write. The following
+permission check uses that tree. A load through the parent stays permitted,
+while the child is readable before the copy and disabled by its write.
+These checks cover the memory and permission rules. The six-row equivalence leaves
+compiler layout, validity, and other machine policies as parameters.
+
+The stock runner separately enters the helper through the actual caller. The
+parent-tag case returns 73, which the caller checks. The child-tag case
+reports a Tree Borrows read error at the load for the disabled tag over
+`[1, 2)`. Both runs check body identity and the loaded body against the
+standalone generated artifact.
+
 ### Symbolic proof components
 
 [PreparedArguments.lean](PreparedArguments.lean) identifies argument slots
 and branch instructions in the emitted MIR. It also checks the current
 compiler helper for the language UB guard and the switch on its result.
+[CopyStatementTreeVC.lean](CopyStatementTreeVC.lean) equates the default
+generated transfer at the helper's bb7[8] with the exact ordered operand,
+alignment, and copy checks for arbitrary successor and error predicates.
 [SymbolicCopyAccess.lean](SymbolicCopyAccess.lean) proves copy access through
 the canonical diagnostic, race, Tree Borrows, synchronization and allocation
 cache transitions, given their local premises. Its range proof extends
