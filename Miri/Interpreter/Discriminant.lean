@@ -21,21 +21,21 @@ structure DiscriminantHooks (Prov S C V : Type) where
   scalarMayBeNull : C → Memory.Scalar Prov → RvalueM S Bool
 
 namespace Discriminant
-private def liftResult (value : Except StepError A) : RvalueM S A :=
+def liftResult (value : Except StepError A) : RvalueM S A :=
   match value with | .ok v => pure v | .error e => throw e
 private def invalid (reason : String) : RvalueM S A := throw (.invalidProgram reason)
 private def ub (reason : String) : RvalueM S A := throw (.undefinedBehavior reason)
-private def scalarOf (value : RvalueImmTy Prov) : RvalueM S (Memory.Scalar Prov) :=
+def scalarOf (value : RvalueImmTy Prov) : RvalueM S (Memory.Scalar Prov) :=
   liftResult (value.imm.toScalar |>.mapError ScalarOps.immediateError)
-private def sizeResult (value : Except SizeError A) : RvalueM S A :=
+def sizeResult (value : Except SizeError A) : RvalueM S A :=
   liftResult (value.mapError (fun e => .invalidProgram (toString e)))
-private def scalarBits [PointerProvenance Prov] (scalar : Memory.Scalar Prov) (size : Size) : RvalueM S U128 :=
+def scalarBits [PointerProvenance Prov] (scalar : Memory.Scalar Prov) (size : Size) : RvalueM S U128 :=
   liftResult (scalar.toBits size |>.mapError ScalarOps.scalarError)
 private def signed (layout : LayoutData) : RvalueM S Bool :=
   match layout.backendRepr.isSigned with
   | .ok value => pure value
   | .error _ => invalid "discriminant requires scalar backend representation"
-private def tagSize (h : DiscriminantHooks P S C V) (tag : ABI.Scalar) : RvalueM S Size :=
+def tagSize (h : DiscriminantHooks P S C V) (tag : ABI.Scalar) : RvalueM S Size :=
   match tag.size h.runtimeTarget with
   | .ok value => pure value
   | .error e => invalid s!"tag scalar size: {repr e}"
@@ -89,6 +89,62 @@ def tagForVariant [PointerProvenance P] (h : DiscriminantHooks P S C V) (choice 
     let scalar ← liftResult (scalar.toScalarInt |>.mapError ScalarOps.scalarError)
     return some (scalar, field)
 
+/-- Decode a projected enum tag using the already queried layouts. -/
+def readTag [PointerProvenance P] (h : DiscriminantHooks P S C V) (choice : C)
+    (op : OpTy P) (discrLayout tagLayout : TyAndLayout MIR.TyId)
+    (tag : ABI.Scalar) (encoding : TagEncoding) (tagValue : RvalueImmTy P) : RvalueM S Nat := do
+  if tagLayout.layout.size != tagValue.layout.layout.size then invalid "tag field size mismatch"
+  let tagSigned ← signed tagLayout.layout
+  let valueSigned ← signed tagValue.layout.layout
+  if tagSigned != valueSigned then invalid "tag field signedness mismatch"
+  let index ← match encoding with
+    | .Direct => do
+      let scalar ← scalarOf tagValue
+      let integer ← liftResult (scalar.tryToScalarInt |>.mapError ScalarOps.scalarError)
+      let .integer bits := integer | ub "InvalidTag(pointer)"
+      let bits ← liftResult (bits.toBits tagLayout.layout.size |>.mapError ScalarOps.scalarIntError)
+      let range ← validRange h tag
+      if !range.contains bits then ub "InvalidTag(outside valid range)"
+      -- int_to_int_or_float preserves signed extension before target truncation.
+      let extended ← if tagSigned then do
+        let integer ← sizeResult (tagLayout.layout.size.signExtend bits)
+        pure (BitVec.ofInt 128 integer)
+        else pure bits
+      let discrBits ← sizeResult (discrLayout.layout.size.truncate extended)
+      let some index ← h.variantForDiscriminant choice op.layout.ty discrBits
+        | ub "InvalidTag(no declared discriminant)"
+      pure index
+    | .Niche untagged start last nicheStart => do
+      if start >= 2^32 || last >= 2^32 || last < start then invalid "invalid niche variant range"
+      let scalar ← scalarOf tagValue
+      let integer ← liftResult (scalar.tryToScalarInt |>.mapError ScalarOps.scalarError)
+      match integer with
+      | .erasedPointer .. =>
+        let ptrValid ← if nicheStart == 0 && start == last then do
+          pure (!(← h.scalarMayBeNull choice scalar))
+          else pure false
+        if !ptrValid then ub "InvalidTag(pointer niche)"
+        pure untagged
+      | .integer integer =>
+        let bits ← liftResult (integer.toBits tagLayout.layout.size |>.mapError ScalarOps.scalarIntError)
+        let _ ← liftResult (Memory.Scalar.fromUInt (Prov := P) nicheStart tagLayout.layout.size |>.mapError ScalarOps.scalarError)
+        let relative ← sizeResult (tagLayout.layout.size.truncate (bits - nicheStart))
+        if relative.toNat <= last - start then do
+          let index := start + relative.toNat
+          if index >= 2^32 then invalid "absolute niche variant index overflow"
+          let count ← h.adtVariantCount choice op.layout.ty
+          if index >= count then invalid "niche variant outside ADT variant list"
+          let range ← validRange h tag
+          if !range.contains bits then invalid "niche encoding violates tag valid range"
+          if index == untagged then ub "InvalidTag(untagged variant encoded in niche)"
+          pure index
+        else do
+          let range ← validRange h tag
+          if !range.contains bits then ub "InvalidTag(outside valid range)"
+          pure untagged
+  if op.layout.layout.isVariantUninhabited index then ub s!"UninhabitedEnumVariantRead({index})"
+  pure index
+
 /-- Read the discriminant without assuming that an enum's wrapping range is a
 complete set of declared tags. Pointer niches retain the CTFE nullability hook. -/
 def readDiscriminant [PointerProvenance P] (h : DiscriminantHooks P S C V) (choice : C)
@@ -103,57 +159,7 @@ def readDiscriminant [PointerProvenance P] (h : DiscriminantHooks P S C V) (choi
     let tagLayout ← h.tagLayout choice tag
     let tagOp ← h.projectRead choice op field
     let tagValue ← h.readImmediate choice tagOp
-    if tagLayout.layout.size != tagValue.layout.layout.size then invalid "tag field size mismatch"
-    let tagSigned ← signed tagLayout.layout
-    let valueSigned ← signed tagValue.layout.layout
-    if tagSigned != valueSigned then invalid "tag field signedness mismatch"
-    let index ← match encoding with
-      | .Direct => do
-        let scalar ← scalarOf tagValue
-        let integer ← liftResult (scalar.tryToScalarInt |>.mapError ScalarOps.scalarError)
-        let .integer bits := integer | ub "InvalidTag(pointer)"
-        let bits ← liftResult (bits.toBits tagLayout.layout.size |>.mapError ScalarOps.scalarIntError)
-        let range ← validRange h tag
-        if !range.contains bits then ub "InvalidTag(outside valid range)"
-        -- int_to_int_or_float preserves signed extension before target truncation.
-        let extended ← if tagSigned then do
-          let integer ← sizeResult (tagLayout.layout.size.signExtend bits)
-          pure (BitVec.ofInt 128 integer)
-          else pure bits
-        let discrBits ← sizeResult (discrLayout.layout.size.truncate extended)
-        let some index ← h.variantForDiscriminant choice op.layout.ty discrBits
-          | ub "InvalidTag(no declared discriminant)"
-        pure index
-      | .Niche untagged start last nicheStart => do
-        if start >= 2^32 || last >= 2^32 || last < start then invalid "invalid niche variant range"
-        let scalar ← scalarOf tagValue
-        let integer ← liftResult (scalar.tryToScalarInt |>.mapError ScalarOps.scalarError)
-        match integer with
-        | .erasedPointer .. =>
-          let ptrValid ← if nicheStart == 0 && start == last then do
-            pure (!(← h.scalarMayBeNull choice scalar))
-            else pure false
-          if !ptrValid then ub "InvalidTag(pointer niche)"
-          pure untagged
-        | .integer integer =>
-          let bits ← liftResult (integer.toBits tagLayout.layout.size |>.mapError ScalarOps.scalarIntError)
-          let _ ← liftResult (Memory.Scalar.fromUInt (Prov := P) nicheStart tagLayout.layout.size |>.mapError ScalarOps.scalarError)
-          let relative ← sizeResult (tagLayout.layout.size.truncate (bits - nicheStart))
-          if relative.toNat <= last - start then do
-            let index := start + relative.toNat
-            if index >= 2^32 then invalid "absolute niche variant index overflow"
-            let count ← h.adtVariantCount choice op.layout.ty
-            if index >= count then invalid "niche variant outside ADT variant list"
-            let range ← validRange h tag
-            if !range.contains bits then invalid "niche encoding violates tag valid range"
-            if index == untagged then ub "InvalidTag(untagged variant encoded in niche)"
-            pure index
-          else do
-            let range ← validRange h tag
-            if !range.contains bits then ub "InvalidTag(outside valid range)"
-            pure untagged
-    if op.layout.layout.isVariantUninhabited index then ub s!"UninhabitedEnumVariantRead({index})"
-    pure index
+    readTag h choice op discrLayout tagLayout tag encoding tagValue
 
 def writeDiscriminant [PointerProvenance P] (h : DiscriminantHooks P S C V) (choice : C)
     (variant : Nat) (dest : V) : RvalueM S Unit := do

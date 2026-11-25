@@ -444,6 +444,16 @@ def setLiveAllocation [DecidableEq MachineKind]
   let some entry := findLive? state id | throw (.unavailable id)
   return insertLive state id { entry with allocation := allocation }
 
+/-- Exact live write-back, including a missing key. -/
+theorem setLiveAllocation_eq_lookup [DecidableEq MachineKind]
+    (state : MemoryState Prov Extra MachineKind) (id : AllocId) (allocation : Allocation Prov Extra) :
+    state.setLiveAllocation id allocation =
+      match state.live[id]? with
+      | none => .error (.unavailable id)
+      | some entry => .ok {state with live := state.live.insert id {entry with allocation}} := by
+  unfold setLiveAllocation findLive?
+  cases state.live[id]? <;> rfl
+
 /-- Exact live write-back from a raw current lookup. This exposes the update
 without requiring clients to unfold private memory-map helpers. -/
 theorem setLiveAllocation_of_find [DecidableEq MachineKind]
@@ -842,6 +852,48 @@ def getAllocRaw [DecidableEq MachineKind]
       let entry : LocalAllocation Prov Extra MachineKind :=
         ⟨.machine machineKind, allocation⟩
       return finish (global.memory.insertLive id entry) global.hooks (.ok allocation)
+
+/-- Raw lookup from an already selected live-map result. A miss runs the
+ordinary global lookup on the same memory and hook state. -/
+def getAllocRawFromLookup
+    (memory : MemoryState Prov Extra MachineKind) (hooksState : HookState)
+    (id : AllocId) (globalKind : Option MachineKind)
+    (hooks : GlobalAllocationHooks Prov Extra MachineKind HookState)
+    (selected : Option (LocalAllocation Prov Extra MachineKind)) :
+    MemoryAccessResult Prov Extra MachineKind HookState (Allocation Prov Extra) :=
+  let finish := fun after state outcome =>
+    (⟨after, hooks.synchronizeMemory after state, outcome⟩ :
+      MemoryAccessResult Prov Extra MachineKind HookState (Allocation Prov Extra))
+  match selected with
+  | some selected => finish memory hooksState (.ok selected.allocation)
+  | none =>
+    let global := getGlobalAlloc memory hooksState id false hooks
+    match global.outcome with
+    | .error error => finish global.memory global.hooks (.error (.globalAccess error))
+    | .ok (.borrowed allocation) => finish global.memory global.hooks (.ok allocation)
+    | .ok (.owned allocation) =>
+      match globalKind with
+      | none => finish global.memory global.hooks (.error (.missingGlobalMachineKind id))
+      | some kind =>
+        let after := {global.memory with live :=
+          (global.memory.live.insert id ⟨.machine kind, allocation⟩)}
+        finish after global.hooks (.ok allocation)
+
+theorem getAllocRaw_eq_lookup [DecidableEq MachineKind]
+    (memory : MemoryState Prov Extra MachineKind) (hooksState : HookState)
+    (id : AllocId) (globalKind : Option MachineKind)
+    (hooks : GlobalAllocationHooks Prov Extra MachineKind HookState) :
+    getAllocRaw memory hooksState id globalKind hooks =
+      getAllocRawFromLookup memory hooksState id globalKind hooks memory.live[id]? := by
+  unfold getAllocRaw getAllocRawFromLookup
+  generalize memory.live[id]? = selected
+  cases selected
+  · cases found : (getGlobalAlloc memory hooksState id false hooks).outcome with
+    | error => simp [found, Id.run, Pure.pure]
+    | ok adjusted =>
+      cases adjusted <;> cases globalKind <;>
+        simp [found, Id.run, Pure.pure, Bind.bind, MemoryState.insertLive]
+  · rfl
 
 /-- Source `get_alloc_raw_mut`: missing globals are adjusted with `is_write`,
 then materialized as `MemoryKind::Machine(GLOBAL_KIND)` before the mutability

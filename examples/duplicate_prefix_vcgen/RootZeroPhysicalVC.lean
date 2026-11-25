@@ -130,7 +130,7 @@ theorem requiredAt (context validationContext : Context)
     have aligned : WholeBodyWP.entryMatchesLoaded program.root initial := by
       rw [loadedRoot]
       exact ⟨frame, by simp [initial, Storage.withCurrent, Stack.currentFrame?], identity, sourceBody, location⟩
-    simpa only [GeneratedBodySafety.requiredAt, loaded] using
+    simpa only [GeneratedBodySafety.requiredAt_eq, loaded] using
       SuccessfulTrace.generated_of_returning_trace _ limits program allowed initial final aligned trace returned
 
 #print axioms requiredAt

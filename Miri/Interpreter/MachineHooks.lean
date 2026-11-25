@@ -128,6 +128,19 @@ lets client proofs use the storage driver without naming its private adapter. -/
 @[simp] theorem deallocateLocal_dead (hooks : StorageHooks K User) :
     deallocateLocal hooks .dead = (pure () : M K User Unit) := rfl
 
+/-- The stack result used by storage operations, with typed errors preserved. -/
+def storageResult (result : Except StackError A) : M K User A := fromStack result
+
+theorem storageResult_eq (result : Except StackError A) :
+    (fromStack result : M K User A) = storageResult result := rfl
+
+/-- The allocation cleanup used by storage operations. -/
+def deallocateStorage (hooks : StorageHooks K User) (value : LocalValue Provenance) :
+    M K User Unit := deallocateLocal hooks value
+
+theorem deallocateLocal_eq (hooks : StorageHooks K User) (value : LocalValue Provenance) :
+    deallocateLocal hooks value = deallocateStorage hooks value := rfl
+
 /-- Canonical whole-state source storage_live_dyn. The generic Frame operation
 cannot itself install FrameExtra mutations made by a machine hook; this binding
 uses current Frame methods after each hook so local-race/protector state survives. -/

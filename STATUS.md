@@ -1173,13 +1173,141 @@ vector-clock backend.
   and preserves both successors and typed failures. The canonical assignment
   rules expose rvalue, place, operand and memory effects. The Tree Borrows
   rules expose ranged access, child insertion, exposure, release, deallocation
-  and collection continuations. [Whole-body VC generation](Miri/Verification/BodyVCGen.lean)
+  and collection continuations.
+  [Read/write composition](Miri/Verification/TreeReadWriteWP.lean) characterizes
+  successful consecutive accesses at a normal tree location from its initial
+  node states, when each access schedule visits each node at most once. It
+  reconstructs write pruning after the read. [Topology rules](Miri/Verification/TreeTopologyWP.lean)
+  discharge the no-repeat premise from consistent rooted links and duplicate-free
+  child lists. [Range rules](Miri/Verification/TreeRangeAccess.lean) express
+  access success in terms of tag resolution, range preparation and independent
+  checks on the initial segments, including the wildcard case. The segment
+  checks follow the ordered wildcard roots and derive access relatedness from
+  read/write exposure counters. Cache updates propagate along the parent chain
+  and retain earlier counter changes if a node is missing or a cycle is detected.
+  When the error continuation is false, consecutive ranged reads and writes
+  support postconditions
+  on both diagnostic traces and the final tree. Their successful updates
+  preserve commit order for overlapping ranges. The original ranged rule
+  carries the partial tree and diagnostics to a caller-supplied error
+  postcondition.
+  For a read followed by a write, the ordered range contract carries the
+  failing access's trace and its partial state through an arbitrary error
+  continuation. A pointwise lookup in the successful snapshot map inspects
+  the last matching cursor or the prepared location when no cursor wrote it.
+  For a well-formed, in-bounds map, `miri_tree_range_wp bytes` reduces a
+  read/write pair to initial byte locations. The iterator proof covers splits
+  within a segment and merges of equal adjacent segments. The intersection
+  checks the write on that byte's retained read location. Wildcard permissions
+  use the ordered roots and the protected and exposed states of their nodes.
+  [The exported copy statement](examples/duplicate_prefix_vcgen/CopyStatementTreeVC.lean)
+  connects the operands in the `duplicate_prefix` helper with the concrete
+  memory and Tree Borrows rules. The destination uses the state left by the
+  source lookup and read. Physical errors retain the allocation committed
+  by the copy's error path.
+  [Operand rules](Miri/Verification/OperandPlaceWP.lean) expose the initial
+  local, layout cache, projection path and local-read effects. The
+  [place rules](Miri/Verification/PlaceReadWriteWP.lean) connect canonical
+  immediate reads, writes and assignment copies to their continuations.
+  [Scalar observations](Miri/Verification/MemoryObservationWP.lean) relate
+  later loads to the stored or copied byte image, initialization and
+  provenance. The [Tree Borrows access sequence](Miri/Verification/TreeObservationWP.lean)
+  pulls a postcondition on byte locations through any checked, in-bounds
+  sequence on a well-formed initial location map. Its success-only rule
+  carries permission changes between accesses. The separate ordered rule
+  preserves diagnostics and the partially updated tree on failure.
+  For a [tracked copy](Miri/Verification/CopyTreeWP.lean), the proof can use
+  the live allocation's post-access byte relation in the continuation after
+  synchronization and write-back. A later [typed scalar load](Miri/Verification/CopyLoadObservationWP.lean)
+  can then select the replacement allocation on matching IDs. Its pointer
+  resolution, type layout, and access-policy checks still apply.
+  [Instruction reductions](Miri/Verification/ExactWP.lean) expose tag encoding
+  for discriminant writes, local layout and replacement for storage activation,
+  the projection path for place mentions, and the `Assume` and
+  `CopyNonOverlapping` checks. Drop resolves the glue and return edge, and
+  assertion failure resolves the panic lang item and evaluates its diagnostic
+  operands. Dynamic compiler queries and memory-policy actions contribute
+  their own continuations.
+  [Call rules](Miri/Verification/CallWP.lean) expose argument passing, dispatch
+  and tail-call cleanup. Frame initialization exposes the convention,
+  ordinary-argument and return-ABI checks, closure self, variadic allocations
+  and tuple-spread copies. [Lifecycle rules](Miri/Verification/CallLifecycleWP.lean)
+  expose frame insertion, relevance-cache updates and local publication.
+  [Dispatch rules](Miri/Verification/CallDispatchWP.lean) expose retries,
+  foreign-call scope entry and exit, and intrinsic dispatch. Compiler queries
+  and externally supplied shim implementations still contribute their own effects.
+  [Branch rules](Miri/Verification/BranchControlWP.lean) expose switch
+  comparisons and the Boolean decoding check in assertions.
+  [Aggregate rules](Miri/Verification/AggregateWP.lean) expose
+  ordered copies and validation, including repeated-element construction.
+  [Scalar memory examples](MiriTests/Verification/ScalarMemoryWP.lean) reduce
+  scalar loads and stores to byte, initialization and provenance facts after
+  access resolution, including target-endian integer decoding and pointer
+  provenance. The error postcondition receives the retained state of a failed
+  load or partially completed mutation.
+  [Whole-body VC generation](Miri/Verification/BodyVCGen.lean)
   constructs a weakest liberal precondition for a supplied MIR body using
   shared control-flow equations. Generation takes the interpreter configuration,
   choice policy, and continuations. It follows nested calls and loops without
   a client-supplied block proof. Clients still need to prove the generated
   obligation for their machine, choice policy, and postconditions. Termination
   requires a separate argument.
+  The generated Lean file specializes each distinct imported instruction and
+  uses its proved transfer at the matching body and PC in the shared CFG.
+  The entry and root-preparation predicates are equivalent to the canonical
+  ones. [Generated straight-line windows](Miri/Verification/GeneratedBodyVC.lean)
+  pass the actual state between rows and check the permitted choice at each
+  step. They check the live body, PC and instruction before using a specialized
+  transfer. Other edges use the shared equation. A finite prefix view checks
+  the selected PCs and payloads, with a postcondition on the prefix endpoint.
+  Configured host and memory-policy effects can still contribute obligations.
+
+  [Copy composition](Miri/Verification/CopyInitialWP.lean) relates a checked
+  physical copy to a subsequent typed scalar observation using the committed
+  allocation and a checked byte image. The rule keeps the load's permission
+  check and the error result's retained state. The generated copy fixture
+  proves entry preparation and equivalence between its prefix VC and its
+  executable checker for arbitrary initial bytes.
+  [The emitted six-row prefix](examples/pointer_observation_vcgen/GeneratedCopy.lean)
+  is now proved for every pair of initial source and destination bytes. The
+  root observer returns the source byte; the stale child observer reports the
+  exact Disabled-tag load error and retains the copied byte at the destination.
+  These are bounded-prefix guarantees for the fixture's prepared machine state.
+  [Check the copy and pointer fixtures](tools/check-pointer-observation-vc.sh).
+
+  [Pointer formation rules](Miri/Verification/PointerFormationWP.lean)
+  expose typed shared, mutable and raw formation, including policy selection,
+  tag reconstruction and the ordinary write to the destination place. The
+  generated pointer fixture proves the prefix VC equivalent to its executable
+  checker for arbitrary initial bytes. Its emitted prefixes are now proved
+  for every initial byte: a [shared load](examples/pointer_observation_vcgen/SharedReference.lean)
+  returns that byte through fresh tag 3; a
+  [mutable store](examples/pointer_observation_vcgen/MutableObservation.lean)
+  writes byte 73 through fresh tag 4; and the
+  [raw-pointer observations](examples/pointer_observation_vcgen/RawObservation.lean)
+  prove the accepted store through the original tag and the exact Frozen-tag
+  store error with the initial byte retained. The reference proofs check the
+  actual typed retags and shallow validation. These guarantees cover the
+  selected prefixes and prepared states.
+  [Check the normalized rows and pointer observations](tools/check-pointer-observation-vc.sh).
+
+  [Callee summaries](Miri/Verification/CalleeSummaryWP.lean) compose the
+  canonical dispatch and callee scope with the caller's continuation on
+  the returned state. The exported `update(&mut u8)` fixture uses a prepared
+  concrete caller at the selected call row with a Unit choice policy.
+  `updateSummary` derives the canonical dispatch, protected callee entry,
+  write of 42, assignment of return value 7, and canonical Return from that
+  state. The postcondition checks both values, absence of the callee's
+  strong argument protector, and resumption at bb1.0 in the original caller
+  frame. Its exact state equality also carries the live allocation,
+  provenance and Tree Borrows rights into `updateThenCallerStore`, which
+  checks the accepting branches for 7 and 42 and the write of 99 in the
+  actual emitted caller rows. Both theorems express partial safety for the
+  fixture. The executable check also follows the complete Rust example
+  through a finite normal scope exit.
+  [Exported call and caller proofs](examples/callee_summary_vcgen/UpdateSummary.lean).
+  [Check the exported callee example](tools/check-callee-summary-vc.sh).
+
   The [duplicate_prefix example](examples/duplicate_prefix_vcgen/README.md)
   checks symbolic copy access effects with explicit permission and policy
   premises. Its adversarial caller demonstrates that a prepared mutable

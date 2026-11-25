@@ -17,7 +17,7 @@ inductive PatternIdentity where
   | notNull
   deriving Repr, DecidableEq
 
-private partial def lowerPattern (ctx : LowerContext) (tables : CompilerTables)
+private def lowerPattern (ctx : LowerContext) (tables : CompilerTables)
     (nodes : Array PatternIdentity) (pattern : CompilerPattern) : Result (Nat × CompilerTables × Array PatternIdentity) := do
   let (value,tables,nodes) ← match pattern with
     | .range start finish => do
@@ -28,14 +28,19 @@ private partial def lowerPattern (ctx : LowerContext) (tables : CompilerTables)
       let mut tables := tables
       let mut nodes := nodes
       let mut ids := #[]
-      for child in children do
-        let (id,nextTables,nextNodes) ← lowerPattern ctx tables nodes child
+      for child in children.attach do
+        let (id,nextTables,nextNodes) ← lowerPattern ctx tables nodes child.val
         tables := nextTables; nodes := nextNodes; ids := ids.push id
       pure (PatternIdentity.or ids,tables,nodes)
     | .notNull => pure (PatternIdentity.notNull,tables,nodes)
   match nodes.toList.idxOf? value with
   | some id => pure (id,tables,nodes)
   | none => pure (nodes.size,tables,nodes.push value)
+termination_by sizeOf pattern
+decreasing_by
+  have smaller := Array.sizeOf_lt_of_mem child.property
+  simp_wf
+  omega
 
 structure Prepared where
   context : CompilerFacts.Context

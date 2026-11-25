@@ -60,7 +60,7 @@ theorem rejectedGeneratedSafetyOfLengthPrefix
       location := FrameLocation.mir ⟨ready.target, 0⟩} finalMachine
     have returned : final.stack.frames.size < (Storage.withCurrent (older.push caller) initialFrame initialMachine).stack.frames.size := by
       simp [final, Storage.withCurrent]
-    simpa only [GeneratedBodySafety.requiredAt, loaded] using
+    simpa only [GeneratedBodySafety.requiredAt_eq, loaded] using
       SuccessfulTrace.generated_of_returning_trace _ limits program allowed _ final aligned
         (SuccessfulTrace.append leading tail) returned
 

@@ -19,7 +19,8 @@ private def hook (action : PlaceMachine.AccessState K U → MachineHookResult
   | .ok value => pure value
   | .error error => throw (result.state.pendingError.getD (.callback error))
 
-private def memoryHook (action : PlaceMachine.AccessState K U →
+/-- Run a copy memory hook, retaining its machine and memory on either outcome. -/
+def runMemoryHook (action : PlaceMachine.AccessState K U →
     MemoryStateHookResult Provenance BorrowTree K (PlaceMachine.AccessState K U) A) :
     MachineHooks.M K U A := do
   let state ← get
@@ -29,7 +30,10 @@ private def memoryHook (action : PlaceMachine.AccessState K U →
   | .ok value => pure value
   | .error error => throw (result.state.pendingError.getD (.callback error))
 
-private def raw [DecidableEq K] (config : PlaceMachine.AccessConfig K U)
+private abbrev memoryHook := @runMemoryHook
+
+/-- Select a raw copy allocation, materializing globals as required. -/
+def lookupAllocation [DecidableEq K] (config : PlaceMachine.AccessConfig K U)
     (write : Bool) (id : AllocId) : MachineHooks.M K U (Allocation Provenance BorrowTree) := do
   let state ← get
   let result := if write then
@@ -40,6 +44,8 @@ private def raw [DecidableEq K] (config : PlaceMachine.AccessConfig K U)
   | .ok allocation => return allocation
   | .error error => throw (result.hooks.pendingError.getD
       (config.memoryError (.pointerAccess (.rawAccess error))))
+
+private abbrev raw := @lookupAllocation
 
 /-- Reads may touch a borrowed global's interior extra. Keep its snapshot via
 required touched-state policy, never eagerly promote it to a local allocation. -/
@@ -60,7 +66,8 @@ def access [DecidableEq K] (config : PlaceMachine.AccessConfig K U)
   | .ok () => return allocation
   | .error error => throw (result.state.pendingError.getD (.callback error))
 
-private def snapshotChecks (config : PlaceMachine.AccessConfig K U)
+/-- Check that source initialization and provenance snapshots can be prepared. -/
+def checkSnapshot (config : PlaceMachine.AccessConfig K U)
     (source : Allocation Provenance BorrowTree) (range : AllocRange) (pointerSize : Size) : MachineHooks.M K U Unit := do
   let bytes ← match source.getBytesUnchecked (allocRange Size.ZERO source.byteSize) with
     | .ok bytes => pure bytes
@@ -71,6 +78,8 @@ private def snapshotChecks (config : PlaceMachine.AccessConfig K U)
   match source.initializationMask.prepareCopy range with
   | .ok _ => pure ()
   | .error error => throw (config.memoryError (.allocation (.memory error)))
+
+private abbrev snapshotChecks := @checkSnapshot
 
 /-- Two pointer checks precede source probe (even size zero), source lookup,
 read, destination lookup/mutability, destination before_alloc_access, write,

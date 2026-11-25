@@ -117,12 +117,64 @@ The generated precondition covers every permitted choice. Use
 canonical assignment's place, operand, and copy effects. See the
 [assignment proof fixture](MiriTests/Verification/RvalueWP.lean).
 
-Build the Goto/Nop, Call/Return, and protected-alias proof fixtures.
+After selecting a MIR instruction in the generated VC, use
+`miri_instruction_wp` to open its rule for `SetDiscriminant`, `StorageLive`,
+`PlaceMention`, statement intrinsics, `Drop`, `Assert` or `UnwindTerminate`. Each rule keeps the
+state at which an error occurs. For example, `miri_drop_wp` further exposes
+the empty-glue jump and the dispatch request for a destructor.
+For managed fresh stack storage, `miri_storage_live` also exposes the
+reserved allocation ID, root tag, address draw, aligned base address and
+publication in the address maps. See the [Drop step fixture](MiriTests/Verification/DropWP.lean)
+and the [storage activation examples](MiriTests/Verification/StorageLiveWP.lean).
+
+For a ranged Tree Borrows read followed by a write, `miri_tree_range_wp`
+pulls both continuations through the prepared segments in order. A read
+failure skips the write. A write failure passes its own trace and the
+partially updated tree to the error postcondition. With errors rejected,
+`miri_tree_range_wp snapshots` exposes each initial segment's permission
+checks and retained result. A lookup in the resulting map uses its last
+matching cursor, with the untouched location as the fallback.
+For a safety goal with success `True` and error `False`, use
+`miri_tree_range_wp safety` on the WP or the nested precondition produced by
+`vcgen`. It obtains each retained read location from its contract. Use
+`miri_tree_range_wp pointwise` to supply local read results explicitly.
+Write preparation sees the pointwise read
+results, including any split or merge at the new byte boundaries. For a
+full, uniform, single-root range, the normal-access theorem reduces safety
+to the initial per-node permission and protector checks under its stated
+topology and cache hypotheses. See the [pointwise range examples](MiriTests/Verification/TreeRangePointwiseWP.lean),
+[normal read/write examples](MiriTests/Verification/TreeVisitWP.lean)
+and [partial-failure examples](MiriTests/Verification/TreeRangeOutcomeWP.lean).
+
+For a well-formed location map and in-bounds read and write ranges, the
+`miri_tree_range_wp bytes` separates read-only, write-only and intersecting bytes. Only an
+intersecting byte needs the read's permission and cache changes when the
+write is checked. Wildcard access exposes each root's exposure counters,
+permissions, protectors and child checks. See the
+[byte-range examples](MiriTests/Verification/TreeOverlapWP.lean) and
+[wildcard forest examples](MiriTests/Verification/TreeWildcardPairWP.lean).
+
+Use `miri_copy_tree_wp` on the selected copy statement. Its concrete rule
+checks the source access before loading the destination
+for writing. A same-allocation destination can therefore observe the borrow
+state committed by the read. Use `miri_copy_bytes_wp` to inspect the
+physical copy stages, including initialization and provenance updates.
+The checked operands from the exported
+`duplicate_prefix` helper are used in the
+[copy statement proof](examples/duplicate_prefix_vcgen/CopyStatementTreeVC.lean).
+
+For a canonical call, use `miri_call_dispatch_wp` on the call precondition
+produced by `vcgen`. It opens one dispatch iteration and its ABI, pointer,
+virtual, intrinsic or foreign-call checks. Apply it again when a fallback
+produces another request. The [dispatch examples](MiriTests/Verification/CallDispatchWP.lean)
+show how to reduce the error branch to a predicate on the retained state.
+
+Build the Goto/Nop, Call/Return, dispatch and protected-alias proof fixtures.
 
 ```bash
 flock --no-fork /tmp/lean-miri-lake-build.lock lake build \
   MiriTests.Verification.StepWP MiriTests.Verification.CallReturnWP \
-  MiriTests.Verification.TreeBorrowsWP
+  MiriTests.Verification.CallDispatchWP MiriTests.Verification.TreeBorrowsWP
 ```
 
 ### Generate a whole-body verification condition
@@ -138,11 +190,58 @@ tools/body-vc safety examples/body_vcgen/control.rs \
 The command saves the Lean condition and the paired MIR JSON. It reports
 generation time and the time to check that the generated file is well typed.
 Rust source exports use the pinned MIR-enabled sysroot and `-Cpanic=abort`.
-The emitted `safetySpec` characterizes the VC at a prepared entry. It holds
-exactly when the frame matches the imported entry and every permitted finite
-error in the call scope is classified as non-UB. To see a proof that supplies
-these facts for a concrete Rust function and its admitted caller domain, follow
-the [empty_function example](examples/empty_function/README.md#generated-body-verification-condition).
+The generated file specializes each known transfer against its imported MIR
+instruction using exact WP rewrites. In Lean, use `#print` on a declaration
+such as `GeneratedBodySafety.transfer_0_bb0_0` to inspect its `pre` field.
+It takes the driver choice, success and error continuations, and machine
+state. Locations with identical instructions share a transfer. Branches,
+loops and calls use the shared whole-body condition for their successors.
+States outside the imported graph use the interpreter's canonical rule.
+
+`safetySpec` characterizes the VC at a prepared entry. It holds exactly
+when the frame matches the imported entry and every permitted finite error
+in the call scope is classified as non-UB. The exact rewrite `requiredAt_eq`
+connects the generated condition to proofs over the canonical VC. To see a
+proof that supplies these facts for a concrete Rust function and its admitted
+caller domain, follow the [empty_function example](examples/empty_function/README.md#generated-body-verification-condition).
+
+For a direct Lean `vcgen` proof, use this operation in a `Triple` with your
+precondition and success and error postconditions.
+
+```lean
+GeneratedBodySafety.run config limits program allowed
+```
+
+Enable `set_option experimental.vcgen true`. After `vcgen`, unfold
+`GeneratedBodySafety.entryPre` to expose the compiler-selected entry window.
+Each `window_<body>_bb<block>_<slot>` composes the transfers through the rest
+of that basic block. The continuation sees the actual successor state,
+including the state used to check the next permitted choice. Use
+`GeneratedBodyVC.windowPre_at` when you have a proof of the next selected row.
+If the successor leaves the window, the VC uses the shared whole-body
+continuation. A matched call terminator opens the actual callee scope and
+resumes the caller from the state left by the callee. Use
+`GeneratedBodyVC.windowPre_call` to select that summary at a known row,
+or `GeneratedBodyVC.sharedPre_iff_call` at a live call boundary in the
+shared continuation.
+
+After selecting a window row, unfold its emitted transfer to expose its
+effects. `miri_copy_initial_wp` applies the checked copy and successor-load
+rewrites when the necessary range and provenance facts are in scope.
+The `miri_initial_wp` simp set also exposes typed pointer formation and
+the associated Tree Borrows checks.
+
+Use `miri_generated_program` for the single-row view of
+`GeneratedBodyVC.run`. Use `miri_generated_window` with an emitted window name
+to substitute that window into a generated control precondition.
+
+To check an observation partway through a block, take the relevant prefix of
+the emitted window and use `GeneratedBodyVC.windowPrefixPre` with a
+postcondition on the state at its last step. This condition checks each
+selected instruction and passes an error and its retained state directly to
+the error postcondition. The copy and pointer examples connect this exact
+prefix condition to executable checks on exported MIR.
+[Copy and pointer examples](examples/pointer_observation_vcgen)
 
 Export the Rust function and import the execution input with
 `Miri.Frontend.ImportMIR`. In a Lean client, import

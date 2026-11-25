@@ -220,7 +220,8 @@ structure AllocationConfig (K User : Type) where
   replace the tag or derive an absolute address from allocation identity. -/
   adjustRootAddress : AllocId → BorTag → M K User (Pointer Provenance)
 
-private def allocationMachine (action : MachineM K User A) : M K User A := fun state =>
+/-- Lift a machine-only allocation effect, retaining its result state on either exit. -/
+def allocationMachine (action : MachineM K User A) : M K User A := fun state =>
   match action state.machine with
   | .ok value machine => .ok value {state with machine}
   | .error error machine => .error error {state with machine}

@@ -73,6 +73,37 @@ def addrFromAllocId (h : Hooks K U) (id : AllocId)
     finish h (cached.cacheAddress id address)
     return address
 
+/-- Run address assignment for an uncached live allocation in managed mode.
+The pure outcome is committed before it is classified. The premise on the
+result rules out the reuse synchronization path. -/
+theorem addrFromAllocId_managedFresh
+    (h : Hooks K U) (id : AllocId) (slack : Fin 16) (before : State K U)
+    (info : AllocationInfo)
+    (uncached : before.machine.user.addresses.baseAddr.find? (fun entry => entry.allocId == id) = none)
+    (metadata : before.machine.memory.getAllocInfo id = .ok info)
+    (live : before.machine.memory.isAllocLive id = true)
+    (kind : info.kind = .liveData)
+    (managed : before.machine.user.addresses.addressMode = .managed)
+    (result : AddressStateResult UInt64)
+    (pureResult : before.machine.user.addresses.addrFromAllocId id
+       (some ⟨.liveData, true, info.size, info.align, some .stack, UInt32.ofNat before.machine.threads.activeThread.toNat⟩)
+       ⟨false, false, 0, slack⟩ = ⟨result.state, result.outcome.map AddressAssignment.ready⟩) :
+    let after := {before with machine := {before.machine with user := {before.machine.user with addresses := result.state}}}
+    addrFromAllocId h id (some .stack) ⟨false, false, 0, slack⟩ before =
+      match result.outcome with
+      | .ok address => .ok address after
+      | .error error => .error (h.classifyAddressError error) after := by
+  have notDead : (AllocationKind.liveData == .dead) = false := rfl
+  have notTypeId : (AllocationKind.liveData == .typeId) = false := rfl
+  have isManaged : (AddressSpaceMode.managed != .managed) = false := rfl
+  unfold addrFromAllocId
+  simp only [addresses, finish, setAddresses, get, getThe, MonadStateOf.get, EStateM.get,
+    bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure,
+    modify, modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet,
+    uncached, metadata, live, kind, managed, notDead, notTypeId, isManaged, Bool.false_eq_true,
+    Bool.false_and, ↓reduceIte, pureResult]
+  cases result.outcome <;> rfl
+
 /-- Commit the selected allocation's Tree Borrows exposure and classify its
 outcome after the memory update. -/
 def exposeTree [DecidableEq K] (id : AllocId)

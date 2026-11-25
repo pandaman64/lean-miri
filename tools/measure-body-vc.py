@@ -90,6 +90,8 @@ def main():
     artifacts = [
         source, cli, ROOT / "tools/GenerateBodyVC.lean",
         *(path for path in (proof, replay, execution_input) if path is not None),
+        library / "Miri/Frontend/ImportBodyVC.olean",
+        library / "Miri/Verification/GeneratedBodyVC.olean",
         library / "Miri/Verification/BodyVCGen.olean",
         library / "Miri/Verification/WholeBodyWP.olean", library / "Miri/Verification/BodyCFG.olean",
     ]

@@ -147,7 +147,7 @@ example (config : Config) (limits : ExecutionMachine.Limits)
   simp only [miri_rvalue, current, position, selected, noStatement, terminator,
     CanonicalStepWP.terminatorPre, wp, WP.wpTrans, prepared]
   simp only [CanonicalStepWP.selectedTerminatorPre, kind, wp, WP.wpTrans,
-    Call.evalCallTerminator, Call.evalCalleeAndArgs, bind, Bind.bind, EStateM.bind,
+    CallWP.callPre_eq_wp, Call.evalCallTerminator, Call.evalCalleeAndArgs, bind, Bind.bind, EStateM.bind,
     indexedOk, frameOk, projectedOk, calleeError]
   exact acceptError
 
@@ -237,7 +237,7 @@ example (config : Config) (limits : ExecutionMachine.Limits)
   simp only [miri_rvalue, current, position, selected, noStatement, terminator,
     CanonicalStepWP.terminatorPre, wp, WP.wpTrans, prepared]
   simp only [CanonicalStepWP.selectedTerminatorPre, kind, wp, WP.wpTrans,
-    Call.evalTailCallTerminator, Call.evalCalleeAndArgs, bind, Bind.bind, EStateM.bind,
+    CallWP.tailCallPre_eq_wp, Call.evalTailCallTerminator, Call.evalCalleeAndArgs, bind, Bind.bind, EStateM.bind,
     indexedOk, calleeError]
   exact acceptError
 

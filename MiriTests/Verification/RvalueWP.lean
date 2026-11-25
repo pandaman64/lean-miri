@@ -75,6 +75,108 @@ theorem indirect_copy (config : Config) (limits : ExecutionMachine.Limits)
     sourceMemory]
   rw [RvalueWP.actionPre_ok destMemory, RvalueWP.canonical_memoryCopy, RvalueWP.actionPre_eq_wp]
 
+/-- The canonical driver passes the byte 2 to boolean decoding after the read.
+The UB continuation receives the resulting state, before any destination write. -/
+theorem invalid_boolean_unary (config : Config) (limits : ExecutionMachine.Limits)
+    (place : Place) (operand : Operand) (before projected reading readState classified : State)
+    (frame : Frame) (loc : Location) (block : BasicBlock) (stmt : Statement)
+    (destination : RuntimePlace Provenance) (source : OpTy Provenance)
+    (post : Unit → State → Prop) (onError : StepError → State → Prop)
+    (current : before.stack.currentFrame? = some frame)
+    (position : frame.location = .mir loc)
+    (selected : frame.body.basicBlocks[loc.block]? = some block)
+    (statement : block.statements[loc.statementIndex]? = some stmt)
+    (kind : stmt.kind = .Assign place (.UnaryOp .Not operand))
+    (placeOk : PlaceDynamic.evalPlace (ExecutionMachine.projectionHooks
+      (ExecutionMachine.withValidation (ExecutionMachine.withValidation config limits) limits))
+      () place true before = .ok destination projected)
+    (operandOk : OperandMachine.evalOperand (ExecutionMachine.operandHooks
+      (ExecutionMachine.withValidation (ExecutionMachine.withValidation config limits) limits))
+      () operand (some destination.layout) projected = .ok source reading)
+    (readOk : PlaceMachine.readImmediate config.access source reading =
+      .ok ⟨.scalar (.fromScalarInt (ScalarInt.ofUInt8 2)), source.layout⟩ readState)
+    (classifiedAsBool : config.scalar.classify () source.layout.ty readState =
+      .ok .boolean classified)
+    (acceptError : onError (ScalarOps.scalarIntError (.invalidBool 2)) classified) :
+    Triple (StepWP.Program.step (hooks := ExecutionMachine.stepHooks config limits)
+        (allowed := fun _ _ => True) true)
+      (· = before) post onError := by
+  have classifiedOk : (ExecutionMachine.scalarHooks (ExecutionMachine.withValidation
+      (ExecutionMachine.withValidation config limits) limits)).classify () source.layout.ty readState =
+        .ok .boolean classified := classifiedAsBool
+  have invalid : (Scalar.fromScalarInt (Prov := Provenance) (ScalarInt.ofUInt8 2)).toBool =
+      .error (.scalarInt (.invalidBool 2)) := by cbv
+  vcgen
+  rename_i state equal
+  subst state
+  refine ⟨⟨(), trivial⟩, ?_⟩
+  rintro ⟨⟩ _
+  simp only [miri_rvalue, current, position, selected, statement, kind]
+  rw [RvalueWP.actionPre_ok placeOk]
+  simp only [UnOp.homogeneous, ↓reduceIte]
+  rw [RvalueWP.actionPre_ok operandOk]
+  change RvalueWP.actionPre (PlaceMachine.readImmediate config.access source) _ onError reading
+  rw [RvalueWP.actionPre_ok readOk, RvalueWP.actionPre_ok classifiedOk]
+  simpa only [RvalueWP.scalarCheckPre, Immediate.toScalar, Except.mapError, invalid,
+    ScalarOps.scalarError] using acceptError
+
+private def byteImm (layout : LocalLayout) (value : UInt8) : RvalueImmTy Provenance :=
+  ⟨.scalar (.fromScalarInt (ScalarInt.ofUInt8 value)), layout⟩
+
+private def byteInt (value : UInt8) : IntegerValue :=
+  ⟨ScalarInt.ofUInt8 value, ⟨Size.ofBytes 1, .u8⟩⟩
+
+/-- The canonical binary hook exposes the unchecked overflow and division
+errors directly. The with-overflow operation runs its layout query and returns
+the wrapped byte together with the overflow bit. -/
+theorem binary_byte_arithmetic (config : Config) (limits : ExecutionMachine.Limits)
+    (layout overflowLayout : LocalLayout) (before leftState rightState done : State)
+    (post : RvalueImmTy Provenance → State → Prop) (onError : StepError → State → Prop)
+    (width : layout.layout.size = Size.ofBytes 1)
+    (leftClass : config.scalar.classify () layout.ty before = .ok (.integer .u8) leftState)
+    (rightClass : config.scalar.classify () layout.ty leftState = .ok (.integer .u8) rightState)
+    (overflowOk : config.scalar.overflowLayout () layout rightState = .ok overflowLayout done) :
+    RvalueWP.actionPre ((ExecutionMachine.rvalueHooks config limits).binaryOp ()
+      .Div (byteImm layout 255) (byteImm layout 0)) post onError before =
+        onError (ScalarOps.integerError (.undefinedBehavior .divisionByZero)) rightState ∧
+    RvalueWP.actionPre ((ExecutionMachine.rvalueHooks config limits).binaryOp ()
+      .AddUnchecked (byteImm layout 255) (byteImm layout 1)) post onError before =
+        onError (ScalarOps.integerError (.undefinedBehavior (.arithmeticOverflow .AddUnchecked)))
+          rightState ∧
+    RvalueWP.actionPre ((ExecutionMachine.rvalueHooks config limits).binaryOp ()
+      .AddWithOverflow (byteImm layout 255) (byteImm layout 1)) post onError before =
+        post ⟨.scalarPair (.fromScalarInt (ScalarInt.ofUInt8 0)) (.fromBool true), overflowLayout⟩ done := by
+  let hooks := ExecutionMachine.scalarHooks (ExecutionMachine.withValidation config limits)
+  have leftOk : hooks.classify () (byteImm layout 255).layout.ty before =
+      .ok (.integer .u8) leftState := leftClass
+  have rightOk (value : UInt8) : hooks.classify () (byteImm layout value).layout.ty leftState =
+      .ok (.integer .u8) rightState := rightClass
+  have layoutOk : hooks.overflowLayout () layout rightState = .ok overflowLayout done := overflowOk
+  have decoded (value : UInt8) :
+      RvalueWP.integerOperand (byteImm layout value) .u8 = .ok (byteInt value) := by
+    simp only [RvalueWP.integerOperand, byteImm, byteInt, width] <;> rfl
+  have pullback (op : BinOp) (value : UInt8) :
+      RvalueWP.actionPre ((ExecutionMachine.rvalueHooks config limits).binaryOp ()
+        op (byteImm layout 255) (byteImm layout value)) post onError before =
+        RvalueWP.scalarCheckPre
+          ((IntegerOps.binary op (byteInt 255) (byteInt value)).mapError ScalarOps.integerError)
+          (RvalueWP.integerResultPre hooks () layout post onError) onError rightState := by
+    rw [EffectSpecs.canonical_rvalue_binary,
+      RvalueWP.actionPre_binary_integer hooks () op _ _ post onError before leftState .u8 leftOk,
+      RvalueWP.actionPre_ok (rightOk value)]
+    have same : ((byteImm layout 255).layout.ty != (byteImm layout value).layout.ty) = false := by
+      exact bne_self_eq_false _
+    simp only [decoded, RvalueWP.scalarCheckPre, same, Bool.and_false,
+      Bool.false_eq_true, ↓reduceIte] <;> rfl
+  have division : IntegerOps.binary .Div (byteInt 255) (byteInt 0) =
+      .error (.undefinedBehavior .divisionByZero) := by cbv
+  have unchecked : IntegerOps.binary .AddUnchecked (byteInt 255) (byteInt 1) =
+      .error (.undefinedBehavior (.arithmeticOverflow .AddUnchecked)) := by cbv
+  have pair : IntegerOps.binary .AddWithOverflow (byteInt 255) (byteInt 1) =
+      .ok (.withOverflow (ScalarInt.ofUInt8 0) true) := by cbv
+  simp only [pullback, division, unchecked, pair, Except.mapError, RvalueWP.scalarCheckPre,
+    RvalueWP.integerResultPre, RvalueWP.actionPre_ok layoutOk] <;> repeat' constructor
+
 section AliasedRead
 
 attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail

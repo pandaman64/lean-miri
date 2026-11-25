@@ -57,6 +57,12 @@ private def invalid (message : String) : CallM S A := throw (.invalidProgram mes
 private def scalarError (value : Except ImmediateError A) : CallM S A :=
   match value with | .ok value => pure value | .error error => invalid (reprStr error)
 
+theorem scalarError_eq (value : Except ImmediateError A) :
+    (scalarError value : CallM S A) =
+      match value with
+      | .ok value => pure value
+      | .error error => throw (.invalidProgram (reprStr error)) := rfl
+
 /-- place.rs imm_ptr_to_mplace: type/deref/layout queries precede scalar
 extraction; this caches misalignment without checking pointer dereferenceability
 or dynamic size. An unaligned raw receiver can still resolve a virtual method. -/

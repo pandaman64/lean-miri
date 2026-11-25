@@ -100,10 +100,10 @@ theorem initRuntimeGuard
           match cont with
           | .stop _ => cont
           | .goto target _ => .goto target .Unreachable) := by
-  unfold Call.initStackFrame setupNoArguments
+  unfold Call.initStackFrame Call.initFrameArguments Call.initFrameArgumentsBody
+    Call.finishFrameInit setupNoArguments
   unfold_call_helper "require"
-  unfold_call_helper "at?"
-  unfold_call_helper "setSpan"
+  unfold Call.at? Call.setSpan
   simp [requires, calleeABI, feature, closure, nonvariadic, convention,
     requireGuard, noABIArguments, arity, bind_assoc]
   congr 1

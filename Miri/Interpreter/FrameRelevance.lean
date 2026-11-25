@@ -49,6 +49,73 @@ def afterStackPush (debugAssertions : Bool) : M K User Unit := do
       throw (.invalidProgram "debug assertion: top user relevant frame")
     setCache (some index)
 
+/-- State form of the post-push cache hook, including its malformed-state checks. -/
+def afterPushResult (debugAssertions : Bool) (state : State K User) :
+    EStateM.Result StepError (State K User) Unit :=
+  match state.stack.currentFrame? with
+  | none => .error (.stack .emptyStack) state
+  | some frame =>
+    match state.machine.threads.activeThread? with
+    | none => .error (.invalidProgram "active relevance thread missing") state
+    | some thread =>
+      let current : Option UInt8 := match top state.stack thread.topUserRelevantFrame with
+        | none => some 0
+        | some index => (state.stack.frames[index]?).map
+            (fun (old : Frame Provenance LocalLayout FrameExtra) => old.extra.userRelevance)
+      match current with
+      | none => .error (.invalidProgram "user relevance cache index out of bounds") state
+      | some relevance =>
+        if frame.extra.userRelevance ≥ relevance then
+          let index := state.stack.frames.size - 1
+          if debugAssertions && computeTop state.stack 0 != some index then
+            .error (.invalidProgram "debug assertion: top user relevant frame") state
+          else
+            .ok () {state with machine := {state.machine with threads := {
+              state.machine.threads with threads := state.machine.threads.threads.mapIdx fun i t =>
+                if i == state.machine.threads.activeThread.toNat then
+                  {t with topUserRelevantFrame := some index} else t}}}
+        else .ok () state
+
+set_option maxHeartbeats 300000 in
+theorem afterPushResult_eq (debugAssertions : Bool) (state : State K User) :
+    afterPushResult debugAssertions state = afterStackPush debugAssertions state := by
+  have runGet : (get : M K User (State K User)) state = .ok state state := rfl
+  cases current : state.stack.currentFrame? with
+  | none =>
+    simp only [afterPushResult, afterStackPush, currentFrame, bind, EStateM.bind, runGet, current]
+    rfl
+  | some frame =>
+    cases thread : state.machine.threads.activeThread? with
+    | none =>
+      simp only [afterPushResult, afterStackPush, currentFrame, active, bind, EStateM.bind, runGet,
+        current, thread, pure, EStateM.pure]
+      rfl
+    | some entry =>
+      have cache (index : Nat) : setCache (K := K) (User := User) (some index) state =
+          .ok () {state with machine := {state.machine with threads := {
+            state.machine.threads with threads := state.machine.threads.threads.mapIdx fun i t =>
+              if i == state.machine.threads.activeThread.toNat then
+                {t with topUserRelevantFrame := some index} else t}}} := by
+        simp only [setCache, active, bind, EStateM.bind, runGet, thread, pure, EStateM.pure,
+          modify, modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet]
+      cases cached : top state.stack entry.topUserRelevantFrame with
+      | none =>
+        simp only [afterPushResult, afterStackPush, currentFrame, active, bind, EStateM.bind, runGet,
+          current, thread, cached, pure, EStateM.pure]
+        split <;> try rfl
+        split <;> first | rfl | rw [cache]
+      | some index =>
+        cases selected : state.stack.frames[index]? with
+        | none =>
+          simp only [afterPushResult, afterStackPush, currentFrame, active, bind, EStateM.bind, runGet,
+            current, thread, cached, selected, Option.map, pure, EStateM.pure]
+          rfl
+        | some old =>
+          simp only [afterPushResult, afterStackPush, currentFrame, active, bind, EStateM.bind, runGet,
+            current, thread, cached, selected, Option.map, pure, EStateM.pure]
+          split <;> try rfl
+          split <;> first | rfl | rw [cache]
+
 /-- Invoke after successful TB on_stack_pop, before removing the frame. -/
 def beforeStackPop : M K User Unit := do
   let thread ← active

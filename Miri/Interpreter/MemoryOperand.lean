@@ -515,6 +515,20 @@ def writeImmediateAfterAccess [DecidableEq MachineKind] [DecidableEq Prov] [Poin
   | .uninit =>
       return writeUninitFull access.memory access.hooks reference runtime.pointerSize
 
+/-- The scalar case consumes the completed place access and writes one scalar. -/
+theorem writeImmediateAfterAccess_scalar [DecidableEq MachineKind] [DecidableEq Prov]
+    [PointerProvenance Prov] (scalar : Scalar Prov) (layout : MemoryOperandLayout)
+    (runtime : RuntimeTargetDataLayout) (willLaterValidate : MemoryOperandLayout → Bool)
+    (access : MemoryOperandResult Prov Extra MachineKind HookState (Option (AllocationAccessRef Prov Extra))) :
+    writeImmediateAfterAccess (.scalar scalar) layout runtime willLaterValidate access =
+      match access.outcome with
+      | .error error => ⟨access.memory, access.hooks, access.touched, .error error⟩
+      | .ok none => ⟨access.memory, access.hooks, access.touched, .ok ()⟩
+      | .ok (some reference) => writeScalarAt access.memory access.hooks reference runtime Size.ZERO scalar := by
+  cases ran : access.outcome with
+  | error error => simp only [writeImmediateAfterAccess, ran]; rfl
+  | ok reference => cases reference <;> (simp only [writeImmediateAfterAccess, ran]; rfl)
+
 /-! Source `write_immediate_to_mplace_no_validate`. The ABI assertion precedes
 pointer access; the scalar-pair offset assertion follows mutable place access;
 padding is cleared before either component write; and each allocation update
@@ -904,6 +918,72 @@ def scalarReadAfterAccess [DecidableEq P] [PointerProvenance P]
       (readScalarAt reference runtime Size.ZERO layout.size (scalarReadProvenance primitive)).map
         (fun scalar => ⟨.scalar scalar, layout⟩)
   ⟨access.memory, access.hooks, access.touched, result⟩
+
+/-- A selected scalar load uses the actual access snapshot. Both a value
+and an allocation error retain its memory, hook state, and touched allocation. -/
+theorem scalarReadAfterAccess_of_read [DecidableEq P] [PointerProvenance P]
+    (layout : MemoryOperandLayout) (primitive : BackendPrimitive) (runtime : RuntimeTargetDataLayout)
+    (access : MemoryOperandResult P E K H (Option (AllocationAccessRef P E)))
+    (reference : AllocationAccessRef P E) (range : AllocRange) (result : Except AllocError (Scalar P))
+    (selected : access.outcome = .ok (some reference))
+    (component : reference.range.subrange (allocRange Size.ZERO layout.size) = .ok range)
+    (load : reference.allocation.readScalar runtime.base range
+      (match primitive with | .Pointer _ => true | _ => false) = result) :
+    scalarReadAfterAccess layout primitive runtime access =
+      ⟨access.memory, access.hooks, access.touched,
+        ((result.mapError MemoryOperandError.allocation).map fun value => ⟨.scalar value, layout⟩)⟩ := by
+  unfold scalarReadAfterAccess readScalarAt componentRange
+  simp only [selected, component, Except.mapError, bind, Except.bind]
+  cases primitive <;> simp only [scalarReadProvenance] <;> rw [load]
+
+/-- A sized, width-checked scalar ABI reads the selected component directly.
+Keep the access result's memory and touched allocation on both outcomes. -/
+theorem readImmediateAfterAccess_scalar [DecidableEq P] [PointerProvenance P]
+    (layout : MemoryOperandLayout) (runtime : RuntimeTargetDataLayout)
+    (access : MemoryOperandResult P E K H (Option (AllocationAccessRef P E)))
+    (primitive : BackendPrimitive) (validRange : WrappingRange)
+    (backend : layout.backendRepr = .Scalar (.Initialized (value := primitive) (validRange := validRange)))
+    (width : primitive.size runtime = .ok layout.size)
+    (reference : AllocationAccessRef P E) (range : AllocRange)
+    (selected : access.outcome = .ok (some reference))
+    (component : reference.range.subrange (allocRange Size.ZERO layout.size) = .ok range) :
+    readImmediateAfterAccess layout runtime access =
+      ⟨access.memory, access.hooks, access.touched,
+        (((reference.allocation.readScalar runtime.base range
+          (match primitive with | .Pointer _ => true | _ => false)).mapError
+          MemoryOperandError.allocation).map fun scalar => some ⟨.scalar scalar, layout⟩)⟩ := by
+  simp only [readImmediateAfterAccess, selected, readPlan, backend, BackendRepr.isUnsized,
+    Bool.false_eq_true, ↓reduceIte, width, bne_self_eq_false, readScalarAt, componentRange,
+    component, Id.run, bind, Bind.bind, pure, Pure.pure, Except.mapError, Except.bind, Except.pure]
+  cases primitive <;> simp only [scalarReadProvenance] <;>
+    split <;> (rename_i _ _ found; rw [found]; rfl)
+
+/-- A selected scalar store commits the allocation left by its mutation,
+including a partial update on error. The touched allocation also reflects
+that committed snapshot. -/
+theorem scalarWriteAfterAccess_of_mutation [DecidableEq P] [PointerProvenance P]
+    (layout : MemoryOperandLayout) (runtime : RuntimeTargetDataLayout)
+    (later : MemoryOperandLayout → Bool)
+    (access : MemoryOperandResult P E K H (Option (AllocationAccessRef P E)))
+    (reference : AllocationAccessRef P E) (range : AllocRange) (value : Scalar P)
+    (updated : Allocation P E) (memory : MemoryState P E K) (mutation : Except AllocError Unit)
+    (selected : access.outcome = .ok (some reference))
+    (component : reference.range.subrange (allocRange Size.ZERO value.size) = .ok range)
+    (store : Allocation.writeScalar runtime.base range value reference.allocation =
+      match mutation with | .ok () => .ok () updated | .error error => .error error updated)
+    (committed : access.memory.setLiveAllocation reference.allocId updated = .ok memory) :
+    writeImmediateAfterAccess (.scalar value) layout runtime later access =
+      ⟨memory, access.hooks, some {reference with allocation := updated},
+        mutation.mapError MemoryOperandError.allocation⟩ := by
+  unfold writeImmediateAfterAccess writeScalarAt writeRange
+  simp only [selected, component, Except.mapError, bind, Bind.bind, pure, Pure.pure, Id.run]
+  erw [store]
+  unfold commitAllocationMutation
+  cases mutation with
+  | error error => simp [committed, bind, Bind.bind, pure, Pure.pure, Id.run]
+  | ok payload =>
+    cases payload
+    simp [committed, bind, Bind.bind, pure, Pure.pure, Id.run]
 
 theorem scalarRead_eq_afterAccess [DecidableEq P] [PointerProvenance P]
     (memory : MemoryState P E K) (hooks : H) (place : MemoryOperandPlace P)
