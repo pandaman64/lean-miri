@@ -515,6 +515,20 @@ def writeImmediateAfterAccess [DecidableEq MachineKind] [DecidableEq Prov] [Poin
   | .uninit =>
       return writeUninitFull access.memory access.hooks reference runtime.pointerSize
 
+/-- The scalar case consumes the completed place access and writes one scalar. -/
+theorem writeImmediateAfterAccess_scalar [DecidableEq MachineKind] [DecidableEq Prov]
+    [PointerProvenance Prov] (scalar : Scalar Prov) (layout : MemoryOperandLayout)
+    (runtime : RuntimeTargetDataLayout) (willLaterValidate : MemoryOperandLayout → Bool)
+    (access : MemoryOperandResult Prov Extra MachineKind HookState (Option (AllocationAccessRef Prov Extra))) :
+    writeImmediateAfterAccess (.scalar scalar) layout runtime willLaterValidate access =
+      match access.outcome with
+      | .error error => ⟨access.memory, access.hooks, access.touched, .error error⟩
+      | .ok none => ⟨access.memory, access.hooks, access.touched, .ok ()⟩
+      | .ok (some reference) => writeScalarAt access.memory access.hooks reference runtime Size.ZERO scalar := by
+  cases ran : access.outcome with
+  | error error => simp only [writeImmediateAfterAccess, ran]; rfl
+  | ok reference => cases reference <;> (simp only [writeImmediateAfterAccess, ran]; rfl)
+
 /-! Source `write_immediate_to_mplace_no_validate`. The ABI assertion precedes
 pointer access; the scalar-pair offset assertion follows mutable place access;
 padding is cleared before either component write; and each allocation update

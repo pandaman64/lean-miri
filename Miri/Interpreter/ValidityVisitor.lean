@@ -506,6 +506,25 @@ theorem visit_integer [PointerProvenance P] [DecidableEq P]
       ranges, read, clear, reset, Immediate.toScalar, Except.mapError,
       bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
 
+/-- Integer validation in a sized memory place marks its byte range after
+reading the value and clearing provenance. -/
+theorem visit_integer_memory [PointerProvenance P] [DecidableEq P]
+    (h : Hooks P S C E F A Pad) (c : C) (fuel : Nat) (session : Session P)
+    (place : RuntimePlace P) (state : S) (value : Scalar P) (layout : LocalLayout)
+    (memory : MemPlace P) (ranges updated : DataRangeSet)
+    (classify : h.classify c place.layout.ty state = .ok .integer state)
+    (read : h.readImmediate c place .integer state = .ok ⟨.scalar value, layout⟩ state)
+    (clear : h.clearProvenance c place state = .ok () state)
+    (operand : h.toOp c place state = .ok ⟨.indirect memory, place.layout⟩ state)
+    (reset : session.flags.resetProvenanceAndPadding = true)
+    (tracked : session.dataBytes = some ranges)
+    (sized : place.layout.layout.isSized = true)
+    (marked : ranges.addRange memory.ptr.offset place.layout.layout.size = .ok updated) :
+    visit h c (fuel + 1) session place state = .ok {session with dataBytes := some updated} state := by
+  simp [visit, classify, primitive, scalarOf, liftResult, markPlace, markRange, dataOffset,
+    rangeResult, marked, operand, tracked, sized, read, clear, reset, Immediate.toScalar,
+    Except.mapError, bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+
 /-- A sized raw pointer with pointer provenance needs no metadata lookup.
 Its pointer scalar already carries provenance, so reset leaves it intact. -/
 theorem visit_raw_sized_pointer [PointerProvenance P] [DecidableEq P]
@@ -521,6 +540,17 @@ theorem visit_raw_sized_pointer [PointerProvenance P] [DecidableEq P]
     simp [visit, classify, primitive, resetPointer, scalarOf, liftResult, markPlace,
       ranges, read, backend, pointer, reset, Immediate.toScalar, Except.mapError,
       bind, Bind.bind, EStateM.bind, pure, Pure.pure, EStateM.pure]
+
+/-- A reference reaches the safe-pointer checks with the current session.
+Those checks retain their own retag, alignment, and error effects. -/
+theorem visit_reference [PointerProvenance P] [DecidableEq P]
+    (h : Hooks P S C E F A Pad) (c : C) (fuel : Nat)
+    (session : Session P) (place : RuntimePlace P) (before : S) (isMutable : Bool)
+    (kind : h.classify c place.layout.ty before = .ok (.reference isMutable) before) :
+    visit h c (fuel + 1) session place before =
+      checkSafe h c session place place.layout.ty (.reference isMutable) before := by
+  simp only [visit, bind, Bind.bind, EStateM.bind, kind, primitive, Pure.pure, EStateM.pure]
+  cases checkSafe h c session place place.layout.ty (.reference isMutable) before <;> rfl
 
 private def resetPadding (h : Hooks P S C E F A Pad) (c : C) (session : Session P)
     (place : RuntimePlace P) : M S Unit := do
