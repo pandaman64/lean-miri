@@ -1,4 +1,5 @@
 import CallAbiLiteral
+import CalleeReturn
 import Miri.Verification.PointerFormationWP
 
 /-! Verify the exported call's frame creation and argument protection. -/
@@ -9,7 +10,7 @@ open PointerObservation.Fixture
 
 set_option maxRecDepth 65536
 set_option maxHeartbeats 2500000
-set_option cbv.maxSteps 160000
+set_option cbv.maxSteps 220000
 attribute [local cbv_eval] Lean.Loop.forIn_eq_of_monadTail Std.HashMap.getElem?_emptyWithCapacity Std.HashMap.getElem?_empty
 attribute [local cbv_opaque] Std.HashMap.emptyWithCapacity Std.HashMap.insert
 attribute [local cbv_opaque] CompilerInstanceAbi.abiOfInstance
@@ -45,6 +46,14 @@ local macro "check_call_reference" mutable:term : tactic => `(tactic|
       case alignment => cbv <;> rfl
       case tracking => rfl)
 
+/-- Frame initialization preserves the expected caller and memory state and
+establishes the callee argument's live protector. -/
+def matchesUpdateEntry (after : State) : Prop :=
+  argumentHasStrongProtector after = true ∧
+    match writeEntry with
+    | .ok (_, expected) => after = expected
+    | .error _ => False
+
 /-- The canonical frame initializer copies the argument into the callee
 and protects the resulting reference in the live callee frame. -/
 theorem initActualFrame :
@@ -64,7 +73,7 @@ theorem initActualFrame :
           RvalueWP.actionPre
             (TerminatorMachine.beforeTerminatorWithChoice checked.terminators (checked.preemptionChoice ()))
             (fun _ => CallWP.initStackFramePre hooks () 1 body abi args false destination
-              (.goto (some 1) .Unreachable) (fun after => argumentHasStrongProtector after = true)
+              (.goto (some 1) .Unreachable) matchesUpdateEntry
               (fun _ _ => False) (CallWP.canonicalRetagPullback checked limits ()))
             (fun _ _ => False) before
         | _, _ => False
@@ -77,7 +86,7 @@ theorem initActualFrame :
   conv => cbv
   check_call_reference true
   conv => cbv
-  trivial
+  all_goals trivial
 
 open Lean Elab Command in
 run_cmd liftTermElabM do
