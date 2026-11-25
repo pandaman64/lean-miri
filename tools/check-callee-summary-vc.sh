@@ -20,7 +20,8 @@ lean -j1 --root=examples -o "$out/lib/pointer_observation_vcgen/Fixture.olean" \
   examples/pointer_observation_vcgen/Fixture.lean
 lean -j1 --root=examples/callee_summary_vcgen -o "$out/CallEntry.olean" \
   examples/callee_summary_vcgen/CallEntry.lean
-lean -j1 --root=examples/callee_summary_vcgen -o "$out/CalleeBody.olean" +  examples/callee_summary_vcgen/CalleeBody.lean
+lean -j1 --root=examples/callee_summary_vcgen -o "$out/CalleeBody.olean" \
+  examples/callee_summary_vcgen/CalleeBody.lean
 lean -j1 examples/callee_summary_vcgen/CallerObservation.lean
 lean -j1 examples/callee_summary_vcgen/Verify.lean
 lean -j1 examples/callee_summary_vcgen/ProtectorCleanup.lean
