@@ -313,4 +313,5 @@ if __name__ == "__main__":
     try:
         main()
     except (ValueError, subprocess.CalledProcessError) as error:
-        raise SystemExit(str(error)) from error
+        details = f"\n{error.stdout.rstrip()}" if isinstance(error, subprocess.CalledProcessError) and error.stdout else ""
+        raise SystemExit(f"{error}{details}") from error
