@@ -605,12 +605,14 @@ structure InterpretArgs where
   source : String
   output : Option String
   crateName : Option String
+  roots : Array String
   seed : Option String
   profile : Bool
+  noRun : Bool
   rustcArgs : Array String
 
 def interpretUsage : String :=
-  "usage: lake run interpret -- SOURCE.rs [--output FILE] [--crate-name NAME] [--seed U64] [--profile] [-- RUSTC-ARG...]"
+  "usage: lake run interpret -- SOURCE.rs [--output FILE] [--crate-name NAME] [--root DEF-PATH]... [--seed U64] [--profile] [--no-run] [-- RUSTC-ARG...]"
 
 inductive Cli where
   | help
@@ -621,8 +623,10 @@ structure PartialArgs where
   source : Option String := none
   output : Option String := none
   crateName : Option String := none
+  roots : Array String := #[]
   seed : Option String := none
   profile : Bool := false
+  noRun : Bool := false
   rustcArgs : Array String := #[]
 
 def checkSeed (raw : String) : Except String Unit := do
@@ -654,6 +658,10 @@ where
       | "--output" :: [] => .error s!"--output requires a path\n{interpretUsage}"
       | "--crate-name" :: name :: rest => go rest { acc with crateName := some name } false
       | "--crate-name" :: [] => .error s!"--crate-name requires a name\n{interpretUsage}"
+      | "--root" :: path :: rest =>
+        go rest { acc with roots := acc.roots.push path } false
+      | "--root" :: [] => .error s!"--root requires a def-path\n{interpretUsage}"
+      | "--no-run" :: rest => go rest { acc with noRun := true } false
       | "--seed" :: raw :: rest =>
         match checkSeed raw with
         | .ok () => go rest { acc with seed := some raw } false
@@ -673,8 +681,10 @@ where
         source
         output := acc.output
         crateName := acc.crateName
+        roots := acc.roots
         seed := acc.seed
         profile := acc.profile
+        noRun := acc.noRun
         rustcArgs := acc.rustcArgs
       }
 
@@ -691,11 +701,11 @@ where
   | _ => false
 
 #guard match parseInterpret ["--seed", "3", "a.rs", "--profile", "--output", "out.json",
-    "--crate-name", "demo", "--", "--edition", "2024"] with
+    "--crate-name", "demo", "--root", "add_one", "--no-run", "--", "--edition", "2024"] with
   | .ok args =>
-    args.source == "a.rs" && args.seed == some "3" && args.profile &&
+    args.source == "a.rs" && args.seed == some "3" && args.profile && args.noRun &&
       args.output == some "out.json" && args.crateName == some "demo" &&
-      args.rustcArgs == #["--edition", "2024"]
+      args.roots == #["add_one"] && args.rustcArgs == #["--edition", "2024"]
   | _ => false
 
 #guard match parseInterpret ["--seed", "18446744073709551615", "a.rs"] with
@@ -815,26 +825,34 @@ script interpret (args) do
       | none => root / "scratch" / s!"{stem}.json"
     if let some parent := output.parent then
       IO.FS.createDirAll parent
-    let runner ← runBuild do
+    let runner? ← runBuild do
       let exporterJob ← exporter.fetch
       let miriJob ← miriReference.fetch
-      let runnerJob ← native_runner.fetch
-      return runnerJob.zipWith (fun runner _ => runner) (exporterJob.mix miriJob)
+      if parsed.noRun then
+        return (exporterJob.mix miriJob).map fun _ => (none : Option FilePath)
+      else
+        let runnerJob ← native_runner.fetch
+        return runnerJob.zipWith (fun runner _ => some runner) (exporterJob.mix miriJob)
     let tools ← selectRustTools root
     let (_, exportEnv) ← sysrootEnv tools root #[
       ("MIRI_SYSROOT", some (miriSysroot root).toString),
       ("LEAN_MIRI_PREPARED_ALLOC_ID_WORLD", some "1")]
     IO.println s!"export {sourceAbs} -> {output}"
     (← IO.getStdout).flush
+    let mut exportArgs := #["--output", output.toString]
+    for defPath in parsed.roots do
+      exportArgs := exportArgs.push "--root" |>.push defPath
+    exportArgs := exportArgs ++ #[ "--", sourceAbs.toString, "--crate-name", crateName] ++ parsed.rustcArgs
     let exportCode ← spawnInherit {
       cmd := exporterBin root |>.toString
-      args := #["--output", output.toString, "--", sourceAbs.toString, "--crate-name", crateName]
-        ++ parsed.rustcArgs
+      args := exportArgs
       cwd := some root
       env := exportEnv
     }
     if exportCode != 0 then
       return exportCode
+    let some runner := runner?
+      | return 0
     let mut runnerArgs := #[output.toString]
     if let some seed := parsed.seed then
       runnerArgs := runnerArgs.push "--seed" |>.push seed
