@@ -106,7 +106,7 @@ lean_exe profile_allocation_storage where
 
 /-!
 Opt-in Rust pipeline. `lake build` does not build these targets.
-The shell scripts in `tools/` stay as they are; these targets do not call them.
+The shell scripts in `tools/` call the scripts below, which build these targets.
 -/
 namespace Pipeline
 
@@ -516,11 +516,11 @@ def buildMiriReference (root : FilePath) (stamp : FilePath) : JobM Unit := do
   cargoOffline #[
     "build", "--offline", "--locked",
     "--manifest-path", miriManifest.toString,
-    "--bin", "miri", "--no-default-features"]
+    "--bin", "miri"]
   cargoOffline #[
     "test", "--offline", "--locked",
     "--manifest-path", miriManifest.toString,
-    "--lib", "--no-default-features"]
+    "--lib"]
   cargoOffline #[
     "build", "--offline", "--locked",
     "--manifest-path", (root / "upstream" / "miri-source" / "cargo-miri" / "Cargo.toml").toString]
@@ -559,11 +559,11 @@ def buildMiriReference (root : FilePath) (stamp : FilePath) : JobM Unit := do
   writeStamp (lakeDir root / "miri-reference-build.json") <|
     "{\n" ++
     s!"  \"rustc_commit\": \"{pin}\",\n" ++
-    "  \"cargo_feature_args\": [\n    \"--no-default-features\"\n  ],\n" ++
+    "  \"cargo_feature_args\": [],\n" ++
     s!"  \"binary_sha256\": \"{digest}\"\n" ++
     "}\n"
   logInfo s!"Reference Miri sysroot: {sysrootOut}"
-  writeStamp stamp s!"{pin} --no-default-features\n"
+  writeStamp stamp s!"{pin} default-features\n"
 
 def buildExporter (root targetDir : FilePath) (featureArgs : Array String) : JobM Unit := do
   let tools ← selectRustTools root
@@ -774,7 +774,7 @@ target miriReference pkg : FilePath := do
   let cacheCheck ← inputOne (pkg.dir / "tools" / "require_cached_crates.py")
   let stamp := stampPath pkg.dir "miri-reference"
   buildFileAfterDep stamp ((toolchain.mix sources).mix (vendor.mix cacheCheck))
-    (extraDepTrace := pure (stringTrace "features" "--no-default-features"))
+    (extraDepTrace := pure (stringTrace "features" "default"))
     (text := true) fun _ =>
     buildMiriReference pkg.dir stamp
 
@@ -866,3 +866,70 @@ script interpret (args) do
       cwd := some root
       env := threadEnv
     }
+
+/-- Run the source audit, then build the pinned reference Miri and its sysroot. -/
+script «setup-miri-reference» (args) do
+  let args := match args with
+    | "--" :: rest => rest
+    | other => other
+  unless args.isEmpty do
+    IO.eprintln "Usage: tools/setup-miri-reference.sh"
+    return 2
+  let _ ← runBuild sourceAudit.fetch
+  let _ ← runBuild miriReference.fetch
+  return 0
+
+/-- Build the release exporter, or the separate `miri-reference` feature target. -/
+script «build-exporter» (args) do
+  let args := match args with
+    | "--" :: rest => rest
+    | other => other
+  match args with
+  | [] =>
+    let _ ← runBuild exporter.fetch
+    return 0
+  | ["--features", "miri-reference"] =>
+    let _ ← runBuild exporterMiriReference.fetch
+    return 0
+  | _ =>
+    IO.eprintln "usage: tools/build-exporter.sh [--features miri-reference]"
+    return 2
+
+/-- Export MIR with the already built release exporter. `tools/export-mir.sh` builds the `exporter` target first. -/
+script «export-mir» (args) do
+  let args := match args with
+    | "--" :: rest => rest
+    | other => other
+  let root := (← getWorkspace).root.dir
+  let bin := exporterBin root
+  unless ← System.FilePath.pathExists bin do
+    IO.eprintln s!"Optimized exporter is missing: {bin} (build it with tools/build-exporter.sh)"
+    return 1
+  let sysroot ← match ← IO.getEnv "MIRI_SYSROOT" with
+    | some value => pure (if value.isEmpty then (miriSysroot root).toString else value)
+    | none => pure (miriSysroot root).toString
+  let targetDir ← match ← IO.getEnv "CARGO_TARGET_DIR" with
+    | some value =>
+      if value.isEmpty then pure (root / "exporter" / "target").toString else pure value
+    | none => pure (root / "exporter" / "target").toString
+  let tools ← selectRustTools root
+  let (_, exportEnv) ← sysrootEnv tools root #[
+    ("MIRI_SYSROOT", some sysroot),
+    ("CARGO_TARGET_DIR", some targetDir)]
+  spawnInherit { cmd := bin.toString, args := args.toArray, env := exportEnv }
+
+/-- Run an exported JSON input on the already built native runner. -/
+script run (args) do
+  let args := match args with
+    | "--" :: rest => rest
+    | other => other
+  let some input := args.head?
+    | IO.eprintln "usage: lake run run INPUT.json [--seed U64] [--profile]"
+      return 64
+  let root := (← getWorkspace).root.dir
+  let child ← IO.Process.spawn {
+    cmd := (root / ".lake" / "build" / "bin" / "native_runner").toString
+    args := (input :: args.tail).toArray
+    cwd := some root
+  }
+  child.wait

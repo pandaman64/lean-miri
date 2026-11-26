@@ -62,8 +62,13 @@ The JSON is written to `scratch/example.json`. An executable's entry function
 is selected. Repeat `--root DEF-PATH` to select exact functions, and put rustc
 arguments after `--`. `lake build rustToolchain`, `lake build exporter`, and
 `lake build miriReference` build those pieces alone; a bare `lake build` does
-not. The shell scripts under `tools/` remain for the existing checks. Their
-setup is described in the
+not. `tools/setup-miri-reference.sh`, `tools/build-exporter.sh`,
+`tools/export-mir.sh`, and `tools/run.sh` call the Lake scripts of the same
+names through `lake` on `PATH`. `build-exporter.sh --features miri-reference`
+builds the separate `exporterMiriReference` target under
+`scratch/lake/exporter-miri-reference`. `export-mir.sh` rebuilds the ordinary
+exporter before each export; it does not build the Miri sysroot. Setup is
+described in the
 [Rust setup instructions](docs/development.md#rust-toolchain-and-reference-setup).
 
 Inspect the final `run:` line: `finalized_exit code=0` reports normal completion;
