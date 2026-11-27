@@ -205,6 +205,28 @@ connects the generated condition to proofs over the canonical VC. To see a
 proof that supplies these facts for a concrete Rust function and its admitted
 caller domain, follow the [empty_function example](examples/empty_function/README.md#generated-body-verification-condition).
 
+To start a safety proof, write a Lake project instead of a single file.
+
+```bash
+tools/body-vc safety examples/body_vcgen/control.rs --project scratch/count-up-safety
+cd scratch/count-up-safety && flock --no-fork /tmp/lean-miri-lake-build.lock lake build
+```
+
+The project contains `Generated.lean` and its MIR JSON, a `lakefile.toml`
+that requires this checkout through a relative path, the repository's
+`lean-toolchain`, and `Safety.lean`. `Safety.safe` states
+`requiredForEveryChoiceAt` for every prepared entry state in `Safety.Domain`.
+Its proof is `sorry`, so `lake build` succeeds with a warning until the
+theorem is proved. The initial `Domain` only requires the selected root frame
+at `bb0[0]`. In general this does not imply safety. Narrow `Domain` to the
+admitted configurations and machine states before proving `safe`. Derived
+theorems in the same file are proved from `safe`. `safeExecution` restates it
+over the interpreter's finite executions. `safeFromRoot` and `safeFromRoot'`
+state it before root-call preparation, assuming that preparation reaches
+`Domain` or fails without UB. Regeneration updates the generated files and
+keeps an existing `Safety.lean` unless `--force` is given. Run
+`bash tools/check-body-vc-project.sh` to check the project generator.
+
 For a direct Lean `vcgen` proof, use this operation in a `Triple` with your
 precondition and success and error postconditions.
 
